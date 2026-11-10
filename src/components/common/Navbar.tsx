@@ -1,0 +1,411 @@
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  ChevronDown,
+  Menu,
+  X,
+  User as UserIcon,
+  Globe,
+  Leaf,
+  Layers,
+  BarChart3,
+  Bot,
+  ExternalLink,
+  BookOpen,
+  LogOut,
+  Sparkles,
+} from 'lucide-react';
+import { User } from '../../types';
+
+interface NavbarProps {
+  currentUser: User | null;
+  currentPath: string;
+  onNavigate: (path: string) => void;
+  onOpenAuth: (initialMode?: 'signin' | 'signup') => void;
+  onLogout: () => void;
+}
+
+export const Navbar: React.FC<NavbarProps> = ({
+  currentUser,
+  currentPath,
+  onNavigate,
+  onOpenAuth,
+  onLogout,
+}) => {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [solutionsOpen, setSolutionsOpen] = useState(false);
+  const [resourcesOpen, setResourcesOpen] = useState(false);
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+
+  const solutionsRef = useRef<HTMLDivElement>(null);
+  const resourcesRef = useRef<HTMLDivElement>(null);
+  const userRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (solutionsRef.current && !solutionsRef.current.contains(e.target as Node)) {
+        setSolutionsOpen(false);
+      }
+      if (resourcesRef.current && !resourcesRef.current.contains(e.target as Node)) {
+        setResourcesOpen(false);
+      }
+      if (userRef.current && !userRef.current.contains(e.target as Node)) {
+        setUserDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const navItemClass = (path: string) =>
+    `px-3 py-2 text-sm font-medium transition-all rounded-full ${
+      currentPath === path
+        ? 'text-[#073D2B] bg-[#E7EFE6] font-semibold'
+        : 'text-[#204033] hover:text-[#073D2B] hover:bg-[#F0F5EE]'
+    }`;
+
+  return (
+    <header className="sticky top-0 z-50 w-full bg-[#F8F7ED]/95 backdrop-blur-md border-b border-[#E2E8DE]/80 transition-all">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+        
+        {/* Brand Logo & Tagline */}
+        <div
+          onClick={() => onNavigate('/')}
+          className="flex items-center gap-3 cursor-pointer group select-none"
+        >
+          <div className="relative w-11 h-11 flex-shrink-0">
+            <img
+              src="/assets/aistudio/Eco-Tech_Globe_Branding_Logo__1__5456db76.png"
+              alt="Field Shift Logo"
+              className="w-full h-full object-contain rounded-full shadow-sm group-hover:scale-105 transition-transform"
+            />
+          </div>
+          <div className="flex flex-col">
+            <div className="flex items-center gap-1.5">
+              <span className="font-display text-2xl font-bold tracking-tight text-[#073D2B]">
+                Field<span className="text-[#76B93F]">Shift</span>
+              </span>
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#EAF5DF] text-[#145C3D] border border-[#CDE5BA]">
+                NASA DATA
+              </span>
+            </div>
+            <span className="text-[11px] font-medium text-[#527367] tracking-wide hidden sm:block">
+              Smarter Decisions. Greener Tomorrow.
+            </span>
+          </div>
+        </div>
+
+        {/* Desktop Navigation Links */}
+        <nav className="hidden lg:flex items-center gap-1.5 bg-[#FFFFFF]/80 px-3 py-1.5 rounded-full border border-[#E2E8DE] shadow-xs">
+          <button onClick={() => onNavigate('/')} className={navItemClass('/')}>
+            Home
+          </button>
+          <button onClick={() => onNavigate('/about')} className={navItemClass('/about')}>
+            About
+          </button>
+          <button onClick={() => onNavigate('/features')} className={navItemClass('/features')}>
+            Features
+          </button>
+          <button onClick={() => onNavigate('/nasa-data')} className={navItemClass('/nasa-data')}>
+            NASA Data
+          </button>
+
+          {/* Solutions Dropdown */}
+          <div className="relative" ref={solutionsRef}>
+            <button
+              onClick={() => setSolutionsOpen(!solutionsOpen)}
+              className={`flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-full transition-all ${
+                solutionsOpen || currentPath === '/solutions'
+                  ? 'text-[#073D2B] bg-[#E7EFE6]'
+                  : 'text-[#204033] hover:text-[#073D2B] hover:bg-[#F0F5EE]'
+              }`}
+            >
+              Solutions
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${solutionsOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {solutionsOpen && (
+              <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-[#E2E8DE] p-2 animate-in fade-in slide-in-from-top-2 duration-150 z-50">
+                <div
+                  onClick={() => {
+                    onNavigate('/solutions');
+                    setSolutionsOpen(false);
+                  }}
+                  className="p-2.5 rounded-xl hover:bg-[#F8F7ED] cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-2 font-semibold text-xs text-[#073D2B]">
+                    <Layers className="w-4 h-4 text-[#76B93F]" />
+                    Row-Crop Producers
+                  </div>
+                  <p className="text-[11px] text-[#527367] mt-0.5 ml-6">
+                    Commercial corn, soybean, wheat & sorghum rotation planning
+                  </p>
+                </div>
+                <div
+                  onClick={() => {
+                    onNavigate('/solutions');
+                    setSolutionsOpen(false);
+                  }}
+                  className="p-2.5 rounded-xl hover:bg-[#F8F7ED] cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-2 font-semibold text-xs text-[#073D2B]">
+                    <Leaf className="w-4 h-4 text-[#76B93F]" />
+                    Regenerative Co-ops
+                  </div>
+                  <p className="text-[11px] text-[#527367] mt-0.5 ml-6">
+                    Multi-species cover crop mixtures & carbon sequestration credits
+                  </p>
+                </div>
+                <div
+                  onClick={() => {
+                    onNavigate('/solutions');
+                    setSolutionsOpen(false);
+                  }}
+                  className="p-2.5 rounded-xl hover:bg-[#F8F7ED] cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-2 font-semibold text-xs text-[#073D2B]">
+                    <BarChart3 className="w-4 h-4 text-[#76B93F]" />
+                    Watershed & Conservation
+                  </div>
+                  <p className="text-[11px] text-[#527367] mt-0.5 ml-6">
+                    Erosion modeling with SRTM & GPM precipitation indices
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Resources Dropdown */}
+          <div className="relative" ref={resourcesRef}>
+            <button
+              onClick={() => setResourcesOpen(!resourcesOpen)}
+              className={`flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-full transition-all ${
+                resourcesOpen || currentPath === '/resources'
+                  ? 'text-[#073D2B] bg-[#E7EFE6]'
+                  : 'text-[#204033] hover:text-[#073D2B] hover:bg-[#F0F5EE]'
+              }`}
+            >
+              Resources
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${resourcesOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {resourcesOpen && (
+              <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-[#E2E8DE] p-2 animate-in fade-in slide-in-from-top-2 duration-150 z-50">
+                <div
+                  onClick={() => {
+                    onNavigate('/resources');
+                    setResourcesOpen(false);
+                  }}
+                  className="p-2.5 rounded-xl hover:bg-[#F8F7ED] cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-2 font-semibold text-xs text-[#073D2B]">
+                    <Globe className="w-4 h-4 text-[#76B93F]" />
+                    NASA Earthdata Guide
+                  </div>
+                  <p className="text-[11px] text-[#527367] mt-0.5 ml-6">
+                    Documentation on SMAP, GPM, MODIS, and POWER sensors
+                  </p>
+                </div>
+                <div
+                  onClick={() => {
+                    onNavigate('/resources');
+                    setResourcesOpen(false);
+                  }}
+                  className="p-2.5 rounded-xl hover:bg-[#F8F7ED] cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-2 font-semibold text-xs text-[#073D2B]">
+                    <BookOpen className="w-4 h-4 text-[#76B93F]" />
+                    Scientific Methodology
+                  </div>
+                  <p className="text-[11px] text-[#527367] mt-0.5 ml-6">
+                    Soil health models, crop water use algorithms & caveats
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </nav>
+
+        {/* Right CTA Actions */}
+        <div className="flex items-center gap-3">
+          {currentUser ? (
+            <div className="relative" ref={userRef}>
+              <button
+                onClick={() => setUserDropdownOpen(!userDropdownOpen)}
+                className="flex items-center gap-2.5 pl-2 pr-3 py-1.5 rounded-full bg-white border border-[#E2E8DE] shadow-xs hover:border-[#76B93F] transition-all"
+              >
+                <div className="w-7 h-7 rounded-full bg-[#073D2B] text-white flex items-center justify-center text-xs font-bold">
+                  {currentUser.fullName.charAt(0).toUpperCase()}
+                </div>
+                <span className="text-xs font-semibold text-[#073D2B] max-w-[120px] truncate hidden md:inline">
+                  {currentUser.fullName}
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 text-[#527367]" />
+              </button>
+
+              {userDropdownOpen && (
+                <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl shadow-xl border border-[#E2E8DE] p-2 z-50">
+                  <div className="px-3 py-2 border-b border-[#F0F5EE] mb-1">
+                    <p className="text-xs font-bold text-[#073D2B] truncate">{currentUser.fullName}</p>
+                    <p className="text-[11px] text-[#527367] truncate">{currentUser.email}</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      onNavigate('/dashboard');
+                      setUserDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-[#073D2B] hover:bg-[#F0F5EE] rounded-xl text-left"
+                  >
+                    <BarChart3 className="w-4 h-4 text-[#76B93F]" />
+                    Farmer Dashboard
+                  </button>
+                  <button
+                    onClick={() => {
+                      onNavigate('/dashboard/ai-advisor');
+                      setUserDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-[#073D2B] hover:bg-[#F0F5EE] rounded-xl text-left"
+                  >
+                    <Bot className="w-4 h-4 text-[#76B93F]" />
+                    AI Agricultural Advisor
+                  </button>
+                  <div className="h-px bg-[#F0F5EE] my-1" />
+                  <button
+                    onClick={() => {
+                      onLogout();
+                      setUserDropdownOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 rounded-xl text-left"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Sign Out
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => onOpenAuth('signin')}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs sm:text-sm font-semibold text-[#073D2B] hover:bg-white/80 rounded-full border border-transparent hover:border-[#E2E8DE] transition-all"
+              >
+                <UserIcon className="w-4 h-4" />
+                Sign In
+              </button>
+              <button
+                onClick={() => onOpenAuth('signup')}
+                className="flex items-center gap-1.5 px-4 sm:px-5 py-2 text-xs sm:text-sm font-semibold text-white bg-[#073D2B] hover:bg-[#145C3D] rounded-full shadow-md hover:shadow-lg transition-all"
+              >
+                <span>Get Started</span>
+                <Sparkles className="w-3.5 h-3.5 text-[#76B93F]" />
+              </button>
+            </div>
+          )}
+
+          {/* Mobile hamburger menu toggle */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="lg:hidden p-2 rounded-xl text-[#073D2B] hover:bg-[#E7EFE6] transition-colors"
+            aria-label="Toggle Navigation Menu"
+          >
+            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile Navigation Drawer */}
+      {mobileMenuOpen && (
+        <div className="lg:hidden bg-white border-b border-[#E2E8DE] px-4 pt-3 pb-6 space-y-2 animate-in slide-in-from-top-4 duration-200">
+          <button
+            onClick={() => {
+              onNavigate('/');
+              setMobileMenuOpen(false);
+            }}
+            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
+          >
+            Home
+          </button>
+          <button
+            onClick={() => {
+              onNavigate('/about');
+              setMobileMenuOpen(false);
+            }}
+            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
+          >
+            About Field Shift
+          </button>
+          <button
+            onClick={() => {
+              onNavigate('/features');
+              setMobileMenuOpen(false);
+            }}
+            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
+          >
+            Core Features
+          </button>
+          <button
+            onClick={() => {
+              onNavigate('/nasa-data');
+              setMobileMenuOpen(false);
+            }}
+            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
+          >
+            NASA Earth Observations
+          </button>
+          <button
+            onClick={() => {
+              onNavigate('/solutions');
+              setMobileMenuOpen(false);
+            }}
+            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
+          >
+            Agricultural Solutions
+          </button>
+          <button
+            onClick={() => {
+              onNavigate('/resources');
+              setMobileMenuOpen(false);
+            }}
+            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
+          >
+            Resources & Scientific Papers
+          </button>
+
+          <div className="pt-2 border-t border-[#E2E8DE] flex gap-2">
+            {currentUser ? (
+              <button
+                onClick={() => {
+                  onNavigate('/dashboard');
+                  setMobileMenuOpen(false);
+                }}
+                className="w-full py-2.5 px-4 bg-[#073D2B] text-white rounded-xl font-semibold text-sm text-center"
+              >
+                Go to Dashboard
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => {
+                    onOpenAuth('signin');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="flex-1 py-2.5 px-4 bg-[#F0F5EE] text-[#073D2B] rounded-xl font-semibold text-sm text-center"
+                >
+                  Sign In
+                </button>
+                <button
+                  onClick={() => {
+                    onOpenAuth('signup');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="flex-1 py-2.5 px-4 bg-[#073D2B] text-white rounded-xl font-semibold text-sm text-center"
+                >
+                  Create Account
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </header>
+  );
+};
