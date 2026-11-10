@@ -18,8 +18,20 @@ export const Hero: React.FC<HeroProps> = ({
   return (
     <section className="relative w-full overflow-hidden bg-gradient-to-b from-[#F8F7ED] via-[#F4F6EA] to-[#EBF3E5] pt-6 md:pt-10 pb-16 lg:pb-24 border-b border-[#E2E8DE]">
       
-      {/* Subtle organic contour lines / backdrop gradient */}
-      <div className="absolute inset-0 opacity-40 pointer-events-none bg-[radial-gradient(#145c3d_1px,transparent_1px)] [background-size:24px_24px]" />
+      {/* Background Hero Farmland Image with subtle overlay for contrast */}
+      <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
+        <img
+          src="/images/hero-climate-farm.jpg"
+          alt="Modern precision agriculture farmland with contoured crop strips and sustainable farming practices"
+          width="1920"
+          height="1080"
+          loading="eager"
+          fetchPriority="high"
+          className="w-full h-full object-cover object-center opacity-15 mix-blend-multiply scale-105"
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#F8F7ED] via-[#F8F7ED]/85 to-[#EBF3E5]/70" />
+        <div className="absolute inset-0 bg-[radial-gradient(#145c3d_1px,transparent_1px)] [background-size:28px_28px] opacity-30" />
+      </div>
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
         

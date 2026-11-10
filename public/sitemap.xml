@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  
+  <!-- Homepage -->
+  <url>
+    <loc>https://fieldshift.ag/</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://fieldshift.ag/images/og-share-card.jpg</image:loc>
+      <image:title>FieldShift AI-Powered Climate-Smart Agriculture</image:title>
+      <image:caption>NASA Earth observation-powered agricultural intelligence platform for crop rotation and soil health.</image:caption>
+    </image:image>
+    <image:image>
+      <image:loc>https://fieldshift.ag/images/hero-climate-farm.jpg</image:loc>
+      <image:title>Modern Climate-Smart Contoured Farmland</image:title>
+      <image:caption>Sustainable strip cropping and agricultural contours monitored with satellite telemetry.</image:caption>
+    </image:image>
+  </url>
+
+  <!-- Core Platform Pages -->
+  <url>
+    <loc>https://fieldshift.ag/crop-rotation</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <url>
+    <loc>https://fieldshift.ag/soil-intelligence</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+    <image:image>
+      <image:loc>https://fieldshift.ag/images/soil-strata-profile.jpg</image:loc>
+      <image:title>Agronomic Soil Profile &amp; Strata Analysis</image:title>
+      <image:caption>Soil biological activity, organic matter horizons, and root moisture percolation.</image:caption>
+    </image:image>
+  </url>
+
+  <url>
+    <loc>https://fieldshift.ag/nasa-data</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+    <image:image>
+      <image:loc>https://fieldshift.ag/images/satellite-telemetry.jpg</image:loc>
+      <image:title>NASA Earth Observation Telemetry</image:title>
+      <image:caption>Multi-mission satellite ingestion with SMAP, GPM, MODIS, and ECOSTRESS.</image:caption>
+    </image:image>
+  </url>
+
+  <url>
+    <loc>https://fieldshift.ag/features</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <url>
+    <loc>https://fieldshift.ag/field-risk</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- About & Science -->
+  <url>
+    <loc>https://fieldshift.ag/about</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <url>
+    <loc>https://fieldshift.ag/about/science-team</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Solutions -->
+  <url>
+    <loc>https://fieldshift.ag/solutions/cash-grain</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <url>
+    <loc>https://fieldshift.ag/solutions/forage-livestock</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <url>
+    <loc>https://fieldshift.ag/solutions/organic-regenerative</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Resources -->
+  <url>
+    <loc>https://fieldshift.ag/resources/case-studies</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://fieldshift.ag/resources/satellite-glossary</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <url>
+    <loc>https://fieldshift.ag/resources/ai-advisor</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Legal -->
+  <url>
+    <loc>https://fieldshift.ag/legal/privacy</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.4</priority>
+  </url>
+
+  <url>
+    <loc>https://fieldshift.ag/legal/terms</loc>
+    <lastmod>2026-11-10</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.4</priority>
+  </url>
+
+</urlset>

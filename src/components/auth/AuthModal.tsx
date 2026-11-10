@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { User } from '../../types';
 import { FieldShiftEarth } from '../three/FieldShiftEarth';
+import { authService } from '../../services/authService';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -118,15 +119,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fullName, email, password }),
+      const data = await authService.register({
+        fullName: fullName.trim(),
+        email: email.trim(),
+        password,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Registration failed');
 
-      setDevOtpHint(data.devOtpCode);
+      setDevOtpHint(data.devOtpCode || null);
       setSuccessMsg('Verification code sent to your email.');
       setMode('verify');
       setTimerSeconds(45);
@@ -150,16 +149,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail, password }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Sign in failed');
-
-      localStorage.setItem('fieldshift_token', data.token);
-      localStorage.setItem('fieldshift_user', JSON.stringify(data.user));
+      const data = await authService.login(cleanEmail, password);
       onSuccess(data.user);
       onClose();
     } catch (err: any) {
@@ -182,16 +172,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Verification code failed');
-
-      localStorage.setItem('fieldshift_token', data.token);
-      localStorage.setItem('fieldshift_user', JSON.stringify(data.user));
+      const data = await authService.verifyOtp(email.trim(), code);
       onSuccess(data.user);
       onClose();
     } catch (err: any) {
@@ -207,17 +188,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/auth/resend-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-      const data = await res.json();
+      const data = await authService.resendOtp(email.trim());
       setTimerSeconds(45);
-      setDevOtpHint(data.devOtpCode);
+      setDevOtpHint(data.devOtpCode || null);
       setSuccessMsg('A fresh verification code was sent.');
-    } catch (err) {
-      setErrorMsg('Failed to dispatch code. Please try again.');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to dispatch code. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -717,13 +693,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               <button
                 type="button"
-                onClick={() => {
-                  setSuccessMsg('Reset link dispatched to your inbox.');
-                  setTimeout(() => setMode('signin'), 1500);
+                disabled={loading || !email.trim()}
+                onClick={async () => {
+                  if (!email.trim()) {
+                    setErrorMsg('Please enter your email address first.');
+                    return;
+                  }
+                  setLoading(true);
+                  setErrorMsg(null);
+                  try {
+                    const res = await authService.forgotPassword(email.trim());
+                    setSuccessMsg(res.message || 'Reset link dispatched to your inbox.');
+                    setTimeout(() => setMode('signin'), 2000);
+                  } catch (err: any) {
+                    setErrorMsg(err.message || 'Unable to send reset instructions.');
+                  } finally {
+                    setLoading(false);
+                  }
                 }}
-                className="w-full py-3 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold transition-all shadow-md"
+                className="w-full py-3 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold transition-all shadow-md disabled:opacity-50"
               >
-                Send Reset Link
+                {loading ? <RefreshCw className="w-4 h-4 animate-spin mx-auto" /> : 'Send Reset Link'}
               </button>
 
               <div className="text-center">

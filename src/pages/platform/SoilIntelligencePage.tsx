@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Breadcrumbs } from '../../components/common/Breadcrumbs';
+import { SEO } from '../../components/common/SEO';
 import {
   Sprout,
   Droplets,
@@ -19,13 +20,30 @@ interface SoilIntelligencePageProps {
   onOpenAuth: (mode?: 'signin' | 'signup') => void;
 }
 
+type SoilKey = 'silt-loam' | 'clay-loam' | 'sandy-loam';
+
 export const SoilIntelligencePage: React.FC<SoilIntelligencePageProps> = ({
   onNavigate,
   onOpenAuth,
 }) => {
-  const [selectedSoilType, setSelectedSoilType] = useState<'silt-loam' | 'clay-loam' | 'sandy-loam'>('silt-loam');
+  const [selectedSoilType, setSelectedSoilType] = useState<SoilKey>('silt-loam');
 
-  const soilData = {
+  const soilData: Record<
+    SoilKey,
+    {
+      name: string;
+      location: string;
+      ph: number;
+      om: string;
+      cec: string;
+      waterCapacity: string;
+      drainage: string;
+      holdingGallons: string;
+      compactionRisk: string;
+      strengths: string[];
+      vulnerabilities: string[];
+    }
+  > = {
     'silt-loam': {
       name: 'Clarion-Nicollet Silt Loam',
       location: 'Midwest Glacial Till / Loess',
@@ -71,6 +89,12 @@ export const SoilIntelligencePage: React.FC<SoilIntelligencePageProps> = ({
 
   return (
     <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <SEO
+        title="Soil Intelligence & Moisture Dynamics | FieldShift"
+        description="Fusing laboratory soil assays with USDA NRCS SSURGO digital surveys and NASA SMAP microwave root-zone telemetry for deep agronomic clarity."
+        path="/soil-intelligence"
+        image="https://fieldshift.ag/images/soil-strata-profile.jpg"
+      />
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
         
         {/* Breadcrumb Header */}
@@ -166,6 +190,37 @@ export const SoilIntelligencePage: React.FC<SoilIntelligencePageProps> = ({
             <div className="font-display text-3xl font-extrabold text-[#073D2B]">{active.waterCapacity}</div>
             <p className="text-[11px] text-[#527367]">Pore moisture available to crop root hairs.</p>
           </div>
+        </div>
+
+        {/* Soil Profile & Strata Visual Cutaway */}
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-4 overflow-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#E2E8DE] pb-4">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-[#145C3D]">
+                Biological Strata Horizon
+              </span>
+              <h3 className="font-display text-xl sm:text-2xl font-bold text-[#073D2B] mt-0.5">
+                Soil Profile Architecture &amp; Root Moisture Percolation
+              </h3>
+            </div>
+            <span className="text-xs text-[#527367] bg-[#EAF5DF] px-3 py-1 rounded-full font-semibold self-start sm:self-auto">
+              USDA-NRCS &amp; SMAP Grounding
+            </span>
+          </div>
+
+          <div className="relative w-full rounded-2xl overflow-hidden border border-[#D5E5CA] shadow-inner bg-[#F4F6EA]">
+            <img
+              src="/images/soil-strata-profile.jpg"
+              alt="Scientific cross-section cutaway of healthy agricultural soil profile with topsoil humus, mycorrhizae networks, and root moisture channels"
+              width="1200"
+              height="675"
+              loading="lazy"
+              className="w-full h-auto object-cover max-h-[500px]"
+            />
+          </div>
+          <p className="text-xs text-[#527367] italic text-center sm:text-left">
+            Figure 1: Agronomic soil horizon showing dark organic matter richness in the O/A layer, mycorrhizal fungal hyphae networks, and deep moisture percolation channels into subsoil parent material.
+          </p>
         </div>
 
         {/* Scientific Soil Dynamics Section */}

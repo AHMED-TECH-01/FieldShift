@@ -15,6 +15,17 @@ import {
 } from 'lucide-react';
 import { CropCharacteristics } from '../../types';
 
+const CROP_IMAGES: Record<string, { src: string; alt: string }> = {
+  'crop-corn': { src: '/images/crops/corn.jpg', alt: 'Healthy maize corn field with golden silk tassels' },
+  'crop-soybean': { src: '/images/crops/soybean.jpg', alt: 'Lush green soybean crop canopy with pod clusters' },
+  'crop-cereal-rye': { src: '/images/crops/cereal-rye.jpg', alt: 'Winter cereal rye cover crop waving in fertile soil' },
+  'crop-hairy-vetch': { src: '/images/crops/hairy-vetch.jpg', alt: 'Purple flowering hairy vetch nitrogen-fixing cover crop' },
+  'crop-sorghum': { src: '/images/crops/sorghum.jpg', alt: 'Drought-tolerant grain sorghum field with bronze seed heads' },
+  'crop-sunflower': { src: '/images/crops/sunflower.jpg', alt: 'Flowering oilseed sunflower field with deep taproots' },
+  'crop-alfalfa': { src: '/images/crops/alfalfa.jpg', alt: 'Perennial purple flowering alfalfa forage field' },
+  'crop-field-peas': { src: '/images/crops/field-peas.jpg', alt: 'Flowering Austrian winter field peas on organic soil' },
+};
+
 export const CropDatabaseExplorer: React.FC = () => {
   const [crops, setCrops] = useState<CropCharacteristics[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -112,60 +123,83 @@ export const CropDatabaseExplorer: React.FC = () => {
 
       {/* Crop Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredCrops.map((crop) => (
-          <div
-            key={crop.id}
-            onClick={() => setSelectedCrop(crop)}
-            className="bg-white rounded-3xl p-6 border border-[#D5E5CA] hover:border-[#76B93F] transition-all cursor-pointer shadow-2xs hover:shadow-md flex flex-col justify-between group"
-          >
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="px-2.5 py-1 rounded-md bg-[#EAF5DF] text-[#145C3D] text-[10px] font-bold">
-                  {crop.family}
-                </span>
-                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" />
-                  VERIFIED DATA
-                </span>
-              </div>
+        {filteredCrops.map((crop) => {
+          const imgData = CROP_IMAGES[crop.id];
+          return (
+            <div
+              key={crop.id}
+              onClick={() => setSelectedCrop(crop)}
+              className="bg-white rounded-3xl p-5 sm:p-6 border border-[#D5E5CA] hover:border-[#76B93F] transition-all cursor-pointer shadow-2xs hover:shadow-md flex flex-col justify-between group overflow-hidden"
+            >
+              <div>
+                {/* Crop Photo Banner */}
+                {imgData && (
+                  <div className="relative w-full h-40 rounded-2xl overflow-hidden mb-4 bg-[#EAF2E4]/60">
+                    <img
+                      src={imgData.src}
+                      alt={imgData.alt}
+                      width="400"
+                      height="200"
+                      loading="lazy"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-80" />
+                    <span className="absolute bottom-2.5 left-3 px-2 py-0.5 rounded-md bg-[#073D2B]/90 text-white text-[10px] font-bold backdrop-blur-xs">
+                      {crop.family}
+                    </span>
+                  </div>
+                )}
 
-              <h3 className="font-bold text-lg text-[#073D2B] group-hover:text-[#145C3D] transition-colors">
-                {crop.name}
-              </h3>
-              <p className="text-xs text-[#527367] italic">{crop.scientificName}</p>
-
-              <div className="mt-4 pt-3 border-t border-[#E2E8DE] space-y-2 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-[#527367]">Water Requirement:</span>
-                  <span className="font-semibold text-[#073D2B]">{crop.waterRequirementMm}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[#527367]">Drought Tolerance:</span>
-                  <span className="font-bold text-[#073D2B]">{crop.droughtTolerance}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[#527367]">Biological N Fixed:</span>
-                  <span className="font-bold text-[#145C3D]">
-                    {crop.nitrogenFixingPotentialLbsPerAcre > 0
-                      ? `+${crop.nitrogenFixingPotentialLbsPerAcre} lbs N/ac`
-                      : 'None (Net N consumer)'}
+                <div className="flex items-center justify-between mb-2">
+                  {!imgData && (
+                    <span className="px-2.5 py-1 rounded-md bg-[#EAF5DF] text-[#145C3D] text-[10px] font-bold">
+                      {crop.family}
+                    </span>
+                  )}
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded flex items-center gap-1 ml-auto">
+                    <CheckCircle2 className="w-3 h-3" />
+                    VERIFIED DATA
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-[#527367]">Root Architecture:</span>
-                  <span className="font-semibold text-[#073D2B]">
-                    {crop.rootCharacteristics.architecture} ({crop.rootCharacteristics.depthMeters}m)
-                  </span>
+
+                <h3 className="font-bold text-lg text-[#073D2B] group-hover:text-[#145C3D] transition-colors">
+                  {crop.name}
+                </h3>
+                <p className="text-xs text-[#527367] italic">{crop.scientificName}</p>
+
+                <div className="mt-4 pt-3 border-t border-[#E2E8DE] space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-[#527367]">Water Requirement:</span>
+                    <span className="font-semibold text-[#073D2B]">{crop.waterRequirementMm}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[#527367]">Drought Tolerance:</span>
+                    <span className="font-bold text-[#073D2B]">{crop.droughtTolerance}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[#527367]">Biological N Fixed:</span>
+                    <span className="font-bold text-[#145C3D]">
+                      {crop.nitrogenFixingPotentialLbsPerAcre > 0
+                        ? `+${crop.nitrogenFixingPotentialLbsPerAcre} lbs N/ac`
+                        : 'None (Net N consumer)'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[#527367]">Root Architecture:</span>
+                    <span className="font-semibold text-[#073D2B]">
+                      {crop.rootCharacteristics.architecture} ({crop.rootCharacteristics.depthMeters}m)
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="mt-4 pt-3 border-t border-[#E2E8DE]/60 flex items-center justify-between text-xs font-bold text-[#145C3D]">
-              <span>View 16 Parameters</span>
-              <span className="group-hover:translate-x-1 transition-transform">→</span>
+              <div className="mt-4 pt-3 border-t border-[#E2E8DE]/60 flex items-center justify-between text-xs font-bold text-[#145C3D]">
+                <span>View 16 Parameters</span>
+                <span className="group-hover:translate-x-1 transition-transform">→</span>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Comprehensive Crop Detail Modal */}
@@ -173,21 +207,51 @@ export const CropDatabaseExplorer: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl max-w-3xl w-full shadow-2xl border border-[#D5E5CA] max-h-[90vh] overflow-y-auto p-6 sm:p-8 space-y-6">
             
-            <div className="flex items-start justify-between border-b border-[#E2E8DE] pb-4">
-              <div>
-                <span className="px-2.5 py-1 rounded bg-[#EAF5DF] text-[#145C3D] text-xs font-bold">
-                  {selectedCrop.family}
-                </span>
-                <h3 className="font-display text-2xl font-bold text-[#073D2B] mt-1.5">{selectedCrop.name}</h3>
-                <p className="text-xs text-[#527367] italic">{selectedCrop.scientificName}</p>
+            {/* Modal Image & Header Banner */}
+            {CROP_IMAGES[selectedCrop.id] && (
+              <div className="relative w-full h-48 sm:h-56 rounded-2xl overflow-hidden -mt-1 shadow-xs">
+                <img
+                  src={CROP_IMAGES[selectedCrop.id].src}
+                  alt={CROP_IMAGES[selectedCrop.id].alt}
+                  width="800"
+                  height="400"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+                <div className="absolute bottom-4 left-4 right-4 text-white">
+                  <span className="px-2.5 py-1 rounded bg-[#76B93F] text-[#073D2B] text-xs font-bold">
+                    {selectedCrop.family}
+                  </span>
+                  <h3 className="font-display text-2xl sm:text-3xl font-bold text-white mt-1.5">{selectedCrop.name}</h3>
+                  <p className="text-xs text-white/80 italic">{selectedCrop.scientificName}</p>
+                </div>
+                <button
+                  onClick={() => setSelectedCrop(null)}
+                  className="absolute top-3 right-3 p-2 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-xs transition-colors"
+                  aria-label="Close modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-              <button
-                onClick={() => setSelectedCrop(null)}
-                className="p-2 rounded-full hover:bg-[#F0F5EE] text-[#073D2B]"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+            )}
+
+            {!CROP_IMAGES[selectedCrop.id] && (
+              <div className="flex items-start justify-between border-b border-[#E2E8DE] pb-4">
+                <div>
+                  <span className="px-2.5 py-1 rounded bg-[#EAF5DF] text-[#145C3D] text-xs font-bold">
+                    {selectedCrop.family}
+                  </span>
+                  <h3 className="font-display text-2xl font-bold text-[#073D2B] mt-1.5">{selectedCrop.name}</h3>
+                  <p className="text-xs text-[#527367] italic">{selectedCrop.scientificName}</p>
+                </div>
+                <button
+                  onClick={() => setSelectedCrop(null)}
+                  className="p-2 rounded-full hover:bg-[#F0F5EE] text-[#073D2B]"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            )}
 
             {/* Grid of Agronomic Metrics */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">

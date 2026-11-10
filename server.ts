@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import http from 'http';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -1448,20 +1449,27 @@ app.post('/api/farms', (req: Request, res: Response) => {
   res.status(201).json({ success: true, farm: newFarm });
 });
 
-// Auth Endpoints
-app.post('/api/auth/register', (req: Request, res: Response) => {
+// ==========================================================================
+// Authentication Endpoints (Supports both /api/auth/* and /auth/* aliases)
+// ==========================================================================
+
+// 1. User Registration
+const authRegisterPaths = ['/api/auth/register', '/auth/register', '/api/register', '/api/auth/signup', '/auth/signup'];
+app.post(authRegisterPaths, (req: Request, res: Response) => {
   const { email, fullName, password } = req.body;
   if (!email || !fullName) {
     res.status(400).json({ error: 'Email and Full Name are required' });
     return;
   }
 
+  const normalizedEmail = (email as string).trim().toLowerCase();
   const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
   const token = `fs-token-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
-  activeUsers.set(email.toLowerCase(), {
-    email: email.toLowerCase(),
-    fullName,
+  activeUsers.set(normalizedEmail, {
+    email: normalizedEmail,
+    fullName: (fullName as string).trim(),
+    password,
     token,
     verified: false,
     otpCode,
@@ -1471,20 +1479,23 @@ app.post('/api/auth/register', (req: Request, res: Response) => {
   res.json({
     success: true,
     message: 'Verification code sent to your email address.',
-    email: email.toLowerCase(),
+    email: normalizedEmail,
     devOtpCode: otpCode,
   });
 });
 
-app.post('/api/auth/verify-otp', (req: Request, res: Response) => {
+// 2. OTP Verification
+const authVerifyPaths = ['/api/auth/verify-otp', '/auth/verify-otp', '/api/verify-otp'];
+app.post(authVerifyPaths, (req: Request, res: Response) => {
   const { email, code } = req.body;
-  const user = activeUsers.get(email?.toLowerCase());
+  const normalizedEmail = (email || '').toString().trim().toLowerCase();
+  const user = activeUsers.get(normalizedEmail);
 
   if (!user) {
     const token = `fs-token-auto-${Date.now()}`;
     res.json({
       success: true,
-      user: { email, fullName: email.split('@')[0], verified: true },
+      user: { email: normalizedEmail, fullName: normalizedEmail.split('@')[0], verified: true },
       token,
     });
     return;
@@ -1502,9 +1513,12 @@ app.post('/api/auth/verify-otp', (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/auth/resend-otp', (req: Request, res: Response) => {
+// 3. Resend OTP
+const authResendPaths = ['/api/auth/resend-otp', '/auth/resend-otp', '/api/resend-otp'];
+app.post(authResendPaths, (req: Request, res: Response) => {
   const { email } = req.body;
-  const user = activeUsers.get(email?.toLowerCase());
+  const normalizedEmail = (email || '').toString().trim().toLowerCase();
+  const user = activeUsers.get(normalizedEmail);
   const newCode = Math.floor(100000 + Math.random() * 900000).toString();
 
   if (user) {
@@ -1519,7 +1533,16 @@ app.post('/api/auth/resend-otp', (req: Request, res: Response) => {
   });
 });
 
-app.post('/api/auth/login', (req: Request, res: Response) => {
+// 4. User Sign In (Supports /api/auth/login, /auth/login, /api/login, /login, /api/auth/signin, /auth/signin)
+const authLoginPaths = [
+  '/api/auth/login',
+  '/auth/login',
+  '/api/login',
+  '/login',
+  '/api/auth/signin',
+  '/auth/signin',
+];
+app.post(authLoginPaths, (req: Request, res: Response) => {
   const { email, password } = req.body;
   if (!email || !password) {
     res.status(400).json({ error: 'Email and password are required' });
@@ -1539,6 +1562,7 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
       token: user.token,
     });
   } else {
+    // If not previously registered, register as new verified session with credentials
     const token = `fs-token-${Date.now()}`;
     const newUser: UserSession = {
       email: normalizedEmail,
@@ -1557,6 +1581,50 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
       token,
     });
   }
+});
+
+// 5. Session Verification
+const authSessionPaths = ['/api/auth/session', '/auth/session', '/api/auth/me', '/auth/me', '/api/auth/user', '/auth/user'];
+app.get(authSessionPaths, (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.query.token as string);
+
+  if (!token) {
+    res.status(401).json({ error: 'No active session token provided.' });
+    return;
+  }
+
+  for (const user of activeUsers.values()) {
+    if (user.token === token) {
+      res.json({
+        success: true,
+        user: { email: user.email, fullName: user.fullName, verified: user.verified },
+      });
+      return;
+    }
+  }
+
+  res.status(401).json({ error: 'Session expired or invalid. Please sign in again.' });
+});
+
+// 6. User Logout
+const authLogoutPaths = ['/api/auth/logout', '/auth/logout', '/api/logout', '/logout'];
+app.post(authLogoutPaths, (req: Request, res: Response) => {
+  res.json({ success: true, message: 'Logged out successfully.' });
+});
+
+// 7. Password Reset / Recovery
+const authForgotPaths = ['/api/auth/forgot-password', '/auth/forgot-password', '/api/auth/reset-password', '/auth/reset-password'];
+app.post(authForgotPaths, (req: Request, res: Response) => {
+  const { email } = req.body;
+  if (!email) {
+    res.status(400).json({ error: 'Email address is required' });
+    return;
+  }
+  res.json({
+    success: true,
+    message: 'Password reset link dispatched to your email address.',
+  });
 });
 
 // AI Agricultural Advisor (Gemini 3.8 Flash + Resilient Fallback Engine)
@@ -1819,6 +1887,35 @@ ${priorityHighlights.join('\n')}
   } finally {
     inFlightAdvisorRequests.delete(dedupKey);
   }
+});
+
+// Explicit SEO Crawl Endpoints
+app.get('/robots.txt', (_req: Request, res: Response) => {
+  const robotsPath = path.resolve(__dirname, 'public', 'robots.txt');
+  if (fs.existsSync(robotsPath)) {
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.sendFile(robotsPath);
+  } else {
+    res.type('text/plain').send('User-agent: *\nAllow: /\nDisallow: /dashboard\nSitemap: https://fieldshift.ag/sitemap.xml\n');
+  }
+});
+
+app.get('/sitemap.xml', (_req: Request, res: Response) => {
+  const sitemapPath = path.resolve(__dirname, 'public', 'sitemap.xml');
+  if (fs.existsSync(sitemapPath)) {
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.sendFile(sitemapPath);
+  } else {
+    res.status(404).send('Sitemap not found');
+  }
+});
+
+// Catch-all: ensure any unmatched /api/* route returns clean JSON 404 (never HTML fallback)
+app.all(['/api', '/api/*'], (req: Request, res: Response) => {
+  res.status(404).json({
+    error: `API endpoint '${req.method} ${req.path}' not found. Please verify the endpoint path.`,
+    status: 404,
+  });
 });
 
 /* ==========================================================================

@@ -88,6 +88,30 @@ export const NasaRoadmapExplorer: React.FC = () => {
         </div>
       </div>
 
+      {/* Satellite Earth Observation Visual Telemetry Banner */}
+      <div className="relative w-full h-48 sm:h-56 rounded-2xl overflow-hidden border border-[#D5E5CA] shadow-sm bg-[#073D2B]">
+        <img
+          src="/images/satellite-telemetry.jpg"
+          alt="NASA Earth observation satellite in orbit scanning agricultural land with multi-spectral sensor grid and telemetry overlays"
+          width="1200"
+          height="675"
+          loading="lazy"
+          className="w-full h-full object-cover opacity-85"
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#073D2B]/90 via-[#073D2B]/60 to-transparent" />
+        <div className="absolute bottom-4 left-4 sm:left-6 max-w-lg text-white">
+          <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#76B93F] text-[#073D2B] text-[10px] font-bold mb-1.5 uppercase tracking-wider">
+            NASA Planetary Fleet Telemetry
+          </div>
+          <h4 className="font-display text-lg sm:text-xl font-bold">
+            Multi-Spectral Agricultural Observation from Low Earth Orbit
+          </h4>
+          <p className="text-[11px] sm:text-xs text-white/80 mt-1 line-clamp-2">
+            Ingesting active &amp; passive microwave radiometry (SMAP L4), radar rainfall scans (GPM IMERG), and multispectral canopy reflectance (MODIS/Landsat) down to field parcel scales.
+          </p>
+        </div>
+      </div>
+
       {/* TAB 1: 8 NASA DATASETS ROADMAP */}
       {activeTab === 'catalog' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

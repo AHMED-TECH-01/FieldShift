@@ -33,6 +33,96 @@ import { AiAdvisorPage } from './pages/resources/AiAdvisorPage';
 import { PrivacyPolicyPage, TermsOfServicePage } from './pages/legal/LegalPages';
 import { Dashboard } from './pages/Dashboard';
 import { User } from './types';
+import { SEO } from './components/common/SEO';
+
+const ROUTE_SEO: Record<string, { title: string; description: string; noIndex?: boolean }> = {
+  '/': {
+    title: 'FieldShift | AI-Powered Climate-Smart Agriculture',
+    description: 'Transform NASA Earth observation data into smarter farming decisions. FieldShift helps farmers analyze climate risks, compare crop rotations, and build resilient agricultural strategies.',
+  },
+  '/about': {
+    title: 'About FieldShift | Climate-Smart Agronomic Intelligence',
+    description: 'Learn how FieldShift bridges NASA Earth science data with on-the-ground farm management to make precision agriculture sustainable and resilient.',
+  },
+  '/about/science-team': {
+    title: 'Science & Research Team | FieldShift Agronomic Mission',
+    description: 'Meet the soil scientists, remote sensing engineers, and agroecologists building FieldShift with NASA data and university extension models.',
+  },
+  '/features': {
+    title: 'Platform Features | Precision Agriculture & NASA Telemetry | FieldShift',
+    description: 'Explore FieldShift core capabilities: multi-mission satellite telemetry, crop rotation simulation, bare-field detection, and AI agronomic advising.',
+  },
+  '/nasa-data': {
+    title: 'NASA Earth Observation Roadmap | Multi-Mission Satellite Integration | FieldShift',
+    description: 'Discover how FieldShift ingests and harmonizes NASA SMAP, GPM IMERG, MODIS, ECOSTRESS, and Landsat data for precision agriculture.',
+  },
+  '/crop-rotation': {
+    title: 'Crop Rotation Simulator | Soil Health & Yield Modeling | FieldShift',
+    description: 'Compare multi-year crop sequences, calculate nitrogen fixation deltas, and analyze soil organic matter growth with interactive agronomic modeling.',
+  },
+  '/soil-intelligence': {
+    title: 'Soil Intelligence & Moisture Dynamics | NASA SMAP Grounding | FieldShift',
+    description: 'Analyze soil profile horizons, available water capacity, and compaction mitigation with USDA-NRCS surveys and satellite moisture telemetry.',
+  },
+  '/field-risk': {
+    title: 'Field Risk & Climate Vulnerability Assessment | FieldShift',
+    description: 'Identify seasonal topsoil exposure, drought risk, and extreme precipitation anomalies before they impact farm profitability.',
+  },
+  '/solutions': {
+    title: 'Agricultural Solutions & Industry Use Cases | FieldShift',
+    description: 'Tailored climate-smart farming solutions for row crop producers, regenerative operations, watershed districts, and certified crop advisors.',
+  },
+  '/solutions/row-crop-producers': {
+    title: 'Row Crop Commercial Producers Solution | FieldShift',
+    description: 'Optimize corn and soybean rotations with living cover crops to protect yield and stabilize margins under climate variability.',
+  },
+  '/solutions/regenerative-agriculture': {
+    title: 'Regenerative Agriculture & Soil Armor | FieldShift',
+    description: 'Build biological soil carbon, eliminate synthetic nitrogen waste, and maintain continuous living root cover with FieldShift.',
+  },
+  '/solutions/watershed-conservation': {
+    title: 'Watershed Conservation & Nutrient Runoff Protection | FieldShift',
+    description: 'Reduce agricultural sediment discharge and nitrate leaching with parcel-scale satellite monitoring and conservation crop rotation.',
+  },
+  '/solutions/crop-advisors': {
+    title: 'Certified Crop Advisors & Extension Specialists | FieldShift',
+    description: 'Empower agronomic consultants with peer-reviewed extension datasets, NASA satellite telemetry, and client farm decision support.',
+  },
+  '/resources': {
+    title: 'Agronomic Resources, Research & Guides | FieldShift',
+    description: 'Whitepapers, peer-reviewed extension records, satellite observation methodology, and agronomic management guides.',
+  },
+  '/resources/case-studies': {
+    title: 'Real-World Farm Case Studies & Measured Results | FieldShift',
+    description: 'Read documented results from working farms using FieldShift to increase organic matter, retain soil moisture, and boost profitability.',
+  },
+  '/resources/satellite-glossary': {
+    title: 'Satellite Sensor Glossary & Remote Sensing Index | FieldShift',
+    description: 'A comprehensive guide to NASA remote sensing indices: NDVI, EVI, SMAP root-zone moisture, GPM rainfall anomalies, and ECOSTRESS ESI.',
+  },
+  '/resources/ai-advisor': {
+    title: 'AI Agricultural Advisor Decision Support | FieldShift',
+    description: 'Get verified agronomic decision assessments grounded in NASA Earth observations and university extension crop taxonomy.',
+  },
+  '/legal/privacy': {
+    title: 'Privacy Policy | FieldShift Intelligence Platform',
+    description: 'FieldShift privacy policy, data security practices, and protection of farm parcel coordinates and user accounts.',
+  },
+  '/legal/terms': {
+    title: 'Terms of Service & Agronomic Disclaimers | FieldShift',
+    description: 'FieldShift terms of service, scientific uncertainty notices, and agronomic decision-support disclaimer.',
+  },
+  '/auth/sign-in': {
+    title: 'Sign In | FieldShift Platform',
+    description: 'Sign in to access your farm dashboard, parcel telemetry, and customized rotation models.',
+    noIndex: true,
+  },
+  '/auth/sign-up': {
+    title: 'Create Account | FieldShift Platform',
+    description: 'Join FieldShift to start analyzing climate risks and optimizing crop rotations with NASA Earth observations.',
+    noIndex: true,
+  },
+};
 
 export default function App() {
   const [currentPath, setCurrentPath] = useState<string>('/');
@@ -110,6 +200,10 @@ export default function App() {
     }
   };
 
+  const currentSeo = ROUTE_SEO[currentPath] || (currentPath.startsWith('/dashboard')
+    ? { title: 'Farm Management Dashboard | FieldShift', description: 'FieldShift Farm Management Dashboard', noIndex: true }
+    : { title: 'FieldShift | AI-Powered Climate-Smart Agriculture', description: 'Transform NASA Earth observation data into smarter farming decisions.' });
+
   // If on Dashboard routes, render the dedicated Dashboard view
   if (currentPath.startsWith('/dashboard')) {
     // If user is not logged in, provide a convenient default guest session or prompt
@@ -120,12 +214,20 @@ export default function App() {
     };
 
     return (
-      <Dashboard
-        currentUser={effectiveUser}
-        activeSubPage={currentPath}
-        onNavigate={navigateTo}
-        onLogout={handleLogout}
-      />
+      <>
+        <SEO
+          title={currentSeo.title}
+          description={currentSeo.description}
+          path={currentPath}
+          noIndex={true}
+        />
+        <Dashboard
+          currentUser={effectiveUser}
+          activeSubPage={currentPath}
+          onNavigate={navigateTo}
+          onLogout={handleLogout}
+        />
+      </>
     );
   }
 
@@ -133,6 +235,12 @@ export default function App() {
   if (currentPath === '/auth/sign-in') {
     return (
       <div className="min-h-screen bg-[#F8F7ED] flex flex-col justify-between">
+        <SEO
+          title="Sign In | FieldShift Platform"
+          description="Sign in to your FieldShift account to access farm telemetry and crop rotation models."
+          path="/auth/sign-in"
+          noIndex={true}
+        />
         <Navbar
           currentUser={currentUser}
           currentPath={currentPath}
@@ -156,6 +264,12 @@ export default function App() {
   if (currentPath === '/auth/sign-up') {
     return (
       <div className="min-h-screen bg-[#F8F7ED] flex flex-col justify-between">
+        <SEO
+          title="Create Account | FieldShift Platform"
+          description="Create your FieldShift account to analyze farm climate risks with NASA data."
+          path="/auth/sign-up"
+          noIndex={true}
+        />
         <Navbar
           currentUser={currentUser}
           currentPath={currentPath}
@@ -179,6 +293,12 @@ export default function App() {
   // Render Public Website with exactly ONE instance of each component
   return (
     <div className="min-h-screen bg-[#F8F7ED] text-[#102A24] flex flex-col selection:bg-[#76B93F]/30 selection:text-[#073D2B]">
+      <SEO
+        title={currentSeo.title}
+        description={currentSeo.description}
+        path={currentPath}
+        noIndex={currentSeo.noIndex}
+      />
       
       {/* 1. Exactly ONE Navigation Bar */}
       <Navbar

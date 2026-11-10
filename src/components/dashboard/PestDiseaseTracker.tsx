@@ -164,6 +164,34 @@ export const PestDiseaseTracker: React.FC<PestDiseaseTrackerProps> = ({ farmId }
         })}
       </div>
 
+      {/* Visual Agroecological Intercropping Showcase */}
+      <div className="rounded-2xl border border-[#D5E5CA] bg-[#FAFDF8] p-5 space-y-3 overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-[#76B93F]" />
+            <span className="text-xs font-bold text-[#073D2B]">Botanical Family Host Cycle Interruption in Action</span>
+          </div>
+          <span className="text-[10px] font-bold text-[#145C3D] bg-[#EAF5DF] px-2 py-0.5 rounded self-start sm:self-auto">
+            Beneficial Predator Habitat &amp; Pathogen Disruption
+          </span>
+        </div>
+
+        <div className="relative w-full h-56 sm:h-64 rounded-xl overflow-hidden border border-[#D5E5CA] shadow-2xs">
+          <img
+            src="/images/pest-crop-rotation.jpg"
+            alt="Diversified crop rotation and intercropping field strips with sunflowers, legumes, and cereal grains attracting beneficial insect predators"
+            width="1200"
+            height="675"
+            loading="lazy"
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute bottom-2 left-2 right-2 bg-[#073D2B]/90 backdrop-blur-xs text-white p-2.5 rounded-lg text-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1">
+            <span><strong>Multi-Family Polyculture:</strong> Poaceae + Fabaceae + Asteraceae succession</span>
+            <span className="text-[#76B93F]">Natural non-host interruption of rootworm &amp; nematode cycles</span>
+          </div>
+        </div>
+      </div>
+
     </div>
   );
 };

@@ -1,0 +1,26 @@
+# FieldShift Robots Exclusion Protocol
+# https://fieldshift.ag/robots.txt
+
+User-agent: *
+Allow: /
+Allow: /about
+Allow: /about/science-team
+Allow: /features
+Allow: /nasa-data
+Allow: /crop-rotation
+Allow: /soil-intelligence
+Allow: /field-risk
+Allow: /solutions/
+Allow: /resources/
+Allow: /legal/
+Allow: /images/
+
+# Prevent web crawlers from indexing private authenticated dashboard and user data
+Disallow: /dashboard
+Disallow: /dashboard/
+Disallow: /auth/
+Disallow: /api/
+
+# Host and Sitemap locations
+Host: https://fieldshift.ag
+Sitemap: https://fieldshift.ag/sitemap.xml

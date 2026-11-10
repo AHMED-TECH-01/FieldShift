@@ -131,6 +131,33 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
         </div>
       </div>
 
+      {/* Visual Agronomic In-Field Demonstration */}
+      <div className="rounded-2xl border border-[#D5E5CA] bg-[#FAFDF8] p-5 space-y-3 overflow-hidden">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-[#76B93F]" />
+            <span className="text-xs font-bold text-[#073D2B]">In-Field Topsoil Protection Verification</span>
+          </div>
+          <span className="text-[10px] font-bold text-[#145C3D] bg-[#EAF5DF] px-2 py-0.5 rounded">
+            MODIS NDVI &amp; Field Trial
+          </span>
+        </div>
+        <div className="relative w-full h-56 sm:h-64 rounded-xl overflow-hidden border border-[#D5E5CA] shadow-2xs">
+          <img
+            src="/images/bare-field-fallow.jpg"
+            alt="Side-by-side agronomic field comparison showing lush green winter cover crop rye protecting soil on the left versus bare eroded fallow soil with runoff channels on the right"
+            width="1200"
+            height="675"
+            loading="lazy"
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute bottom-2 left-2 right-2 bg-[#073D2B]/90 backdrop-blur-xs text-white p-2.5 rounded-lg text-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1">
+            <span><strong>Left:</strong> Living Cereal Rye Armor (0.3 t/ac erosion)</span>
+            <span className="text-rose-300"><strong>Right:</strong> Bare Fallow Surface Gullying (3.8 t/ac loss)</span>
+          </div>
+        </div>
+      </div>
+
       {/* Cover Crop Opportunity Action Bar */}
       <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA] flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-3">
