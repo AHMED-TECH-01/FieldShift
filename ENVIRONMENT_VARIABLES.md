@@ -15,6 +15,9 @@ This document provides a comprehensive audit and reference for all environment v
 | `APP_URL` | **Config** | No | `"http://localhost:3000"` | Canonical base URL; triggers secure `wss://` reverse-proxy HMR on HTTPS | `"https://fieldshift.example.com"` |
 | `GEMINI_TIMEOUT_MS`| **Backend Config** | No | `25000` | Milliseconds allowed for Gemini generation before deterministic fallback triggers | `25000` |
 | `DISABLE_HMR` | **Dev Config** | No | `"false"` | Disables Vite file watchers and WebSocket HMR | `"false"` or `"true"` |
+| `VITE_API_URL` | **Frontend Config**| No | `""` (relative) | Sets base URL for API requests when frontend runs standalone | `"http://localhost:3000"` |
+| `VITE_SUPABASE_URL` | **Frontend Config**| No | *None* | Supabase project URL for optional third-party auth | `"https://xyz.supabase.co"` |
+| `VITE_SUPABASE_ANON_KEY` | **Frontend Config**| No | *None* | Supabase public anonymous API key for auth | `"eyJhbGciOiJIUzI1Ni..."` |
 | `NASA_API_KEY` | **Backend Optional**| No | *None (Open demo)*| Expands rate limit on `api.nasa.gov` from 30 to 1,000 requests/hr | `"DEMO_KEY"` or `"YOUR_NASA_API_KEY"` |
 | `EARTHDATA_TOKEN` | **Backend Optional**| No | *None (Public)*| Bearer token for direct NASA Earthdata CMR granular granule queries | `"eyJhbGciOiJIUzI1Ni..."` |
 

@@ -25,22 +25,22 @@ export const FieldShiftEarth: React.FC<FieldShiftEarthProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [hasWebGL, setHasWebGL] = useState(true);
 
-  // Map size token to dimensions
+  // Map size token to dimensions with full mobile responsiveness
   const getDimensions = () => {
     if (typeof size === 'number') {
       return { width: size, height: size };
     }
     switch (size) {
       case 'sm':
-        return { width: 220, height: 220, styleClass: 'w-[220px] h-[220px]' };
+        return { width: 220, height: 220, styleClass: 'w-[180px] h-[180px] sm:w-[220px] sm:h-[220px] max-w-full' };
       case 'md':
-        return { width: 340, height: 340, styleClass: 'w-[300px] h-[300px] sm:w-[340px] sm:h-[340px]' };
+        return { width: 340, height: 340, styleClass: 'w-[240px] h-[240px] sm:w-[300px] sm:h-[300px] md:w-[340px] md:h-[340px] max-w-full' };
       case 'lg':
-        return { width: 440, height: 440, styleClass: 'w-[360px] h-[360px] md:w-[440px] md:h-[440px]' };
+        return { width: 440, height: 440, styleClass: 'w-[280px] h-[280px] sm:w-[360px] sm:h-[360px] md:w-[440px] md:h-[440px] max-w-full' };
       case 'xl':
-        return { width: 520, height: 520, styleClass: 'w-[400px] h-[400px] md:w-[520px] md:h-[520px]' };
+        return { width: 520, height: 520, styleClass: 'w-full max-w-[290px] h-[290px] sm:max-w-[380px] sm:h-[380px] md:max-w-[480px] md:h-[480px] lg:max-w-[520px] lg:h-[520px]' };
       default:
-        return { width: 340, height: 340, styleClass: 'w-[340px] h-[340px]' };
+        return { width: 340, height: 340, styleClass: 'w-[260px] h-[260px] sm:w-[340px] sm:h-[340px] max-w-full' };
     }
   };
 

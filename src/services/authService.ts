@@ -15,6 +15,18 @@ export interface AuthErrorDetails {
 }
 
 /**
+ * Resolves the API base URL from VITE_API_URL environment variable if set.
+ * Returns empty string by default to use relative paths (same origin / proxy).
+ */
+export function getApiBaseUrl(): string {
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) {
+    const raw = (import.meta.env.VITE_API_URL as string).trim();
+    return raw.endsWith('/') ? raw.slice(0, -1) : raw;
+  }
+  return '';
+}
+
+/**
  * Safely parse HTTP responses before attempting JSON parsing.
  * Prevents "Unexpected token 'T', 'The page c'... is not valid JSON" errors
  * caused by HTML/proxy/404 responses.
@@ -23,9 +35,16 @@ export async function safeFetchAuthJson<T = any>(
   url: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const baseUrl = getApiBaseUrl();
+  const resolvedUrl =
+    url.startsWith('http://') || url.startsWith('https://')
+      ? url
+      : `${baseUrl}${url.startsWith('/') ? url : `/${url}`}`;
+
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetch(resolvedUrl, {
+      credentials: 'include',
       ...options,
       headers: {
         'Accept': 'application/json',
@@ -74,7 +93,7 @@ export async function safeFetchAuthJson<T = any>(
       throw new Error('Access forbidden. Your account may be pending verification or deactivated.');
     }
     if (res.status === 404) {
-      throw new Error(`Authentication endpoint '${url}' could not be reached (404 Not Found).`);
+      throw new Error(`Authentication endpoint '${resolvedUrl}' could not be reached (404 Not Found).`);
     }
     if (res.status === 429) {
       throw new Error('Too many sign-in attempts. Please wait a minute and try again.');
@@ -99,8 +118,11 @@ export async function safeFetchAuthJson<T = any>(
  * Authentication Service supporting both local Express backend and optional Supabase.
  */
 class AuthService {
-  private primaryLoginUrl = '/api/auth/login';
-  private secondaryLoginUrl = '/auth/login';
+  private loginRouteCandidates = [
+    '/api/auth/login',
+    '/api/v1/auth/login',
+    '/auth/login',
+  ];
 
   /**
    * Check if Supabase Auth configuration is provided via environment
@@ -118,9 +140,6 @@ class AuthService {
   /**
    * Log in user with email and password
    */
-  /**
-   * Log in user with email and password
-   */
   public async login(
     emailOrCreds: string | { email: string; password: string },
     maybePassword?: string
@@ -132,37 +151,30 @@ class AuthService {
       throw new Error('Email and password are required.');
     }
 
-    // Try primary API route first (/api/auth/login)
-    try {
-      const res = await safeFetchAuthJson<AuthSessionResponse>(this.primaryLoginUrl, {
-        method: 'POST',
-        body: JSON.stringify({ email: cleanEmail, password }),
-      });
-      if (res && res.token && typeof localStorage !== 'undefined') {
-        localStorage.setItem('fieldshift_token', res.token);
-        localStorage.setItem('fieldshift_user', JSON.stringify(res.user));
-      }
-      return res;
-    } catch (primaryError: any) {
-      // If 404 on primary route, attempt fallback route (/auth/login)
-      if (primaryError.message && primaryError.message.includes('404')) {
-        try {
-          const res = await safeFetchAuthJson<AuthSessionResponse>(this.secondaryLoginUrl, {
-            method: 'POST',
-            body: JSON.stringify({ email: cleanEmail, password }),
-          });
-          if (res && res.token && typeof localStorage !== 'undefined') {
-            localStorage.setItem('fieldshift_token', res.token);
-            localStorage.setItem('fieldshift_user', JSON.stringify(res.user));
-          }
-          return res;
-        } catch {
-          // Re-throw original error if fallback also fails
-          throw primaryError;
+    let lastError: any = null;
+
+    // Try each valid login route candidate in order
+    for (const route of this.loginRouteCandidates) {
+      try {
+        const res = await safeFetchAuthJson<AuthSessionResponse>(route, {
+          method: 'POST',
+          body: JSON.stringify({ email: cleanEmail, password }),
+        });
+        if (res && res.token && typeof localStorage !== 'undefined') {
+          localStorage.setItem('fieldshift_token', res.token);
+          localStorage.setItem('fieldshift_user', JSON.stringify(res.user));
+        }
+        return res;
+      } catch (err: any) {
+        lastError = err;
+        // If error is not a 404 (e.g. 401 invalid password, 400 bad input), stop and throw immediately
+        if (!err.message || !err.message.includes('404')) {
+          throw err;
         }
       }
-      throw primaryError;
     }
+
+    throw lastError || new Error("Authentication endpoint '/api/auth/login' could not be reached (404 Not Found).");
   }
 
   /**

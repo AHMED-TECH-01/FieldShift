@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import http from 'http';
 import fs from 'fs';
+import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -14,17 +15,39 @@ import {
   BareFieldPeriod,
   PestCycleEvaluation,
   SupplementalIncome,
-} from './src/types';
+} from '../src/types';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// This file lives in <project-root>/api, so project assets (public/, dist/, Vite root)
+// must be resolved from the parent directory rather than from __dirname.
+const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
+
+// Global CORS & Preflight Handler for AI Studio Iframe & Cross-Origin Requests
+app.use((req: Request, res: Response, next) => {
+  const origin = req.headers.origin || '*';
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, X-Requested-With, Origin');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
+// Explicit OPTIONS preflight wildcard catch
+app.options('*', (_req: Request, res: Response) => {
+  res.status(204).end();
+});
 
 // Structured Logger for Gemini & System Events (sanitizes all credentials and keys)
 export function logGeminiEvent(event: string, meta: Record<string, any>) {
@@ -916,11 +939,30 @@ function calculateStrategyEvaluations(
   return strategies;
 }
 
+// Secure password hashing using Node.js crypto scrypt & timing-safe equality
+export function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derivedKey = crypto.scryptSync(password, salt, 64);
+  return `${salt}:${derivedKey.toString('hex')}`;
+}
+
+export function verifyPassword(password: string, storedHash: string): boolean {
+  try {
+    const [salt, key] = storedHash.split(':');
+    if (!salt || !key) return false;
+    const derivedKey = crypto.scryptSync(password, salt, 64);
+    const keyBuffer = Buffer.from(key, 'hex');
+    return crypto.timingSafeEqual(derivedKey, keyBuffer);
+  } catch {
+    return false;
+  }
+}
+
 // In-memory Auth session store
 interface UserSession {
   email: string;
   fullName: string;
-  password?: string;
+  passwordHash?: string;
   token: string;
   verified: boolean;
   otpCode: string;
@@ -929,11 +971,11 @@ interface UserSession {
 
 const activeUsers: Map<string, UserSession> = new Map();
 
-// Seed default accounts
+// Seed default accounts with cryptographically hashed passwords
 activeUsers.set('ahmed@example.com', {
   email: 'ahmed@example.com',
   fullName: 'Ahmed Raza',
-  password: 'password123',
+  passwordHash: hashPassword('password123'),
   token: 'fs-token-demo-992812',
   verified: true,
   otpCode: '482910',
@@ -943,7 +985,7 @@ activeUsers.set('ahmed@example.com', {
 activeUsers.set('test@test.com', {
   email: 'test@test.com',
   fullName: 'Test User',
-  password: '12345678',
+  passwordHash: hashPassword('12345678'),
   token: 'fs-token-test-12345678',
   verified: true,
   otpCode: '123456',
@@ -1454,9 +1496,16 @@ app.post('/api/farms', (req: Request, res: Response) => {
 // ==========================================================================
 
 // 1. User Registration
-const authRegisterPaths = ['/api/auth/register', '/auth/register', '/api/register', '/api/auth/signup', '/auth/signup'];
+const authRegisterPaths = [
+  '/api/auth/register',
+  '/api/v1/auth/register',
+  '/auth/register',
+  '/api/register',
+  '/api/auth/signup',
+  '/auth/signup',
+];
 app.post(authRegisterPaths, (req: Request, res: Response) => {
-  const { email, fullName, password } = req.body;
+  const { email, fullName, password } = req.body || {};
   if (!email || !fullName) {
     res.status(400).json({ error: 'Email and Full Name are required' });
     return;
@@ -1469,14 +1518,14 @@ app.post(authRegisterPaths, (req: Request, res: Response) => {
   activeUsers.set(normalizedEmail, {
     email: normalizedEmail,
     fullName: (fullName as string).trim(),
-    password,
+    passwordHash: password ? hashPassword(password) : undefined,
     token,
     verified: false,
     otpCode,
     otpExpiresAt: Date.now() + 10 * 60 * 1000,
   });
 
-  res.json({
+  res.status(201).json({
     success: true,
     message: 'Verification code sent to your email address.',
     email: normalizedEmail,
@@ -1485,24 +1534,23 @@ app.post(authRegisterPaths, (req: Request, res: Response) => {
 });
 
 // 2. OTP Verification
-const authVerifyPaths = ['/api/auth/verify-otp', '/auth/verify-otp', '/api/verify-otp'];
+const authVerifyPaths = ['/api/auth/verify-otp', '/api/v1/auth/verify-otp', '/auth/verify-otp', '/api/verify-otp'];
 app.post(authVerifyPaths, (req: Request, res: Response) => {
-  const { email, code } = req.body;
+  const { email, code } = req.body || {};
   const normalizedEmail = (email || '').toString().trim().toLowerCase();
   const user = activeUsers.get(normalizedEmail);
 
   if (!user) {
-    const token = `fs-token-auto-${Date.now()}`;
-    res.json({
-      success: true,
-      user: { email: normalizedEmail, fullName: normalizedEmail.split('@')[0], verified: true },
-      token,
-    });
+    res.status(404).json({ error: 'User not found. Please register first.' });
     return;
   }
 
   if (user.otpCode === code || code === '123456' || code === '482910') {
     user.verified = true;
+    res.setHeader(
+      'Set-Cookie',
+      `fieldshift_session=${user.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
+    );
     res.json({
       success: true,
       user: { email: user.email, fullName: user.fullName, verified: true },
@@ -1514,9 +1562,9 @@ app.post(authVerifyPaths, (req: Request, res: Response) => {
 });
 
 // 3. Resend OTP
-const authResendPaths = ['/api/auth/resend-otp', '/auth/resend-otp', '/api/resend-otp'];
+const authResendPaths = ['/api/auth/resend-otp', '/api/v1/auth/resend-otp', '/auth/resend-otp', '/api/resend-otp'];
 app.post(authResendPaths, (req: Request, res: Response) => {
-  const { email } = req.body;
+  const { email } = req.body || {};
   const normalizedEmail = (email || '').toString().trim().toLowerCase();
   const user = activeUsers.get(normalizedEmail);
   const newCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -1533,61 +1581,102 @@ app.post(authResendPaths, (req: Request, res: Response) => {
   });
 });
 
-// 4. User Sign In (Supports /api/auth/login, /auth/login, /api/login, /login, /api/auth/signin, /auth/signin)
+// 4. User Sign In (Supports /api/auth/login, /api/v1/auth/login, /auth/login, /api/login, /login, /api/auth/signin, /auth/signin)
 const authLoginPaths = [
   '/api/auth/login',
+  '/api/v1/auth/login',
   '/auth/login',
   '/api/login',
   '/login',
   '/api/auth/signin',
   '/auth/signin',
 ];
-app.post(authLoginPaths, (req: Request, res: Response) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    res.status(400).json({ error: 'Email and password are required' });
-    return;
-  }
 
-  const normalizedEmail = (email as string).trim().toLowerCase();
-  const user = activeUsers.get(normalizedEmail);
-  if (user) {
-    if (user.password && user.password !== password) {
+// Return 405 Method Not Allowed on GET
+app.get(authLoginPaths, (_req: Request, res: Response) => {
+  res.setHeader('Allow', 'POST, OPTIONS');
+  res.status(405).json({
+    error: 'Method Not Allowed. Use POST to authenticate.',
+    status: 405,
+    endpoint: '/api/auth/login',
+  });
+});
+
+app.post(authLoginPaths, (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || typeof email !== 'string' || !email.trim()) {
+      res.status(400).json({ error: 'Email and password are required' });
+      return;
+    }
+    if (!password || typeof password !== 'string') {
+      res.status(400).json({ error: 'Email and password are required' });
+      return;
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = activeUsers.get(normalizedEmail);
+
+    if (!user) {
+      res.status(401).json({
+        error: 'Invalid credentials. No account found for this email address. Please register.',
+      });
+      return;
+    }
+
+    if (!user.passwordHash || !verifyPassword(password, user.passwordHash)) {
       res.status(401).json({ error: 'Invalid password. Please check your credentials.' });
       return;
     }
-    res.json({
+
+    // Refresh token if needed
+    const token = user.token || `fs-token-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
+    user.token = token;
+
+    // Set secure HTTP-only session cookie
+    const isProd = process.env.NODE_ENV === 'production';
+    res.setHeader(
+      'Set-Cookie',
+      `fieldshift_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isProd ? '; Secure' : ''}`
+    );
+
+    res.status(200).json({
       success: true,
-      user: { email: user.email, fullName: user.fullName, verified: user.verified },
+      user: {
+        email: user.email,
+        fullName: user.fullName,
+        verified: user.verified,
+      },
       token: user.token,
     });
-  } else {
-    // If not previously registered, register as new verified session with credentials
-    const token = `fs-token-${Date.now()}`;
-    const newUser: UserSession = {
-      email: normalizedEmail,
-      fullName: normalizedEmail.split('@')[0].replace(/[._-]/g, ' '),
-      password,
-      token,
-      verified: true,
-      otpCode: '123456',
-      otpExpiresAt: Date.now() + 3600000,
-    };
-    activeUsers.set(normalizedEmail, newUser);
-
-    res.json({
-      success: true,
-      user: { email: newUser.email, fullName: newUser.fullName, verified: true },
-      token,
+  } catch (err: any) {
+    res.status(500).json({
+      error: 'An internal error occurred during authentication. Please try again.',
     });
   }
 });
 
 // 5. Session Verification
-const authSessionPaths = ['/api/auth/session', '/auth/session', '/api/auth/me', '/auth/me', '/api/auth/user', '/auth/user'];
+const authSessionPaths = [
+  '/api/auth/session',
+  '/api/v1/auth/session',
+  '/auth/session',
+  '/api/auth/me',
+  '/auth/me',
+  '/api/auth/user',
+  '/auth/user',
+];
 app.get(authSessionPaths, (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.query.token as string);
+  let token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.query.token as string);
+
+  // Check cookie if token not present in header or query
+  if (!token && req.headers.cookie) {
+    const match = req.headers.cookie.match(/fieldshift_session=([^;]+)/);
+    if (match) {
+      token = match[1];
+    }
+  }
 
   if (!token) {
     res.status(401).json({ error: 'No active session token provided.' });
@@ -1608,8 +1697,9 @@ app.get(authSessionPaths, (req: Request, res: Response) => {
 });
 
 // 6. User Logout
-const authLogoutPaths = ['/api/auth/logout', '/auth/logout', '/api/logout', '/logout'];
+const authLogoutPaths = ['/api/auth/logout', '/api/v1/auth/logout', '/auth/logout', '/api/logout', '/logout'];
 app.post(authLogoutPaths, (req: Request, res: Response) => {
+  res.setHeader('Set-Cookie', 'fieldshift_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
   res.json({ success: true, message: 'Logged out successfully.' });
 });
 
@@ -1891,7 +1981,7 @@ ${priorityHighlights.join('\n')}
 
 // Explicit SEO Crawl Endpoints
 app.get('/robots.txt', (_req: Request, res: Response) => {
-  const robotsPath = path.resolve(__dirname, 'public', 'robots.txt');
+  const robotsPath = path.resolve(PROJECT_ROOT, 'public', 'robots.txt');
   if (fs.existsSync(robotsPath)) {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.sendFile(robotsPath);
@@ -1901,7 +1991,7 @@ app.get('/robots.txt', (_req: Request, res: Response) => {
 });
 
 app.get('/sitemap.xml', (_req: Request, res: Response) => {
-  const sitemapPath = path.resolve(__dirname, 'public', 'sitemap.xml');
+  const sitemapPath = path.resolve(PROJECT_ROOT, 'public', 'sitemap.xml');
   if (fs.existsSync(sitemapPath)) {
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.sendFile(sitemapPath);
@@ -1928,6 +2018,7 @@ async function startServer() {
   if (!isProd) {
     // In development mode: attach Vite middleware and hook HMR/WS upgrade to httpServer
     const vite = await createViteServer({
+      root: PROJECT_ROOT,
       server: {
         middlewareMode: true,
         ws: {
@@ -1943,7 +2034,7 @@ async function startServer() {
     logGeminiEvent('DEV_SERVER_INITIALIZED', { mode: 'development', port: PORT });
   } else {
     // In production mode: serve pre-built distribution assets directly
-    const distPath = path.resolve(__dirname, 'dist');
+    const distPath = path.resolve(PROJECT_ROOT, 'dist');
     app.use(express.static(distPath));
     app.get('*', (req: Request, res: Response) => {
       res.sendFile(path.resolve(distPath, 'index.html'));

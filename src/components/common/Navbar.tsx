@@ -39,7 +39,21 @@ export const Navbar: React.FC<NavbarProps> = ({
   const solutionsRef = useRef<HTMLDivElement>(null);
   const resourcesRef = useRef<HTMLDivElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
 
+  // Lock body scroll when mobile menu is open
+  useEffect(() => {
+    if (mobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [mobileMenuOpen]);
+
+  // Handle escape key and outside click to close menus
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (solutionsRef.current && !solutionsRef.current.contains(e.target as Node)) {
@@ -51,16 +65,40 @@ export const Navbar: React.FC<NavbarProps> = ({
       if (userRef.current && !userRef.current.contains(e.target as Node)) {
         setUserDropdownOpen(false);
       }
+      if (mobileMenuOpen && mobileMenuRef.current && !mobileMenuRef.current.contains(e.target as Node)) {
+        // Handled by backdrop click
+      }
     };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMobileMenuOpen(false);
+        setSolutionsOpen(false);
+        setResourcesOpen(false);
+        setUserDropdownOpen(false);
+      }
+    };
+
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [mobileMenuOpen]);
 
   const navItemClass = (path: string) =>
     `px-3 py-2 text-sm font-medium transition-all rounded-full ${
       currentPath === path
         ? 'text-[#073D2B] bg-[#E7EFE6] font-semibold'
         : 'text-[#204033] hover:text-[#073D2B] hover:bg-[#F0F5EE]'
+    }`;
+
+  const mobileNavItemClass = (path: string) =>
+    `w-full text-left px-3.5 py-3 rounded-xl text-sm font-medium min-h-[44px] flex items-center justify-between transition-colors ${
+      currentPath === path
+        ? 'text-[#073D2B] bg-[#E7EFE6] font-bold border-l-4 border-[#76B93F]'
+        : 'text-[#204033] hover:bg-[#F8F7ED]'
     }`;
 
   return (
@@ -283,17 +321,17 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <button
                 onClick={() => onOpenAuth('signin')}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs sm:text-sm font-semibold text-[#073D2B] hover:bg-white/80 rounded-full border border-transparent hover:border-[#E2E8DE] transition-all"
+                className="flex items-center gap-1 sm:gap-1.5 px-3 sm:px-4 py-2 min-h-[40px] text-xs sm:text-sm font-semibold text-[#073D2B] hover:bg-white/80 rounded-full border border-transparent hover:border-[#E2E8DE] transition-all"
               >
-                <UserIcon className="w-4 h-4" />
-                Sign In
+                <UserIcon className="w-4 h-4 shrink-0" />
+                <span>Sign In</span>
               </button>
               <button
                 onClick={() => onOpenAuth('signup')}
-                className="flex items-center gap-1.5 px-4 sm:px-5 py-2 text-xs sm:text-sm font-semibold text-white bg-[#073D2B] hover:bg-[#145C3D] rounded-full shadow-md hover:shadow-lg transition-all"
+                className="hidden sm:inline-flex items-center gap-1.5 px-4 sm:px-5 py-2 min-h-[40px] text-xs sm:text-sm font-semibold text-white bg-[#073D2B] hover:bg-[#145C3D] rounded-full shadow-md hover:shadow-lg transition-all"
               >
                 <span>Get Started</span>
                 <Sparkles className="w-3.5 h-3.5 text-[#76B93F]" />
@@ -304,106 +342,168 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Mobile hamburger menu toggle */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="lg:hidden p-2 rounded-xl text-[#073D2B] hover:bg-[#E7EFE6] transition-colors"
-            aria-label="Toggle Navigation Menu"
+            className="lg:hidden p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-[#073D2B] hover:bg-[#E7EFE6] transition-colors focus:outline-hidden focus:ring-2 focus:ring-[#76B93F]"
+            aria-label={mobileMenuOpen ? 'Close Navigation Menu' : 'Open Navigation Menu'}
+            aria-expanded={mobileMenuOpen}
           >
             {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
         </div>
       </div>
 
-      {/* Mobile Navigation Drawer */}
+      {/* Mobile Navigation Backdrop & Slide Drawer */}
       {mobileMenuOpen && (
-        <div className="lg:hidden bg-white border-b border-[#E2E8DE] px-4 pt-3 pb-6 space-y-2 animate-in slide-in-from-top-4 duration-200">
-          <button
-            onClick={() => {
-              onNavigate('/');
-              setMobileMenuOpen(false);
-            }}
-            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
+        <div className="lg:hidden fixed inset-0 top-20 z-40 bg-black/50 backdrop-blur-xs flex flex-col justify-start animate-in fade-in duration-150">
+          <div
+            ref={mobileMenuRef}
+            className="bg-white border-b border-[#E2E8DE] px-4 pt-3 pb-6 space-y-1.5 max-h-[calc(100vh-5rem)] overflow-y-auto shadow-2xl animate-in slide-in-from-top-4 duration-200"
           >
-            Home
-          </button>
-          <button
-            onClick={() => {
-              onNavigate('/about');
-              setMobileMenuOpen(false);
-            }}
-            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
-          >
-            About Field Shift
-          </button>
-          <button
-            onClick={() => {
-              onNavigate('/features');
-              setMobileMenuOpen(false);
-            }}
-            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
-          >
-            Core Features
-          </button>
-          <button
-            onClick={() => {
-              onNavigate('/nasa-data');
-              setMobileMenuOpen(false);
-            }}
-            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
-          >
-            NASA Earth Observations
-          </button>
-          <button
-            onClick={() => {
-              onNavigate('/solutions');
-              setMobileMenuOpen(false);
-            }}
-            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
-          >
-            Agricultural Solutions
-          </button>
-          <button
-            onClick={() => {
-              onNavigate('/resources');
-              setMobileMenuOpen(false);
-            }}
-            className="w-full text-left px-3 py-2 rounded-xl text-sm font-semibold text-[#073D2B] hover:bg-[#F8F7ED]"
-          >
-            Resources & Scientific Papers
-          </button>
-
-          <div className="pt-2 border-t border-[#E2E8DE] flex gap-2">
-            {currentUser ? (
+            <div className="space-y-1">
               <button
                 onClick={() => {
-                  onNavigate('/dashboard');
+                  onNavigate('/');
                   setMobileMenuOpen(false);
                 }}
-                className="w-full py-2.5 px-4 bg-[#073D2B] text-white rounded-xl font-semibold text-sm text-center"
+                className={mobileNavItemClass('/')}
               >
-                Go to Dashboard
+                <span>Home</span>
+                {currentPath === '/' && <span className="text-[10px] font-bold text-[#76B93F]">Active</span>}
               </button>
-            ) : (
-              <>
+              <button
+                onClick={() => {
+                  onNavigate('/about');
+                  setMobileMenuOpen(false);
+                }}
+                className={mobileNavItemClass('/about')}
+              >
+                <span>About Field Shift</span>
+                {currentPath === '/about' && <span className="text-[10px] font-bold text-[#76B93F]">Active</span>}
+              </button>
+              <button
+                onClick={() => {
+                  onNavigate('/features');
+                  setMobileMenuOpen(false);
+                }}
+                className={mobileNavItemClass('/features')}
+              >
+                <span>Core Features</span>
+                {currentPath === '/features' && <span className="text-[10px] font-bold text-[#76B93F]">Active</span>}
+              </button>
+              <button
+                onClick={() => {
+                  onNavigate('/nasa-data');
+                  setMobileMenuOpen(false);
+                }}
+                className={mobileNavItemClass('/nasa-data')}
+              >
+                <span>NASA Earth Observations</span>
+                {currentPath === '/nasa-data' && <span className="text-[10px] font-bold text-[#76B93F]">Active</span>}
+              </button>
+              <button
+                onClick={() => {
+                  onNavigate('/crop-rotation');
+                  setMobileMenuOpen(false);
+                }}
+                className={mobileNavItemClass('/crop-rotation')}
+              >
+                <span>Crop Rotation Simulator</span>
+                {currentPath === '/crop-rotation' && <span className="text-[10px] font-bold text-[#76B93F]">Active</span>}
+              </button>
+              <button
+                onClick={() => {
+                  onNavigate('/soil-intelligence');
+                  setMobileMenuOpen(false);
+                }}
+                className={mobileNavItemClass('/soil-intelligence')}
+              >
+                <span>Soil Intelligence & Moisture</span>
+                {currentPath === '/soil-intelligence' && <span className="text-[10px] font-bold text-[#76B93F]">Active</span>}
+              </button>
+              <button
+                onClick={() => {
+                  onNavigate('/field-risk');
+                  setMobileMenuOpen(false);
+                }}
+                className={mobileNavItemClass('/field-risk')}
+              >
+                <span>Field Risk Assessment</span>
+                {currentPath === '/field-risk' && <span className="text-[10px] font-bold text-[#76B93F]">Active</span>}
+              </button>
+              <button
+                onClick={() => {
+                  onNavigate('/solutions');
+                  setMobileMenuOpen(false);
+                }}
+                className={mobileNavItemClass('/solutions')}
+              >
+                <span>Agricultural Solutions</span>
+                {currentPath === '/solutions' && <span className="text-[10px] font-bold text-[#76B93F]">Active</span>}
+              </button>
+              <button
+                onClick={() => {
+                  onNavigate('/resources');
+                  setMobileMenuOpen(false);
+                }}
+                className={mobileNavItemClass('/resources')}
+              >
+                <span>Resources & Science</span>
+                {currentPath === '/resources' && <span className="text-[10px] font-bold text-[#76B93F]">Active</span>}
+              </button>
+              <button
+                onClick={() => {
+                  onNavigate('/ai-advisor');
+                  setMobileMenuOpen(false);
+                }}
+                className={mobileNavItemClass('/ai-advisor')}
+              >
+                <span>AI Agricultural Advisor</span>
+                {currentPath === '/ai-advisor' && <span className="text-[10px] font-bold text-[#76B93F]">Active</span>}
+              </button>
+            </div>
+
+            <div className="pt-3 border-t border-[#E2E8DE] flex flex-col sm:flex-row gap-2.5">
+              {currentUser ? (
                 <button
                   onClick={() => {
-                    onOpenAuth('signin');
+                    onNavigate('/dashboard');
                     setMobileMenuOpen(false);
                   }}
-                  className="flex-1 py-2.5 px-4 bg-[#F0F5EE] text-[#073D2B] rounded-xl font-semibold text-sm text-center"
+                  className="w-full h-12 bg-[#073D2B] text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition-transform"
                 >
-                  Sign In
+                  <BarChart3 className="w-4 h-4 text-[#76B93F]" />
+                  <span>Farmer Dashboard</span>
                 </button>
-                <button
-                  onClick={() => {
-                    onOpenAuth('signup');
-                    setMobileMenuOpen(false);
-                  }}
-                  className="flex-1 py-2.5 px-4 bg-[#073D2B] text-white rounded-xl font-semibold text-sm text-center"
-                >
-                  Create Account
-                </button>
-              </>
-            )}
+              ) : (
+                <>
+                  <button
+                    onClick={() => {
+                      onOpenAuth('signin');
+                      setMobileMenuOpen(false);
+                    }}
+                    className="w-full sm:flex-1 h-12 bg-[#F0F5EE] text-[#073D2B] rounded-xl font-bold text-sm flex items-center justify-center transition-colors"
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    onClick={() => {
+                      onOpenAuth('signup');
+                      setMobileMenuOpen(false);
+                    }}
+                    className="w-full sm:flex-1 h-12 bg-[#073D2B] text-white rounded-xl font-bold text-sm flex items-center justify-center gap-1.5 shadow-md active:scale-[0.98] transition-transform"
+                  >
+                    <span>Create Account</span>
+                    <Sparkles className="w-3.5 h-3.5 text-[#76B93F]" />
+                  </button>
+                </>
+              )}
+            </div>
           </div>
+          {/* Backdrop tap-to-close zone */}
+          <div
+            className="flex-1"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-hidden="true"
+          />
         </div>
       )}
     </header>

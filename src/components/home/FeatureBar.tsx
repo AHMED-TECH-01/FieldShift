@@ -59,14 +59,16 @@ export const FeatureBar: React.FC<FeatureBarProps> = ({ onSelectFeature, activeF
     <section className="relative z-20 -mt-6 sm:-mt-8 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div className="bg-white/95 backdrop-blur-xl border border-[#D0E2C8] rounded-3xl p-3 sm:p-4 shadow-xl shadow-[#073D2B]/5">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
-          {features.map((feat) => {
+          {features.map((feat, index) => {
             const Icon = feat.icon;
             const isActive = activeFeature === feat.id;
             return (
               <button
                 key={feat.id}
                 onClick={() => onSelectFeature(feat.id)}
-                className={`flex items-center gap-3 p-3 rounded-2xl text-left transition-all group border ${
+                className={`flex items-center gap-2.5 sm:gap-3 p-2.5 sm:p-3 rounded-2xl text-left transition-all group border ${
+                  index === 4 ? 'col-span-2 md:col-span-1' : ''
+                } ${
                   isActive
                     ? 'bg-[#F2F8ED] border-[#76B93F] shadow-sm ring-2 ring-[#76B93F]/20'
                     : `bg-white/60 hover:bg-[#F8FBF6] border-transparent ${feat.hoverBorder}`

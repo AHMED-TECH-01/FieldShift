@@ -16,6 +16,21 @@ export default defineConfig(() => {
       },
     },
     server: {
+      port: 3000,
+      host: '0.0.0.0',
+      // Proxy API and Auth requests to backend server when Vite runs standalone
+      proxy: {
+        '/api': {
+          target: process.env.VITE_API_URL || 'http://localhost:3000',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/auth': {
+          target: process.env.VITE_API_URL || 'http://localhost:3000',
+          changeOrigin: true,
+          secure: false,
+        },
+      },
       // HMR is enabled for local dev/preview, configured for reverse-proxy WSS when on HTTPS
       hmr: process.env.DISABLE_HMR === 'true'
         ? false

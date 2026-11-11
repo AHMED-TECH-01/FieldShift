@@ -85,10 +85,10 @@ export const InteractiveFarmMap: React.FC<InteractiveFarmMapProps> = ({ farm }) 
           </div>
 
           {/* Map Layer Rendering Graphic */}
-          <div className="my-auto py-12 flex flex-col items-center justify-center relative select-none">
+          <div className="my-auto py-8 sm:py-12 flex flex-col items-center justify-center relative select-none w-full">
             
-            {/* Simulated Agricultural Field Polygon */}
-            <div className="relative w-80 h-64 sm:w-96 sm:h-72 border-2 border-[#76B93F] bg-emerald-950/40 rounded-2xl p-4 flex flex-col justify-between shadow-2xl overflow-hidden">
+            {/* Simulated Agricultural Field Polygon - Fully fluid on small screens */}
+            <div className="relative w-full max-w-[320px] sm:max-w-md h-60 sm:h-72 border-2 border-[#76B93F] bg-emerald-950/40 rounded-2xl p-3 sm:p-4 flex flex-col justify-between shadow-2xl overflow-hidden mx-auto">
               
               {/* Active Overlays Simulated Canvas */}
               {activeLayers.modisNdvi && (

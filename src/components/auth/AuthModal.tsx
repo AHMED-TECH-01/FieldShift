@@ -200,20 +200,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative bg-white rounded-3xl max-w-4xl w-full shadow-2xl border border-[#D5E5CA] overflow-hidden flex flex-col md:flex-row max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto">
+      <div className="relative bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full shadow-2xl border border-[#D5E5CA] overflow-hidden flex flex-col md:flex-row my-auto max-h-[96vh] md:max-h-[92vh]">
         
-        {/* Close Button */}
+        {/* Close Button - Enhanced 44px touch target */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 z-20 p-2 rounded-full bg-white/80 hover:bg-[#F0F5EE] text-[#073D2B] transition-colors"
+          className="absolute top-2.5 right-2.5 sm:top-4 sm:right-4 z-20 w-11 h-11 flex items-center justify-center rounded-full bg-white/90 hover:bg-[#F0F5EE] text-[#073D2B] transition-colors shadow-xs"
           aria-label="Close modal"
         >
           <X className="w-5 h-5" />
         </button>
 
         {/* Left Side: Brand Visual & Earth Mockup (Desktop) */}
-        <div className="hidden md:flex md:w-5/12 bg-gradient-to-b from-[#073D2B] via-[#0E4935] to-[#145C3D] p-8 text-white flex-col justify-between relative overflow-hidden">
+        <div className="hidden md:flex md:w-5/12 bg-gradient-to-b from-[#073D2B] via-[#0E4935] to-[#145C3D] p-6 lg:p-8 text-white flex-col justify-between relative overflow-hidden">
           {/* Subtle decorative glow */}
           <div className="absolute -top-12 -left-12 w-48 h-48 rounded-full bg-[#76B93F]/20 blur-2xl" />
           
@@ -273,7 +273,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         {/* Right Side: Form Area */}
-        <div className="w-full md:w-7/12 p-6 sm:p-8 overflow-y-auto bg-[#F8F7ED]/50 flex flex-col justify-center">
+        <div className="w-full md:w-7/12 p-4 sm:p-6 md:p-8 overflow-y-auto bg-[#F8F7ED]/50 flex flex-col justify-center">
           
           {/* Tabs for Sign Up / Sign In (Only in signin/signup modes) */}
           {(mode === 'signin' || mode === 'signup') && (
@@ -606,8 +606,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </p>
               </div>
 
-              {/* 6 Individual OTP Boxes */}
-              <div className="flex items-center justify-center gap-2 sm:gap-3" onPaste={handlePasteOtp}>
+              {/* 6 Individual OTP Boxes - Scales perfectly down to 320px screens */}
+              <div className="flex items-center justify-center gap-1.5 sm:gap-2.5 max-w-full overflow-hidden px-1" onPaste={handlePasteOtp}>
                 {otp.map((digit, index) => (
                   <input
                     key={index}
@@ -620,7 +620,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={digit}
                     onChange={(e) => handleOtpChange(index, e.target.value)}
                     onKeyDown={(e) => handleOtpKeyDown(index, e)}
-                    className="w-10 h-12 sm:w-12 sm:h-14 text-center font-display text-lg font-bold rounded-xl border border-[#D5E5CA] bg-white text-[#073D2B] shadow-xs focus:outline-hidden focus:ring-2 focus:ring-[#76B93F] focus:border-[#76B93F]"
+                    className="w-8.5 h-11 sm:w-11 sm:h-13 md:w-12 md:h-14 text-center font-display text-base sm:text-lg font-bold rounded-lg sm:rounded-xl border border-[#D5E5CA] bg-white text-[#073D2B] shadow-xs focus:outline-hidden focus:ring-2 focus:ring-[#76B93F] focus:border-[#76B93F]"
                   />
                 ))}
               </div>

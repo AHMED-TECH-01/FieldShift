@@ -257,17 +257,17 @@ export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
       </div>
 
       {/* Action Button */}
-      <div className="pt-2 flex items-center justify-between">
+      <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         <span className="text-xs text-[#527367] flex items-center gap-1.5">
-          <Info className="w-4 h-4 text-[#76B93F]" />
-          Adjusting sliders feeds real-time inputs into the Crop Rotation Engine algorithms.
+          <Info className="w-4 h-4 text-[#76B93F] shrink-0" />
+          <span>Adjusting sliders feeds real-time inputs into the Crop Rotation Engine algorithms.</span>
         </span>
 
         <button
           type="button"
           disabled={recalculating}
           onClick={() => onApplyPriorities(priorities)}
-          className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50"
+          className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 shrink-0"
         >
           {recalculating ? (
             <>
@@ -276,7 +276,7 @@ export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
             </>
           ) : (
             <>
-              <span>Recalculate Rotation Strategy Rankings</span>
+              <span>Recalculate Strategy Rankings</span>
               <ArrowRight className="w-4 h-4 text-[#76B93F]" />
             </>
           )}

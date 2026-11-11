@@ -103,26 +103,26 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
       </div>
 
       {/* Preset Scenarios Buttons */}
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-xs font-bold text-[#527367]">Benchmark Scenarios:</span>
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        <span className="text-xs font-bold text-[#527367] w-full sm:w-auto">Benchmark Scenarios:</span>
         <button
           type="button"
           onClick={() => handlePresetScenario('drought')}
-          className="px-3.5 py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D]"
+          className="px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-[11px] sm:text-xs font-semibold text-[#145C3D] text-left"
         >
           2012-Style Severe Summer Drought (-35% Rain, +3.5°C)
         </button>
         <button
           type="button"
           onClick={() => handlePresetScenario('excessive_rain')}
-          className="px-3.5 py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D]"
+          className="px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-[11px] sm:text-xs font-semibold text-[#145C3D] text-left"
         >
           Late Wet Spring (+30% Rain, Delayed Planting)
         </button>
         <button
           type="button"
           onClick={() => handlePresetScenario('early_frost')}
-          className="px-3.5 py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D]"
+          className="px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-[11px] sm:text-xs font-semibold text-[#145C3D] text-left"
         >
           Early Autumn Freeze (-2.0°C Mean)
         </button>

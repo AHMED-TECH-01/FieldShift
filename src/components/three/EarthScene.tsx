@@ -30,14 +30,16 @@ export function initEarthScene(config: EarthSceneConfig): {
   const width = container.clientWidth || 360;
   const height = container.clientHeight || 360;
 
-  // 1. WebGL Renderer Setup
+  // 1. WebGL Renderer Setup with Mobile DPR Capping
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  const maxDpr = isMobile ? 1.5 : quality === 'high' ? 2 : 1.5;
   const renderer = new THREE.WebGLRenderer({
-    antialias: quality !== 'low',
+    antialias: quality !== 'low' && !isMobile,
     alpha: true,
     powerPreference: 'high-performance',
   });
   renderer.setSize(width, height);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === 'high' ? 2 : 1.5));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxDpr));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.25;
 
@@ -192,21 +194,26 @@ export function initEarthScene(config: EarthSceneConfig): {
     scene.add(satellite.group);
   }
 
-  // 5. Interactive Mouse Parallax Tracking
+  // 5. Interactive Mouse & Touch Parallax Tracking
   let targetRotationX = 0;
   let targetRotationY = 0;
 
-  const onPointerMove = (e: MouseEvent) => {
+  const onPointerMove = (e: MouseEvent | TouchEvent) => {
     if (!interactive) return;
+    const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0]?.clientY : e.clientY;
+    if (clientX === undefined || clientY === undefined) return;
+
     const rect = container.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+    const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
     targetRotationY = x * 0.25;
     targetRotationX = y * 0.25;
   };
 
   if (interactive) {
-    container.addEventListener('mousemove', onPointerMove);
+    container.addEventListener('mousemove', onPointerMove, { passive: true });
+    container.addEventListener('touchmove', onPointerMove, { passive: true });
   }
 
   // 6. Responsive Resize Handler (Guarantees zero clipping across all screen sizes)
@@ -226,12 +233,27 @@ export function initEarthScene(config: EarthSceneConfig): {
     renderer.setSize(w, h);
   };
 
-  // 7. Visibility Change Handler (Pause rendering when tab inactive)
+  // 7. Visibility Change & IntersectionObserver (Pause rendering when tab inactive or offscreen)
   let isTabActive = !document.hidden;
+  let isElementInView = true;
+
   const onVisibilityChange = () => {
     isTabActive = !document.hidden;
   };
   document.addEventListener('visibilitychange', onVisibilityChange);
+
+  let observer: IntersectionObserver | null = null;
+  if (typeof IntersectionObserver !== 'undefined') {
+    observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          isElementInView = entry.isIntersecting;
+        }
+      },
+      { threshold: 0.05 }
+    );
+    observer.observe(container);
+  }
 
   // 8. Animation Loop (Modern THREE.Timer replacing deprecated THREE.Clock)
   let reqId: number;
@@ -243,7 +265,7 @@ export function initEarthScene(config: EarthSceneConfig): {
   const animate = (timestamp?: number) => {
     reqId = requestAnimationFrame(animate);
 
-    if (!isTabActive) return;
+    if (!isTabActive || !isElementInView) return;
 
     let elapsed: number;
     if (timer) {
@@ -287,10 +309,14 @@ export function initEarthScene(config: EarthSceneConfig): {
     if (timer && typeof timer.dispose === 'function') {
       timer.dispose();
     }
+    if (observer) {
+      observer.disconnect();
+    }
     document.removeEventListener('visibilitychange', onVisibilityChange);
 
     if (interactive) {
       container.removeEventListener('mousemove', onPointerMove);
+      container.removeEventListener('touchmove', onPointerMove);
     }
 
     renderer.dispose();
