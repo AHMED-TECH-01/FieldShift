@@ -312,10 +312,66 @@ If the backend runs independently, start it using its own development script.
 ```bash
 npm run build
 ```
-
-Follow the deployment instructions for the actual frontend and backend architecture.
+Generates optimized frontend assets in `/dist`.
 
 ---
+
+## ⚡ Vercel Deployment Guide (Free Hosting)
+
+FieldShift is structured for zero-cost deployment on Vercel:
+- **Frontend**: Vite SPA compiled to `dist/` and served via Vercel's global Edge CDN.
+- **Backend API**: The Express application in `app.ts` is invoked as a serverless function via `api/index.ts`.
+- **Routing**: `vercel.json` maps `/api/(.*)` to the serverless function and all other paths to `/index.html` for client-side routing.
+
+### Step-by-Step Vercel Deployment:
+
+1. **Push your repository to GitHub**:
+   ```bash
+   git add .
+   git commit -m "feat: configure FieldShift for Vercel deployment"
+   git push origin main
+   ```
+
+2. **Import into Vercel**:
+   - Log into [vercel.com](https://vercel.com).
+   - Click **Add New...** &rarr; **Project**.
+   - Select your `FieldShift` repository.
+
+3. **Configure Build Settings**:
+   - **Framework Preset**: `Vite` (automatically detected)
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `dist`
+   - **Install Command**: `npm install`
+
+4. **Set Environment Variables in Vercel**:
+   In **Project Settings &rarr; Environment Variables**, add:
+   - `GEMINI_API_KEY`: Your Google AI Studio Gemini API key (`AIzaSy...`)
+   - `NODE_ENV`: `production`
+   - *(Optional)* `VITE_SUPABASE_URL`: Your Supabase Project URL
+   - *(Optional)* `VITE_SUPABASE_ANON_KEY`: Your Supabase anonymous public key
+
+5. **Deploy & Verify**:
+   - Click **Deploy**.
+   - Visit `https://<your-project>.vercel.app/api/health` to confirm the serverless backend is live.
+   - Navigate to the frontend dashboard and interact with the AI Agricultural Advisor and Interactive Farm Map.
+
+---
+
+## 📡 API Endpoints Reference
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/health` | `GET` | System health check and Gemini configuration status |
+| `/api/crops` | `GET` | 16-parameter agronomic characteristics for 8+ verified crops |
+| `/api/farms` | `GET`, `POST` | Retrieve active parcels and register new farm parcel telemetry |
+| `/api/rotations/recalculate` | `POST` | Dynamic 3-strategy evaluation matrix based on farmer priorities |
+| `/api/advisor` (or `/api/gemini/advisor`) | `POST` | Gemini 3.8 Flash agronomic copilot grounded in NASA observations |
+| `/api/analysis/bare-field` | `GET` | 12-month MODIS NDVI vegetative armor and soil loss timeline |
+| `/api/analysis/pest-cycles` | `GET` | Host-crop botanical family break and pest cycle diagnostics |
+| `/api/analysis/supplemental-income` | `GET` | USDA CSP stewardship, carbon credits, and forage seed contracts |
+| `/api/auth/login` | `POST` | Session authentication and token dispatch |
+| `/api/auth/register` | `POST` | User registration with 6-digit OTP verification code dispatch |
+| `/api/auth/verify-otp` | `POST` | Validate 6-digit email confirmation code |
 
 ## 🔐 Security & Reliability
 

@@ -118,9 +118,34 @@ To run Field Shift on your local workstation:
 
 ---
 
-## 7. Production Deployment (Google Cloud Run / Docker)
+---
 
-In production, the application should build static assets (`npm run build`) and run `server.ts` with `NODE_ENV=production`.
+## 7. Production Deployment (Vercel Serverless Hosting)
+
+Field Shift is fully configured for zero-cost deployment on **Vercel** as a unified Vite Frontend + Express Serverless Function.
+
+### Vercel Architecture Overview:
+- **Frontend**: Pre-compiled Vite SPA assets in `dist/` served directly from Vercel's global CDN Edge Network.
+- **Backend API**: The Express serverless handler in `api/index.ts` processes all `/api/*` traffic automatically.
+- **Rewrites (`vercel.json`)**: Directs `/api/(.*)` to `/api` and non-API paths to `/index.html` for client-side routing.
+
+### Configuring Environment Variables in Vercel:
+1. Go to your project on the **[Vercel Dashboard](https://vercel.com/dashboard)**.
+2. Navigate to **Settings** &rarr; **Environment Variables**.
+3. Add the following variables:
+
+| Variable Name | Value | Target Environments |
+| :--- | :--- | :--- |
+| `GEMINI_API_KEY` | Your Google AI Studio API key (`AIzaSy...`) | Production, Preview, Development |
+| `NODE_ENV` | `production` | Production |
+| `VITE_SUPABASE_URL` | *(Optional)* Your Supabase project URL | Production, Preview, Development |
+| `VITE_SUPABASE_ANON_KEY` | *(Optional)* Your Supabase anonymous client key | Production, Preview, Development |
+
+---
+
+## 8. Alternative Production Deployment (Google Cloud Run / Docker)
+
+In containerized production, the application builds static assets (`npm run build`) and runs `server.ts` with `NODE_ENV=production`.
 
 ### Step 1: Build the Frontend
 ```bash
@@ -140,25 +165,22 @@ gcloud run deploy fieldshift \
   --set-secrets GEMINI_API_KEY=GEMINI_API_KEY:latest
 ```
 
-### Production Behavior:
-- When `NODE_ENV=production` is detected, `server.ts` automatically serves the pre-compiled `/dist` static assets and handles single-page app routing.
-- Vite development middlewares, file watchers, and client `@vite/client` injection are bypassed, saving CPU and memory.
-
 ---
 
-## 8. Troubleshooting & Common Issues
+## 9. Troubleshooting & Common Issues
 
 | Symptom | Probable Cause | Remediation |
 | :--- | :--- | :--- |
-| **"Gemini API key pending configuration" notice in UI** | `GEMINI_API_KEY` is empty or missing. | Add your API key in `.env` (locally) or via **Settings > Secrets** (in AI Studio). The deterministic fallback will run in the meantime. |
+| **"Gemini API key pending configuration" notice in UI** | `GEMINI_API_KEY` is empty or missing. | Add your API key in `.env` (locally) or via **Settings > Environment Variables** (in Vercel). The deterministic fallback will run in the meantime. |
 | **"Gemini API timeout after 25000ms"** | Network latency or model thinking delays exceeded threshold. | Increase `GEMINI_TIMEOUT_MS` (e.g. to `35000`) or verify internet connectivity. |
 | **`[vite] failed to connect to websocket`** | Secure HTTPS connection with mismatched HMR port. | Ensure `APP_URL` begins with `https://`. Vite will automatically use `clientPort: 443` and `wss://`. |
-| **Port conflict on 3000** | Another process is using port 3000. | Change `PORT=3001` in `.env`. |
+| **API returning HTML `index.html`** | Missing Vercel rewrite or incorrect order in `vercel.json`. | Ensure `vercel.json` has `/api/(.*)` rewrite listed *before* `/(.*)`. |
+| **Port conflict on 3000** | Another process is using port 3000. | Change `APP_PORT=3001` in `.env`. |
 | **Secrets appearing in Git** | Accidental commit of `.env`. | Verify `.gitignore` contains `.env*` with `!.env.example`. Never commit `.env` or `.env.local`. |
 
 ---
 
-## 9. Security & Compliance Checklist
+## 10. Security & Compliance Checklist
 
 - [x] `.env.example` uses safe placeholders only (`AIzaSy...`).
 - [x] `.gitignore` excludes all `.env*` files except `.env.example`.

@@ -1716,7 +1716,8 @@ app.post(authForgotPaths, (req: Request, res: Response) => {
 });
 
 // AI Agricultural Advisor (Gemini 3.8 Flash + Resilient Fallback Engine)
-app.post('/api/gemini/advisor', async (req: Request, res: Response) => {
+// Handles both /api/advisor and /api/gemini/advisor
+app.post(['/api/advisor', '/api/gemini/advisor'], async (req: Request, res: Response) => {
   const { prompt, farmId, priorities, scenario } = req.body;
   const requestId = `fs-adv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const startTime = Date.now();
