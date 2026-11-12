@@ -14,6 +14,7 @@ import {
   HelpCircle,
   RotateCcw,
 } from 'lucide-react';
+import { apiClient } from '../../services/apiClient';
 
 interface AiAdvisorPageProps {
   onNavigate: (path: string) => void;
@@ -62,16 +63,11 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
     setLoading(true);
 
     try {
-      const res = await fetch('/api/gemini/advisor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: query,
-          farmId: 'farm-1',
-          priorities: { waterConservation: 4, soilOrganicMatter: 5, nitrogenFixing: 5 },
-        }),
+      const data = await apiClient.post('/api/gemini/advisor', {
+        prompt: query,
+        farmId: 'farm-1',
+        priorities: { waterConservation: 4, soilOrganicMatter: 5, nitrogenFixing: 5 },
       });
-      const data = await res.json();
       setMessages([
         ...newMessages,
         {

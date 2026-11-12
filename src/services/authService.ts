@@ -1,4 +1,5 @@
 import { User } from '../types';
+import { getApiBaseUrl } from './apiClient';
 
 export interface AuthSessionResponse {
   success: boolean;
@@ -14,17 +15,7 @@ export interface AuthErrorDetails {
   isNetworkError?: boolean;
 }
 
-/**
- * Resolves the API base URL from VITE_API_URL environment variable if set.
- * Returns empty string by default to use relative paths (same origin / proxy).
- */
-export function getApiBaseUrl(): string {
-  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) {
-    const raw = (import.meta.env.VITE_API_URL as string).trim();
-    return raw.endsWith('/') ? raw.slice(0, -1) : raw;
-  }
-  return '';
-}
+export { getApiBaseUrl };
 
 /**
  * Safely parse HTTP responses before attempting JSON parsing.

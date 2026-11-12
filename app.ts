@@ -15,18 +15,16 @@ import {
   BareFieldPeriod,
   PestCycleEvaluation,
   SupplementalIncome,
-} from '../src/types';
+} from './src/types';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// This file lives in <project-root>/api, so project assets (public/, dist/, Vite root)
-// must be resolved from the parent directory rather than from __dirname.
-const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+// Environment constraint: Dev server must run on port 3000
+const PORT = Number(process.env.APP_PORT) || 3000;
 
 app.use(express.json());
 
@@ -1981,7 +1979,7 @@ ${priorityHighlights.join('\n')}
 
 // Explicit SEO Crawl Endpoints
 app.get('/robots.txt', (_req: Request, res: Response) => {
-  const robotsPath = path.resolve(PROJECT_ROOT, 'public', 'robots.txt');
+  const robotsPath = path.resolve(__dirname, 'public', 'robots.txt');
   if (fs.existsSync(robotsPath)) {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.sendFile(robotsPath);
@@ -1991,7 +1989,7 @@ app.get('/robots.txt', (_req: Request, res: Response) => {
 });
 
 app.get('/sitemap.xml', (_req: Request, res: Response) => {
-  const sitemapPath = path.resolve(PROJECT_ROOT, 'public', 'sitemap.xml');
+  const sitemapPath = path.resolve(__dirname, 'public', 'sitemap.xml');
   if (fs.existsSync(sitemapPath)) {
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.sendFile(sitemapPath);
@@ -2007,44 +2005,6 @@ app.all(['/api', '/api/*'], (req: Request, res: Response) => {
     status: 404,
   });
 });
+export { app };
+export default app;
 
-/* ==========================================================================
-   VITE DEV MIDDLEWARE & PRODUCTION HTTP SERVER
-   ========================================================================== */
-async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production';
-  const httpServer = http.createServer(app);
-
-  if (!isProd) {
-    // In development mode: attach Vite middleware and hook HMR/WS upgrade to httpServer
-    const vite = await createViteServer({
-      root: PROJECT_ROOT,
-      server: {
-        middlewareMode: true,
-        ws: {
-          server: httpServer,
-        },
-        hmr: {
-          server: httpServer,
-        },
-      },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-    logGeminiEvent('DEV_SERVER_INITIALIZED', { mode: 'development', port: PORT });
-  } else {
-    // In production mode: serve pre-built distribution assets directly
-    const distPath = path.resolve(PROJECT_ROOT, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req: Request, res: Response) => {
-      res.sendFile(path.resolve(distPath, 'index.html'));
-    });
-    logGeminiEvent('PROD_SERVER_INITIALIZED', { mode: 'production', distPath, port: PORT });
-  }
-
-  httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`[FieldShift] Server listening on http://0.0.0.0:${PORT} in ${isProd ? 'PRODUCTION' : 'DEVELOPMENT'} mode`);
-  });
-}
-
-startServer();

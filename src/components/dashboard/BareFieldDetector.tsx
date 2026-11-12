@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ShieldAlert, AlertTriangle, CheckCircle2, Calendar, Sprout, ArrowRight, Info } from 'lucide-react';
 import { BareFieldPeriod } from '../../types';
+import { apiClient } from '../../services/apiClient';
 
 interface BareFieldDetectorProps {
   farmId: string;
@@ -16,8 +17,7 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
 
   const fetchBareFieldData = async () => {
     try {
-      const res = await fetch(`/api/analysis/bare-field?farmId=${farmId}`);
-      const json = await res.json();
+      const json = await apiClient.get('/api/analysis/bare-field', { params: { farmId } });
       if (json.analysis) {
         setData(json.analysis);
       }

@@ -14,6 +14,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { CropCharacteristics } from '../../types';
+import { apiClient } from '../../services/apiClient';
 
 const CROP_IMAGES: Record<string, { src: string; alt: string }> = {
   'crop-corn': { src: '/images/crops/corn.jpg', alt: 'Healthy maize corn field with golden silk tassels' },
@@ -39,8 +40,7 @@ export const CropDatabaseExplorer: React.FC = () => {
 
   const fetchCrops = async () => {
     try {
-      const res = await fetch('/api/crops');
-      const data = await res.json();
+      const data = await apiClient.get('/api/crops');
       if (data.crops) {
         setCrops(data.crops);
       }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Satellite, Database, ShieldCheck, Activity, AlertCircle, Compass, Layers, CheckCircle2, BookOpen } from 'lucide-react';
 import { NasaHarmonizedDataset } from '../../types';
+import { apiClient } from '../../services/apiClient';
 
 export const NasaRoadmapExplorer: React.FC = () => {
   const [datasets, setDatasets] = useState<NasaHarmonizedDataset[]>([]);
@@ -16,8 +17,7 @@ export const NasaRoadmapExplorer: React.FC = () => {
 
   const fetchRoadmap = async () => {
     try {
-      const res = await fetch('/api/nasa/roadmap');
-      const data = await res.json();
+      const data = await apiClient.get('/api/nasa/roadmap');
       if (data.datasets) {
         setDatasets(data.datasets);
         setSelectedDataset(data.datasets[0]);
@@ -31,8 +31,7 @@ export const NasaRoadmapExplorer: React.FC = () => {
 
   const fetchMethods = async () => {
     try {
-      const res = await fetch('/api/scientific-methods');
-      const data = await res.json();
+      const data = await apiClient.get('/api/scientific-methods');
       if (data.methods) {
         setScientificMethods(data.methods);
       }

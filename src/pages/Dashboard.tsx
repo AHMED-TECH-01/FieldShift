@@ -50,6 +50,7 @@ import { ExplainabilityExplorer } from '../components/dashboard/ExplainabilityEx
 import { InteractiveFarmMap } from '../components/dashboard/InteractiveFarmMap';
 import { SupplementalIncomeModal } from '../components/dashboard/SupplementalIncomeModal';
 import { NasaRoadmapExplorer } from '../components/dashboard/NasaRoadmapExplorer';
+import { apiClient } from '../services/apiClient';
 
 interface DashboardProps {
   currentUser: User;
@@ -157,8 +158,7 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
   const fetchFarms = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/farms');
-      const data = await res.json();
+      const data = await apiClient.get('/api/farms');
       if (data.farms && data.farms.length > 0) {
         setFarms(data.farms);
         setSelectedFarmId(data.farms[0].id);
@@ -173,16 +173,11 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
   const recalculateStrategies = async (prio: FarmerPriorities, scen?: WhatIfScenario | null) => {
     setRecalculating(true);
     try {
-      const res = await fetch('/api/rotations/recalculate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          farmId: selectedFarmId,
-          priorities: prio,
-          scenario: scen || null,
-        }),
+      const data = await apiClient.post('/api/rotations/recalculate', {
+        farmId: selectedFarmId,
+        priorities: prio,
+        scenario: scen || null,
       });
-      const data = await res.json();
       if (data.strategies) {
         setStrategies(data.strategies);
         setRankingExplanation(data.rankingExplanation || '');
@@ -214,20 +209,15 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
     if (!newFarmName.trim() || !newFarmLocation.trim()) return;
 
     try {
-      const res = await fetch('/api/farms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newFarmName,
-          location: newFarmLocation,
-          acreage: Number(newFarmAcreage),
-          currentCrop: newFarmCrop,
-          soilType: newFarmSoilType,
-          soilPH: Number(newFarmPH),
-          organicMatter: Number(newFarmOM),
-        }),
+      const data = await apiClient.post('/api/farms', {
+        name: newFarmName,
+        location: newFarmLocation,
+        acreage: Number(newFarmAcreage),
+        currentCrop: newFarmCrop,
+        soilType: newFarmSoilType,
+        soilPH: Number(newFarmPH),
+        organicMatter: Number(newFarmOM),
       });
-      const data = await res.json();
       if (data.success && data.farm) {
         setFarms((prev) => [data.farm, ...prev]);
         setSelectedFarmId(data.farm.id);
@@ -248,17 +238,12 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
     setAiLoading(true);
 
     try {
-      const res = await fetch('/api/gemini/advisor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: text,
-          farmId: selectedFarmId,
-          priorities,
-          scenario: activeScenario,
-        }),
+      const data = await apiClient.post('/api/gemini/advisor', {
+        prompt: text,
+        farmId: selectedFarmId,
+        priorities,
+        scenario: activeScenario,
       });
-      const data = await res.json();
       setAiChatHistory([
         ...newHistory,
         {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DollarSign, AlertCircle, ArrowUpRight, CheckCircle2, ShieldAlert, Sparkles, X } from 'lucide-react';
 import { SupplementalIncome } from '../../types';
+import { apiClient } from '../../services/apiClient';
 
 interface SupplementalIncomeModalProps {
   isOpen: boolean;
@@ -19,8 +20,7 @@ export const SupplementalIncomeModal: React.FC<SupplementalIncomeModalProps> = (
 
   const fetchIncomeData = async () => {
     try {
-      const res = await fetch('/api/analysis/supplemental-income');
-      const data = await res.json();
+      const data = await apiClient.get('/api/analysis/supplemental-income');
       if (data.opportunities) {
         setOpportunities(data.opportunities);
       }

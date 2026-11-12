@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Bug, AlertOctagon, ShieldCheck, CheckCircle2, AlertTriangle, Layers, Info } from 'lucide-react';
 import { PestCycleEvaluation } from '../../types';
+import { apiClient } from '../../services/apiClient';
 
 interface PestDiseaseTrackerProps {
   farmId: string;
@@ -17,8 +18,7 @@ export const PestDiseaseTracker: React.FC<PestDiseaseTrackerProps> = ({ farmId }
 
   const fetchPestData = async () => {
     try {
-      const res = await fetch(`/api/analysis/pest-cycles?farmId=${farmId}`);
-      const json = await res.json();
+      const json = await apiClient.get('/api/analysis/pest-cycles', { params: { farmId } });
       if (json.evaluations) {
         setEvaluations(json.evaluations);
         setFamilies(json.botanicalFamiliesUtilized || []);
