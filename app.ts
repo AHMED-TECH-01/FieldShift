@@ -1,41 +1,91 @@
-import express, { Request, Response } from 'express';
-import http from 'http';
+import express, { NextFunction, Request, Response } from 'express';
 import fs from 'fs';
-import crypto from 'crypto';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
-  CropCharacteristics,
-  NasaHarmonizedDataset,
-  FarmerPriorities,
-  WhatIfScenario,
-  BareFieldPeriod,
-  PestCycleEvaluation,
-  SupplementalIncome,
-} from './src/types';
+  AuthenticatedRequest,
+  getAccessibleFarmById,
+  getSupabaseAdminClient,
+  getSupabaseAuthClient,
+  getSupabasePublicClient,
+  listAccessibleFarms,
+  mapDbFarmRow,
+  requireAuth,
+  resolveRequestUser,
+} from './backend/supabase';
+import {
+  advisorRequestSchema,
+  createFarmSchema,
+  datasetSyncSchema,
+  loginSchema,
+  parseBody,
+  passwordResetSchema,
+  prioritiesSchema,
+  profileUpdateSchema,
+  registerSchema,
+  resendOtpSchema,
+  rotationCreateSchema,
+  scenarioSchema,
+  updateFarmSchema,
+  verifyOtpSchema,
+} from './backend/validation';
+import {
+  buildBareFieldAnalysis,
+  buildPestCycles,
+  calculateStrategyEvaluations,
+  cropDatabase,
+  DEFAULT_PRIORITIES,
+  scientificMethods,
+  supplementalIncomeOpportunities,
+} from './backend/agronomy';
+import {
+  getFarmNasaObservationsSummary,
+  nasaHarmonizedRoadmap,
+  SUPPORTED_SYNC_DATASETS,
+  SupportedSyncDataset,
+  syncEarthdataCmrForFarm,
+  syncNasaPowerForFarm,
+} from './backend/nasa';
+import { getGeminiClient, runGroundedAdvisor } from './backend/gemini';
+import { logEvent, logGeminiEvent } from './backend/logger';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+export { logGeminiEvent };
 
-const app = express();
-// Environment constraint: Dev server must run on port 3000
-const PORT = Number(process.env.APP_PORT) || 3000;
+export const app = express();
 
-app.use(express.json());
+// Trust Vercel / reverse-proxy headers for accurate protocol & rate-limit IP resolution
+app.set('trust proxy', 1);
 
-// Global CORS & Preflight Handler for AI Studio Iframe & Cross-Origin Requests
-app.use((req: Request, res: Response, next) => {
-  const origin = req.headers.origin || '*';
-  res.setHeader('Access-Control-Allow-Origin', origin);
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, X-Requested-With, Origin');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
+// Request body limits (prevent oversized payload abuse)
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// Security headers & CORS middleware
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) return true;
+  if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)) return true;
+  const configuredAppUrl = (process.env.APP_URL || process.env.APP_URI || '').trim().replace(/\/$/, '');
+  if (configuredAppUrl && origin === configuredAppUrl) return true;
+  return false;
+}
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'SAMEORIGIN');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+  const origin = req.headers.origin;
+  if (origin && isAllowedOrigin(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Vary', 'Origin');
+    res.set('Access-Control-Allow-Credentials', 'true');
+  }
+  res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, X-Requested-With');
+
   if (req.method === 'OPTIONS') {
     res.status(204).end();
     return;
@@ -43,1134 +93,91 @@ app.use((req: Request, res: Response, next) => {
   next();
 });
 
-// Explicit OPTIONS preflight wildcard catch
-app.options('*', (_req: Request, res: Response) => {
-  res.status(204).end();
+// Malformed JSON error handler
+app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+  if (err && err.type === 'entity.parse.failed') {
+    res.status(400).json({ error: 'Malformed JSON request body.' });
+    return;
+  }
+  next(err);
 });
 
-// Structured Logger for Gemini & System Events (sanitizes all credentials and keys)
-export function logGeminiEvent(event: string, meta: Record<string, any>) {
-  const payload = {
-    timestamp: new Date().toISOString(),
-    component: 'GeminiAdvisor',
-    event,
-    ...meta,
-  };
-  // Explicitly ensure zero sensitive credentials or API keys are ever logged
-  delete (payload as any).apiKey;
-  delete (payload as any).password;
-  delete (payload as any).token;
-  delete (payload as any).authorization;
-  console.log(`[FIELDSHIFT_LOG] ${JSON.stringify(payload)}`);
-}
-
-// In-flight concurrency deduplication map for agricultural queries
-const inFlightAdvisorRequests = new Map<string, Promise<any>>();
-
-// Gemini Client initialization helper (supports runtime injected API key)
-let ai: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  if (!ai) {
-    try {
-      ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
+// Bounded in-memory sliding-window rate limiter for abuse protection
+const rateLimitBuckets = new Map<string, number[]>();
+function createRateLimiter(bucketName: string, maxRequests: number, windowMs: number) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const key = `${bucketName}:${req.ip || 'unknown'}`;
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const recent = (rateLimitBuckets.get(key) || []).filter((ts) => ts > cutoff);
+    if (recent.length >= maxRequests) {
+      res.status(429).json({
+        error: 'Rate limit exceeded. Please wait briefly before retrying.',
       });
-      logGeminiEvent('GEMINI_CLIENT_INITIALIZED', {
-        sdk: '@google/genai',
-        status: 'ready',
-      });
-    } catch (err: any) {
-      logGeminiEvent('GEMINI_INIT_ERROR', { error: err.message });
-      return null;
+      return;
     }
-  }
-  return ai;
-}
-
-// Eager initial attempt to initialize if key exists at startup
-getGeminiClient();
-
-// ==========================================================================
-// Supabase Client Initialization (Server-Side Secret + Public Auth Client)
-// ==========================================================================
-let supabaseAdminInstance: SupabaseClient | null = null;
-let supabaseAuthInstance: SupabaseClient | null = null;
-
-function getSupabaseUrl(): string | undefined {
-  return (
-    process.env.SUPABASE_URL ||
-    process.env.VITE_SUPABASE_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL
-  )?.trim();
-}
-
-function getSupabaseAdmin(): SupabaseClient | null {
-  const url = getSupabaseUrl();
-  const secretKey = (
-    process.env.SUPABASE_SECRET_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-  )?.trim();
-  if (!url || !secretKey) return null;
-  if (!supabaseAdminInstance) {
-    supabaseAdminInstance = createClient(url, secretKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
-  }
-  return supabaseAdminInstance;
-}
-
-function getSupabaseAuthClient(): SupabaseClient | null {
-  const url = getSupabaseUrl();
-  const pubKey = (
-    process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.SUPABASE_SECRET_KEY
-  )?.trim();
-  if (!url || !pubKey) return null;
-  if (!supabaseAuthInstance) {
-    supabaseAuthInstance = createClient(url, pubKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
-  }
-  return supabaseAuthInstance;
-}
-
-// In-memory data store / fallback for farms
-interface FarmRecord {
-  id: string;
-  name: string;
-  location: string;
-  coordinates: [number, number];
-  acreage: number;
-  currentCrop: string;
-  plantingSeason: string;
-  rotationHistory: string[];
-  soilType: string;
-  soilPH: number;
-  organicMatter: number;
-  nitrogen: string;
-  phosphorus: string;
-  potassium: string;
-  drainage: string;
-  lastSoilTest: string;
-  createdAt: string;
-}
-
-const mockFarms: FarmRecord[] = [
-  {
-    id: 'farm-1',
-    name: 'Prairie Ridge Valley Farm',
-    location: 'Ames, Story County, Iowa, USA',
-    coordinates: [-93.62, 42.03],
-    acreage: 480,
-    currentCrop: 'Corn (Maize)',
-    plantingSeason: 'Spring 2026',
-    rotationHistory: ['Corn (2025)', 'Soybeans (2024)', 'Corn (2023)'],
-    soilType: 'Clarion-Nicollet Loam',
-    soilPH: 6.4,
-    organicMatter: 3.8,
-    nitrogen: 'Medium (18 ppm)',
-    phosphorus: 'Low (12 ppm)',
-    potassium: 'Medium (145 ppm)',
-    drainage: 'Moderately Well Drained',
-    lastSoilTest: '2025-10-15',
-    createdAt: '2026-01-12T10:00:00.000Z',
-  },
-  {
-    id: 'farm-2',
-    name: 'Cedar Creek Sustainable Acres',
-    location: 'Salina, Saline County, Kansas, USA',
-    coordinates: [-97.61, 38.84],
-    acreage: 720,
-    currentCrop: 'Winter Wheat',
-    plantingSeason: 'Autumn 2025 - Summer 2026',
-    rotationHistory: ['Winter Wheat (2025)', 'Fallow (2024)', 'Sorghum (2023)'],
-    soilType: 'Harney Silt Loam',
-    soilPH: 7.1,
-    organicMatter: 2.4,
-    nitrogen: 'Low (9 ppm)',
-    phosphorus: 'Moderate (19 ppm)',
-    potassium: 'High (220 ppm)',
-    drainage: 'Well Drained',
-    lastSoilTest: '2025-09-02',
-    createdAt: '2026-02-01T08:30:00.000Z',
-  },
-  {
-    id: 'farm-3',
-    name: 'Green River Basin Organics',
-    location: 'Bowling Green, Warren County, Kentucky, USA',
-    coordinates: [-86.44, 36.99],
-    acreage: 310,
-    currentCrop: 'Soybean',
-    plantingSeason: 'Late Spring 2026',
-    rotationHistory: ['Soybean (2025)', 'Winter Cover Rye (2024)', 'Corn (2024)'],
-    soilType: 'Crider Silt Loam',
-    soilPH: 6.7,
-    organicMatter: 4.1,
-    nitrogen: 'Medium (24 ppm)',
-    phosphorus: 'Optimal (28 ppm)',
-    potassium: 'Optimal (170 ppm)',
-    drainage: 'Well Drained (Karst sub-layer)',
-    lastSoilTest: '2025-11-20',
-    createdAt: '2026-02-28T14:15:00.000Z',
-  },
-];
-
-function mapDbFarmRow(row: any): FarmRecord {
-  return {
-    id: String(row.id),
-    name: String(row.name),
-    location: String(row.location),
-    coordinates: Array.isArray(row.coordinates) && row.coordinates.length === 2
-      ? [Number(row.coordinates[0]), Number(row.coordinates[1])]
-      : [-93.62, 42.03],
-    acreage: Number(row.acreage) || 250,
-    currentCrop: String(row.current_crop || 'Corn (Maize)'),
-    plantingSeason: String(row.planting_season || 'Spring 2026'),
-    rotationHistory: Array.isArray(row.rotation_history) ? row.rotation_history.map(String) : [],
-    soilType: String(row.soil_type || 'Silt Loam'),
-    soilPH: Number(row.soil_ph) || 6.5,
-    organicMatter: Number(row.organic_matter) || 3.2,
-    nitrogen: String(row.nitrogen || 'Medium'),
-    phosphorus: String(row.phosphorus || 'Medium'),
-    potassium: String(row.potassium || 'Medium'),
-    drainage: String(row.drainage || 'Well Drained'),
-    lastSoilTest: String(row.last_soil_test || '2026-01-01'),
-    createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+    recent.push(now);
+    rateLimitBuckets.set(key, recent);
+    // Keep map bounded in warm serverless memory
+    if (rateLimitBuckets.size > 1000) {
+      const oldestKey = rateLimitBuckets.keys().next().value;
+      if (oldestKey) rateLimitBuckets.delete(oldestKey);
+    }
+    next();
   };
 }
 
-async function getAccessibleFarms(userId?: string): Promise<{ farms: FarmRecord[]; source: 'supabase' | 'memory' }> {
-  const admin = getSupabaseAdmin();
-  if (!admin) {
-    return { farms: mockFarms, source: 'memory' };
-  }
+const authRateLimit = createRateLimiter('auth', 25, 60_000);
+const nasaSyncRateLimit = createRateLimiter('nasa_sync', 20, 60_000);
+const aiAdvisorRateLimit = createRateLimiter('ai_advisor', 15, 60_000);
 
-  try {
-    let query = admin
-      .from('farms')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (userId) {
-      query = query.or(`is_demo.eq.true,user_id.eq.${userId}`);
-    } else {
-      query = query.eq('is_demo', true);
-    }
-
-    const { data, error } = await query;
-    if (error || !data || data.length === 0) {
-      if (error) {
-        logGeminiEvent('SUPABASE_FARMS_QUERY_FALLBACK', { error: error.message });
-      }
-      return { farms: mockFarms, source: 'memory' };
-    }
-
-    return { farms: data.map(mapDbFarmRow), source: 'supabase' };
-  } catch (err: any) {
-    logGeminiEvent('SUPABASE_FARMS_ERROR', { error: err?.message });
-    return { farms: mockFarms, source: 'memory' };
-  }
+function buildSessionCookie(token: string): string {
+  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  return `fieldshift_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${
+    isProd ? '; Secure' : ''
+  }`;
 }
 
-async function getFarmById(farmId?: string, userId?: string): Promise<FarmRecord> {
-  const { farms } = await getAccessibleFarms(userId);
-  if (farmId) {
-    const match = farms.find((f) => f.id === farmId);
-    if (match) return match;
-  }
-  return farms[0] || mockFarms[0];
-}
-
-// Structured Crop Characteristics Database (Requirement B)
-const cropDatabase: CropCharacteristics[] = [
-  {
-    id: 'crop-corn',
-    name: 'Field Corn (Maize)',
-    scientificName: 'Zea mays L.',
-    family: 'Poaceae (Gramineae)',
-    plantingSeason: 'Late April - Early May',
-    harvestSeason: 'Late September - October',
-    growingDurationDays: 115,
-    waterRequirementMm: '550 - 650 mm / season',
-    temperatureSuitability: { min: 10, opt: 28, max: 35 },
-    droughtTolerance: 'Moderate',
-    soilPreferences: {
-      phRange: '5.8 - 7.0',
-      textures: ['Silt Loam', 'Loam', 'Clay Loam'],
-      drainage: 'Well to Moderately Well Drained',
-    },
-    nutrientRequirements: {
-      nitrogenDemand: 'High (140 - 180 lbs/acre for 190 bu/ac)',
-      phosphorusDemand: 'Moderate (60 - 75 lbs P2O5/acre)',
-      potassiumDemand: 'High (140 - 160 lbs K2O/acre)',
-    },
-    nitrogenFixingPotentialLbsPerAcre: 0,
-    rootCharacteristics: {
-      depthMeters: 1.5,
-      architecture: 'Dense Fibrous',
-      hardpanPenetration: 'Moderate',
-    },
-    forageValue: {
-      relativeFeedValue: '125 (Silage quality)',
-      crudeProteinPercent: '8.2% - 9.1%',
-      grazingSuitability: 'High (post-harvest stalk residue grazing)',
-    },
-    marketSuitability: 'High liquidity cash grain, ethanol, livestock feed',
-    pestAndDiseaseConsiderations: {
-      susceptiblePests: ['Western Corn Rootworm (Diabrotica virgifera)', 'European Corn Borer', 'Goss’s Wilt', 'Tar Spot'],
-      interruptedPests: ['Soybean Cyst Nematode (Non-host break)'],
-      familyHostRisk: 'Continuous grass/cereal monoculture amplifies rootworm beetle density and stalk rot inoculum.',
-    },
-    residueAndOrganicMatter: {
-      biomassTonsPerAcre: 4.2,
-      cnRatio: '55:1 (Slow decomposition; excellent long-term soil mulch)',
-      soilArmorPersistence: 'High (persists 10+ months without aggressive tillage)',
-    },
-    isVerifiedAgronomicData: true,
-    sourceReference: 'Iowa State University Extension & Outreach PM 1813 / USDA-ARS National Laboratory',
-  },
-  {
-    id: 'crop-soybean',
-    name: 'Soybean',
-    scientificName: 'Glycine max (L.) Merr.',
-    family: 'Fabaceae (Leguminosae)',
-    plantingSeason: 'Early to Mid-May',
-    harvestSeason: 'Late September - Mid-October',
-    growingDurationDays: 105,
-    waterRequirementMm: '450 - 550 mm / season',
-    temperatureSuitability: { min: 12, opt: 26, max: 34 },
-    droughtTolerance: 'Moderate',
-    soilPreferences: {
-      phRange: '6.0 - 6.8',
-      textures: ['Loam', 'Silt Loam', 'Sandy Loam'],
-      drainage: 'Well Drained',
-    },
-    nutrientRequirements: {
-      nitrogenDemand: 'Biological self-sufficient via Bradyrhizobium nodulation',
-      phosphorusDemand: 'Moderate (40 - 50 lbs P2O5/acre)',
-      potassiumDemand: 'High (90 - 110 lbs K2O/acre removal)',
-    },
-    nitrogenFixingPotentialLbsPerAcre: 40,
-    rootCharacteristics: {
-      depthMeters: 1.2,
-      architecture: 'Deep Taproot',
-      hardpanPenetration: 'Moderate',
-    },
-    forageValue: {
-      relativeFeedValue: '135 (Emergency haylage)',
-      crudeProteinPercent: '16.5% - 18.0%',
-      grazingSuitability: 'Moderate (caution with raw seed bloat risk)',
-    },
-    marketSuitability: 'Global cash commodity, oil crushing, export protein meal',
-    pestAndDiseaseConsiderations: {
-      susceptiblePests: ['Soybean Cyst Nematode (Heterodera glycines)', 'Sudden Death Syndrome (Fusarium)', 'Brown Stem Rot'],
-      interruptedPests: ['Western Corn Rootworm (Effective biennial cycle interruption)'],
-      familyHostRisk: 'Back-to-back legume planting causes exponential buildup of SCN egg counts in root zone.',
-    },
-    residueAndOrganicMatter: {
-      biomassTonsPerAcre: 2.1,
-      cnRatio: '30:1 (Rapid breakdown; leaves field bare within 90 days of harvest)',
-      soilArmorPersistence: 'Low (leaves soil bare through winter storms without cover crop)',
-    },
-    isVerifiedAgronomicData: true,
-    sourceReference: 'Purdue Extension AY-316-W / USDA-NRCS Soil Biology Primer',
-  },
-  {
-    id: 'crop-cereal-rye',
-    name: 'Winter Cereal Rye',
-    scientificName: 'Secale cereale L.',
-    family: 'Poaceae (Gramineae)',
-    plantingSeason: 'Mid-September - Late October',
-    harvestSeason: 'Spring Termination (April) or July Grain',
-    growingDurationDays: 210,
-    waterRequirementMm: '250 - 350 mm / winter-spring',
-    temperatureSuitability: { min: 2, opt: 18, max: 28 },
-    droughtTolerance: 'High',
-    soilPreferences: {
-      phRange: '5.0 - 7.5',
-      textures: ['Sand', 'Sandy Loam', 'Loam', 'Clay'],
-      drainage: 'Wide adaptation; tolerates wet and droughty soils',
-    },
-    nutrientRequirements: {
-      nitrogenDemand: 'Scavenges 45 - 80 lbs residual nitrate/acre that would otherwise leach',
-      phosphorusDemand: 'Low (20 lbs P2O5/acre)',
-      potassiumDemand: 'Moderate (40 lbs K2O/acre)',
-    },
-    nitrogenFixingPotentialLbsPerAcre: 0,
-    rootCharacteristics: {
-      depthMeters: 1.8,
-      architecture: 'Dense Fibrous',
-      hardpanPenetration: 'High',
-    },
-    forageValue: {
-      relativeFeedValue: '110 - 130 (cut at boot stage)',
-      crudeProteinPercent: '14.0% - 17.5%',
-      grazingSuitability: 'High (premier early-spring and late-fall cattle forage)',
-    },
-    marketSuitability: 'Cover crop seed production, distiller grain, forage grazing lease',
-    pestAndDiseaseConsiderations: {
-      susceptiblePests: ['Armyworm (requires monitoring at termination)'],
-      interruptedPests: ['Suppresses summer annual weeds through allelopathic root exudates'],
-      familyHostRisk: 'Must terminate 10–14 days prior to corn planting to avoid seedling damping-off.',
-    },
-    residueAndOrganicMatter: {
-      biomassTonsPerAcre: 3.5,
-      cnRatio: '40:1 to 60:1 (at maturity)',
-      soilArmorPersistence: 'Exceptional (prevents winter sheet erosion)',
-    },
-    isVerifiedAgronomicData: true,
-    sourceReference: 'Midwest Cover Crops Council / SARE Handbook No. 9',
-  },
-  {
-    id: 'crop-hairy-vetch',
-    name: 'Hairy Vetch',
-    scientificName: 'Vicia villosa Roth',
-    family: 'Fabaceae (Leguminosae)',
-    plantingSeason: 'Late August - September',
-    harvestSeason: 'Spring Roller-Crimper Termination (May)',
-    growingDurationDays: 220,
-    waterRequirementMm: '300 - 400 mm',
-    temperatureSuitability: { min: 4, opt: 20, max: 30 },
-    droughtTolerance: 'Moderate',
-    soilPreferences: {
-      phRange: '6.0 - 7.2',
-      textures: ['Sandy Loam', 'Loam', 'Silt Loam'],
-      drainage: 'Well Drained (sensitive to winter ponding)',
-    },
-    nutrientRequirements: {
-      nitrogenDemand: 'None (fixes massive atmospheric N via Rhizobium leguminosarum)',
-      phosphorusDemand: 'Moderate (30 lbs P2O5/acre)',
-      potassiumDemand: 'Moderate (40 lbs K2O/acre)',
-    },
-    nitrogenFixingPotentialLbsPerAcre: 85,
-    rootCharacteristics: {
-      depthMeters: 1.0,
-      architecture: 'Extensive Mycorrhizal',
-      hardpanPenetration: 'Moderate',
-    },
-    forageValue: {
-      relativeFeedValue: '140',
-      crudeProteinPercent: '18.0% - 22.0%',
-      grazingSuitability: 'High when seeded with cereal rye grass blend',
-    },
-    marketSuitability: 'Organic nitrogen substitution ($65-$90/acre synthetic value)',
-    pestAndDiseaseConsiderations: {
-      susceptiblePests: ['Root-knot nematodes in light soils'],
-      interruptedPests: ['Disrupts cereal fungal pathogens and weed seed banks'],
-      familyHostRisk: 'Safe partner in grass-heavy grain rotations.',
-    },
-    residueAndOrganicMatter: {
-      biomassTonsPerAcre: 2.8,
-      cnRatio: '11:1 (Decomposes rapidly, releasing plant-available nitrate in June)',
-      soilArmorPersistence: 'Moderate (ideal green manure)',
-    },
-    isVerifiedAgronomicData: true,
-    sourceReference: 'USDA-ARS Sustainable Agriculture Network / Maryland Agronomy Guide',
-  },
-  {
-    id: 'crop-sorghum',
-    name: 'Grain Sorghum (Milo)',
-    scientificName: 'Sorghum bicolor (L.) Moench',
-    family: 'Poaceae (Gramineae)',
-    plantingSeason: 'Late May - Early June',
-    harvestSeason: 'October - November',
-    growingDurationDays: 110,
-    waterRequirementMm: '350 - 450 mm / season',
-    temperatureSuitability: { min: 15, opt: 32, max: 40 },
-    droughtTolerance: 'Exceptional',
-    soilPreferences: {
-      phRange: '5.5 - 7.8',
-      textures: ['Clay Loam', 'Loam', 'Sandy Loam'],
-      drainage: 'Tolerates temporary saturation & intense drought',
-    },
-    nutrientRequirements: {
-      nitrogenDemand: 'Moderate (80 - 110 lbs N/acre)',
-      phosphorusDemand: 'Moderate (35 - 45 lbs P2O5/acre)',
-      potassiumDemand: 'Moderate (60 - 80 lbs K2O/acre)',
-    },
-    nitrogenFixingPotentialLbsPerAcre: 0,
-    rootCharacteristics: {
-      depthMeters: 2.2,
-      architecture: 'Deep Taproot',
-      hardpanPenetration: 'High',
-    },
-    forageValue: {
-      relativeFeedValue: '115 (Stover grazing)',
-      crudeProteinPercent: '9.0% - 10.5%',
-      grazingSuitability: 'High (avoid grazing immediately following drought-breaking frost)',
-    },
-    marketSuitability: 'Flour milling, gluten-free food contracts, livestock grain',
-    pestAndDiseaseConsiderations: {
-      susceptiblePests: ['Sugarcane aphid (Melanaphis sacchari)', 'Chinch bugs'],
-      interruptedPests: ['Non-host for Soybean Cyst Nematode and Northern Corn Leaf Blight'],
-      familyHostRisk: 'C4 photosynthesis plant with superior water use efficiency in heatwaves.',
-    },
-    residueAndOrganicMatter: {
-      biomassTonsPerAcre: 3.8,
-      cnRatio: '60:1 (Forms resilient windbreaks across bare soils)',
-      soilArmorPersistence: 'High',
-    },
-    isVerifiedAgronomicData: true,
-    sourceReference: 'Kansas State Research & Extension MF-3046 / Texas A&M AgriLife',
-  },
-  {
-    id: 'crop-sunflower',
-    name: 'Confectionery & Oilseed Sunflower',
-    scientificName: 'Helianthus annuus L.',
-    family: 'Asteraceae (Compositae)',
-    plantingSeason: 'Late May - June',
-    harvestSeason: 'October - November',
-    growingDurationDays: 100,
-    waterRequirementMm: '400 - 500 mm / season',
-    temperatureSuitability: { min: 10, opt: 26, max: 36 },
-    droughtTolerance: 'High',
-    soilPreferences: {
-      phRange: '6.0 - 7.5',
-      textures: ['Loam', 'Silt Loam', 'Clay Loam'],
-      drainage: 'Well Drained',
-    },
-    nutrientRequirements: {
-      nitrogenDemand: 'Low-Moderate (60 - 80 lbs N/acre)',
-      phosphorusDemand: 'Moderate (30 - 40 lbs P2O5/acre)',
-      potassiumDemand: 'High (100 - 120 lbs K2O/acre)',
-    },
-    nitrogenFixingPotentialLbsPerAcre: 0,
-    rootCharacteristics: {
-      depthMeters: 2.5,
-      architecture: 'Deep Taproot',
-      hardpanPenetration: 'High',
-    },
-    forageValue: {
-      relativeFeedValue: '105',
-      crudeProteinPercent: '11.0%',
-      grazingSuitability: 'Moderate for winter bird & wildlife habitat',
-    },
-    marketSuitability: 'Premium food grade seed, healthy birdseed, high-oleic oil contracts',
-    pestAndDiseaseConsiderations: {
-      susceptiblePests: ['Sunflower moth', 'Sclerotinia head rot'],
-      interruptedPests: ['Completely breaks grass and legume nematode cycles'],
-      familyHostRisk: 'Requires 3-4 year rotation return to manage soil-borne sclerotinia.',
-    },
-    residueAndOrganicMatter: {
-      biomassTonsPerAcre: 2.6,
-      cnRatio: '45:1',
-      soilArmorPersistence: 'Moderate',
-    },
-    isVerifiedAgronomicData: true,
-    sourceReference: 'North Dakota State University Extension A-1331 / High Plains Sunflower Guide',
-  },
-  {
-    id: 'crop-alfalfa',
-    name: 'Alfalfa (Lucerne)',
-    scientificName: 'Medicago sativa L.',
-    family: 'Fabaceae (Leguminosae)',
-    plantingSeason: 'Early Spring or Late Summer',
-    harvestSeason: 'Multiple Cuttings (May, July, August, Sept)',
-    growingDurationDays: 365,
-    waterRequirementMm: '600 - 800 mm / full season',
-    temperatureSuitability: { min: 5, opt: 24, max: 32 },
-    droughtTolerance: 'High',
-    soilPreferences: {
-      phRange: '6.5 - 7.5',
-      textures: ['Deep Loam', 'Silt Loam'],
-      drainage: 'Well Drained (intolerant of wet feet)',
-    },
-    nutrientRequirements: {
-      nitrogenDemand: 'Self-sufficient via Sinorhizobium meliloti',
-      phosphorusDemand: 'High (60 - 80 lbs P2O5/acre)',
-      potassiumDemand: 'Very High (180 - 240 lbs K2O/acre removal)',
-    },
-    nitrogenFixingPotentialLbsPerAcre: 140,
-    rootCharacteristics: {
-      depthMeters: 3.5,
-      architecture: 'Deep Taproot',
-      hardpanPenetration: 'High',
-    },
-    forageValue: {
-      relativeFeedValue: '160 - 185 (Gold Standard Dairy Hay)',
-      crudeProteinPercent: '18.0% - 22.5%',
-      grazingSuitability: 'High with proper rotational stocking and bloat management',
-    },
-    marketSuitability: 'High-value dairy and equine forage export market',
-    pestAndDiseaseConsiderations: {
-      susceptiblePests: ['Alfalfa weevil', 'Potato leafhopper', 'Phytophthora root rot'],
-      interruptedPests: ['Breaks all major grain crop root rots and foliar blights'],
-      familyHostRisk: 'Autotoxicity prevents re-seeding alfalfa immediately into an old stand.',
-    },
-    residueAndOrganicMatter: {
-      biomassTonsPerAcre: 5.2,
-      cnRatio: '14:1',
-      soilArmorPersistence: 'Continuous perennial sod (zero bare-field periods)',
-    },
-    isVerifiedAgronomicData: true,
-    sourceReference: 'University of Wisconsin Extension A3440 / Cornell Agronomy Notes',
-  },
-  {
-    id: 'crop-field-peas',
-    name: 'Field Peas (Dry Peas)',
-    scientificName: 'Pisum sativum L.',
-    family: 'Fabaceae (Leguminosae)',
-    plantingSeason: 'Early April',
-    harvestSeason: 'Mid-July',
-    growingDurationDays: 85,
-    waterRequirementMm: '300 - 380 mm',
-    temperatureSuitability: { min: 5, opt: 20, max: 28 },
-    droughtTolerance: 'Moderate',
-    soilPreferences: {
-      phRange: '6.0 - 7.5',
-      textures: ['Loam', 'Sandy Loam', 'Clay Loam'],
-      drainage: 'Well Drained',
-    },
-    nutrientRequirements: {
-      nitrogenDemand: 'Biologically fixed via Rhizobium leguminosarum bv. viciae',
-      phosphorusDemand: 'Low (25 - 35 lbs P2O5/acre)',
-      potassiumDemand: 'Moderate (40 - 55 lbs K2O/acre)',
-    },
-    nitrogenFixingPotentialLbsPerAcre: 60,
-    rootCharacteristics: {
-      depthMeters: 0.9,
-      architecture: 'Shallow Fibrous',
-      hardpanPenetration: 'Low',
-    },
-    forageValue: {
-      relativeFeedValue: '130',
-      crudeProteinPercent: '16.0% - 21.0%',
-      grazingSuitability: 'Moderate as mixed forage pea with oats',
-    },
-    marketSuitability: 'Food grade yellow/green split peas, pet food proteins, cover seed',
-    pestAndDiseaseConsiderations: {
-      susceptiblePests: ['Ascochyta blight', 'Pea aphid'],
-      interruptedPests: ['Breaks cereal root rot fungi and provides early harvest window for double crop'],
-      familyHostRisk: 'Avoid growing in rotations with excessive clover/vetch within 2 seasons.',
-    },
-    residueAndOrganicMatter: {
-      biomassTonsPerAcre: 1.8,
-      cnRatio: '20:1',
-      soilArmorPersistence: 'Low (requires immediate post-harvest cover seeding in July)',
-    },
-    isVerifiedAgronomicData: true,
-    sourceReference: 'Montana State University Extension EB0208 / USA Dry Pea & Lentil Council',
-  },
-];
-
-// Full 8 NASA Datasets Roadmap & Harmonization Catalog (Requirement F)
-const nasaHarmonizedRoadmap: NasaHarmonizedDataset[] = [
-  {
-    id: 'smap',
-    code: 'SMAP L4_SM_gph',
-    name: 'Soil Moisture Active Passive (SMAP) L4 Surface & Root-Zone',
-    source: 'NASA Jet Propulsion Laboratory & Goddard Space Flight Center',
-    spatialResolution: '9 km assimilated grid (Coupled with Catchment Land Surface Model)',
-    temporalResolution: '3-hour model assimilation (daily archive)',
-    observationPeriod: '2015-present (continuous)',
-    units: 'Volumetric soil moisture (m³/m³)',
-    processingMethod: 'Kalman filtering assimilation of L-band brightness temperature with GEOS forward model',
-    analyticalPurpose: 'Quantifies root-zone available water capacity to evaluate plant stress and irrigation timing.',
-    limitations: 'Spatial resolution (9km) aggregates localized topography and drainage swales.',
-    lastRetrievedTimestamp: '2026-11-08T06:00:00Z',
-    dataCategory: 'Model Assimilated',
-  },
-  {
-    id: 'gpm',
-    code: 'GPM 3IMERGM',
-    name: 'Global Precipitation Measurement (GPM) IMERG Final Run',
-    source: 'NASA Goddard Earth Sciences / JAXA Precipitation Processing System',
-    spatialResolution: '0.1° x 0.1° (~10 km at equator)',
-    temporalResolution: '30-minute interval (monthly calibrated reanalysis)',
-    observationPeriod: '2000-present (continuous)',
-    units: 'Calibrated precipitation rate (mm/hr) & monthly accumulation (mm)',
-    processingMethod: 'Combined passive microwave sensor gridding with infrared motion vector morphing & GPCC gauge calibration',
-    analyticalPurpose: 'Tracks rainfall accumulation, storm intensity, and prolonged drought intervals.',
-    limitations: 'Snowfall precipitation accuracy is lower than liquid rainfall.',
-    lastRetrievedTimestamp: '2026-11-08T05:30:00Z',
-    dataCategory: 'Ground Truth Calibrated',
-  },
-  {
-    id: 'ecostress',
-    code: 'ECOSTRESS L3/L4',
-    name: 'ECOsystem Spaceborne Thermal Radiometer Experiment on Space Station',
-    source: 'NASA JPL / International Space Station Orbit Payload',
-    spatialResolution: '70 m x 70 m multispectral thermal',
-    temporalResolution: '1 to 5 days (variable ISS precessing orbit track)',
-    observationPeriod: '2018-present',
-    units: 'Evaporative Stress Index (dimensionless ratio) & PT-JPL actual ET (mm/day)',
-    processingMethod: 'Surface energy balance model driven by 5 thermal infrared bands (8–12.5 µm)',
-    analyticalPurpose: 'Detects plant water stress before visible wilting occurs by measuring thermal canopy emission.',
-    limitations: 'Precession orbit means revisit cadence varies between 1 to 5 days.',
-    lastRetrievedTimestamp: '2026-11-07T18:45:00Z',
-    dataCategory: 'Satellite Derived',
-  },
-  {
-    id: 'landsat',
-    code: 'Landsat 8/9 C2 L2',
-    name: 'Landsat 8-9 OLI/TIRS Surface Reflectance Collection 2',
-    source: 'NASA / USGS Earth Resources Observation and Science (EROS) Center',
-    spatialResolution: '30 m multispectral (15m panchromatic band)',
-    temporalResolution: '8-day repeat cadence (combined 8 + 9 constellation)',
-    observationPeriod: '1982-present (Landsat legacy archive)',
-    units: 'Unitless surface reflectance (0.0 to 1.0 scale)',
-    processingMethod: 'Atmospheric correction via LaSRC (Land Surface Reflectance Code) with aerosol retrieval',
-    analyticalPurpose: 'Sub-field parcel boundary verification, bare-soil index, and historic multi-decadal field response.',
-    limitations: 'Cloud and cloud-shadow masking can obscure key spring emergence observation windows.',
-    lastRetrievedTimestamp: '2026-11-06T14:20:00Z',
-    dataCategory: 'Satellite Derived',
-  },
-  {
-    id: 'modis',
-    code: 'MOD13Q1 / MYD13Q1',
-    name: 'MODIS Terra & Aqua Vegetation Indices 16-Day L3 Global 250m',
-    source: 'NASA Land Processes Distributed Active Archive Center (LP DAAC)',
-    spatialResolution: '250 m multispectral',
-    temporalResolution: '16-day composite (8-day staggered Terra/Aqua)',
-    observationPeriod: '2000-present (continuous)',
-    units: 'NDVI (Normalized Difference Vegetation Index) & EVI (-1.0 to +1.0)',
-    processingMethod: 'Constrained view angle Maximum Value Composite (CV-MVC) minimizing cloud and atmospheric effects',
-    analyticalPurpose: 'Measures photosynthetic activity, biomass density, and seasonal crop emergence.',
-    limitations: 'Persistent cloud cover requires multi-day temporal compositing.',
-    lastRetrievedTimestamp: '2026-11-05T00:00:00Z',
-    dataCategory: 'Satellite Derived',
-  },
-  {
-    id: 'power',
-    code: 'NASA POWER Agro',
-    name: 'Prediction Of Worldwide Energy Resources (POWER) Daily Agroclimatology',
-    source: 'NASA Langley Research Center Atmospheric Science Data Center',
-    spatialResolution: '0.5° latitude x 0.5° longitude (~50 km)',
-    temporalResolution: 'Daily & hourly historical summaries',
-    observationPeriod: '1981-present (40+ year climatology baseline)',
-    units: 'Solar flux (MJ/m²/day), Tmax/Tmin (°C), Relative Humidity (%), Wind speed (m/s)',
-    processingMethod: 'Goddard Earth Observing System (GEOS) atmospheric assimilation coupled with CERES satellite radiation',
-    analyticalPurpose: 'Calculates thermal heat units, evapotranspiration baselines, and frost exposure risks.',
-    limitations: 'Assimilated meteorological model; localized cold air drainages may differ.',
-    lastRetrievedTimestamp: '2026-11-08T04:00:00Z',
-    dataCategory: 'Model Assimilated',
-  },
-  {
-    id: 'grace',
-    code: 'GRACE-FO JPL Mascon',
-    name: 'GRACE Follow-On Tellus Monthly Mass Grids (Deep Groundwater Storage)',
-    source: 'NASA Jet Propulsion Laboratory / University of Texas CSR',
-    spatialResolution: '0.5° x 0.5° mascon grid (Derived from 300 km orbital gravimetry)',
-    temporalResolution: 'Monthly',
-    observationPeriod: '2002-present (GRACE 2002-2017, GRACE-FO 2018-present)',
-    units: 'Liquid Water Equivalent Thickness anomaly (cm relative to 2004-2009 baseline)',
-    processingMethod: 'Spherical harmonic inversion of K-band microwave inter-satellite range rate with Glacial Isostatic Adjustment',
-    analyticalPurpose: 'Tracks multi-year regional deep groundwater aquifer trends (e.g. High Plains / Ogallala depletion).',
-    limitations: 'Coarse regional footprint (~300 km); cannot measure individual field-scale well drawdown.',
-    lastRetrievedTimestamp: '2026-10-15T00:00:00Z',
-    dataCategory: 'Satellite Derived',
-  },
-  {
-    id: 'srtm',
-    code: 'SRTMGL1 v003',
-    name: 'Shuttle Radar Topography Mission (SRTM) 1 Arc-Second Global Elevation',
-    source: 'NASA / National Geospatial-Intelligence Agency (NGA) / USGS EROS',
-    spatialResolution: '1 arc-second (~30 meters)',
-    temporalResolution: 'Static baseline reference (Mission year 2000)',
-    observationPeriod: 'February 2000 mission baseline',
-    units: 'Elevation above WGS84 EGM96 geoid (meters) & Slope Gradient (%)',
-    processingMethod: 'Interferometric Synthetic Aperture Radar (InSAR) C-band with void filling via ASTER GDEM',
-    analyticalPurpose: 'Topographic slope gradient, rill erosion hazard, watershed runoff direction, and contour buffer planning.',
-    limitations: 'Static 2000 terrain; reflects surface canopy tops in forested zones rather than bare earth in dense woods.',
-    lastRetrievedTimestamp: '2026-11-01T00:00:00Z',
-    dataCategory: 'Ground Truth Calibrated',
-  },
-];
-
-// Helper: Calculate Dynamic Strategy Scores and Explainability (Requirements A, H, I, J)
-function calculateStrategyEvaluations(
-  farm: FarmRecord,
-  priorities: FarmerPriorities,
-  scenario?: WhatIfScenario
-) {
-  // Scenario adjustments
-  const rainMod = scenario ? scenario.rainfallChangePercent / 100 : 0;
-  const tempMod = scenario ? scenario.temperatureChangeCelsius : 0;
-  const dryWeeks = scenario ? scenario.extendedDrySeasonWeeks : 0;
-  const restrictIrrigation = scenario ? scenario.irrigationRestricted : false;
-
-  // Base Scores
-  let scoreA = 72;
-  let scoreB = 86;
-  let scoreC = 91;
-
-  // Weight influences based on Farmer Priorities
-  // Strategy A (Corn/Soybean Biennial) thrives on Profitability and Equipment, but suffers from Water, SOM, Erosion, Diversity
-  const weightProfit = priorities.profitability / 5;
-  const weightEquip = priorities.equipmentCompatibility / 5;
-  const weightWater = priorities.waterConservation / 5;
-  const weightSOM = priorities.soilOrganicMatter / 5;
-  const weightErosion = priorities.erosionReduction / 5;
-  const weightDiversity = priorities.cropDiversity / 5;
-  const weightNitrogen = priorities.nitrogenFixing / 5;
-  const weightDrought = priorities.droughtResilience / 5;
-
-  scoreA += (weightProfit * 4) + (weightEquip * 6);
-  scoreA -= (weightWater * 6) + (weightSOM * 5) + (weightErosion * 7) + (weightDiversity * 5);
-
-  scoreB += (weightSOM * 8) + (weightNitrogen * 7) + (weightErosion * 8) + (weightWater * 4) + (weightDiversity * 6);
-  scoreB -= (weightEquip * 4); // Requires specialized cover crop drill/roller-crimper
-
-  scoreC += (weightDrought * 9) + (weightWater * 8) + (weightDiversity * 6) + (priorities.soilInfiltration / 5) * 5;
-  scoreC -= (weightEquip * 5) + (5 - (priorities.marketSuitability / 5)) * 4;
-
-  // Scenario impacts:
-  if (rainMod < -0.2 || dryWeeks > 2 || restrictIrrigation) {
-    scoreA -= 14; // High water demand corn suffers severe stress
-    scoreB -= 4;  // High OM buffers some moisture
-    scoreC += 8;  // Sorghum & sunflowers thrive in drought
-  }
-  if (tempMod > 2) {
-    scoreA -= 8;  // Corn silking heat stress
-    scoreC += 6;  // C4 sorghum photosynthesizes up to 38C
-  }
-
-  // Normalize scores between 45 and 98
-  scoreA = Math.max(45, Math.min(96, Math.round(scoreA)));
-  scoreB = Math.max(50, Math.min(97, Math.round(scoreB)));
-  scoreC = Math.max(52, Math.min(98, Math.round(scoreC)));
-
-  const strategies = [
-    {
-      id: 'strategy-a',
-      code: 'A' as const,
-      title: 'Existing Farmer Rotation (Baseline)',
-      tagline: 'Standard Commercial Biennial Corn-Soybean Monoculture',
-      score: scoreA,
-      isIllustrative: true,
-      cropSequence: ['Corn (Year 1)', 'Soybean (Year 2)', 'Corn (Year 3)', 'Soybean (Year 4)'],
-      seasons: ['Spring Planting - Autumn Harvest', 'Winter Fallow (135 Bare Days)'],
-      soilBenefits: {
-        nitrogenFixation: 'Moderate (~35 lbs N/acre contributed by soybean nodulation)',
-        organicMatterGrowth: '+0.05% estimated 3-yr delta',
-        erosionMitigation: 'Low (4.2 months bare soil exposure over winter months)',
-        rootDiversityScore: 48,
-      },
-      climateResilience: {
-        waterEfficiency: 'Medium (High corn transpirational demand during July pollination)',
-        droughtTolerance: 'Moderate vulnerability during silking',
-        heatRiskExposure: 'Elevated during pollination window >32°C',
-      },
-      economicProfile: {
-        grossMarginEst: '$710 - $780 / acre / yr',
-        inputCostIndex: 'High synthetic nitrogen & chemical herbicide dependence',
-        marketVolatility: 'Directly exposed to single-commodity price swings',
-      },
-      limitations: 'High Western Corn Rootworm pressure; accelerated soil compaction in wheel tracks; chronic nutrient leaching into groundwater during spring thaws.',
-      explainability: {
-        strategyCode: 'A' as const,
-        whySuggested: 'Required baseline representing the farmer’s active multi-year cropping sequence to quantify agronomic and economic delta.',
-        nasaObservationsUsed: [
-          'NASA MODIS NDVI indicates 0.18 bare-surface signature from November to April',
-          'NASA GPM records show 42mm spring rainfall occurring while ground is unprotected',
-          'NASA SMAP indicates 0.284 m³/m³ soil moisture peak during early spring runoff hazard',
-        ],
-        soilInformationUsed: [
-          `Soil type ${farm.soilType} with organic matter of ${farm.organicMatter}%`,
-          'Measured pH 6.4 with low phosphorus (12 ppm) demanding targeted fertility',
-        ],
-        cropCharacteristicsInfluenced: [
-          'Corn water demand: 600mm/season concentrated during late-summer peak thermal flux',
-          'Soybean residue C:N ratio 30:1 decomposes rapidly, leaving soil armor sparse in winter',
-        ],
-        farmerPrioritiesInfluenced: [
-          'Scored higher if equipment compatibility and short-term liquidity are maximized',
-          'Penalized when soil organic matter improvement and water conservation are prioritized',
-        ],
-        expectedPotentialBenefits: [
-          'Familiar commercial agronomic workflow with standard planter and combine row-units',
-          'Immediate local grain elevator acceptance without specialized storage handling',
-        ],
-        environmentalAndAgriculturalRisks: [
-          'Continuous 135-day bare field period leading to 3.8 tons/acre sheet and rill erosion',
-          'Western Corn Rootworm beetle egg persistence and sudden death syndrome inoculum',
-        ],
-        missingInformation: [
-          'Exact sub-surface tile drainage maps and nitrate concentration in field ditch runoff',
-        ],
-        uncertaintyAndLimitations: [
-          'Satellite imagery cannot distinguish between surface corn stalk residue and bare soil; ground verification needed.',
-        ],
-        localExpertValidationChecklist: [
-          'Consult local county extension agent regarding Western Corn Rootworm Bt trait resistance in your township.',
-        ],
-      },
-    },
-    {
-      id: 'strategy-b',
-      code: 'B' as const,
-      title: 'Soil Restoration & Carbon Strategy',
-      tagline: 'Multi-Species Cover Cropping & Biological Nitrogen Intensification',
-      score: scoreB,
-      isIllustrative: true,
-      cropSequence: [
-        'Corn (Grain)',
-        'Cereal Rye + Hairy Vetch (Winter Living Roots)',
-        'Soybean (No-Till)',
-        'Crimson Clover + Oats (Autumn Cover)',
-        'Alfalfa / Small Grains',
-      ],
-      seasons: ['Continuous Living Roots (365 Days Ground Armor)', 'Spring Roller-Crimper Termination'],
-      soilBenefits: {
-        nitrogenFixation: 'Very High (+75 to +95 lbs atmospheric N fixed biologically/acre)',
-        organicMatterGrowth: '+0.28% to +0.36% estimated 3-yr delta',
-        erosionMitigation: 'Very High (94% ground cover throughout winter freeze/thaw)',
-        rootDiversityScore: 89,
-      },
-      climateResilience: {
-        waterEfficiency: 'High (Soil organic matter holds ~22,000 gal/acre additional moisture)',
-        droughtTolerance: 'High root-zone water retention confirmed via NASA SMAP data',
-        heatRiskExposure: 'Lower canopy surface temps (-2.1°C via MODIS thermal comparison)',
-      },
-      economicProfile: {
-        grossMarginEst: '$745 - $825 / acre / yr',
-        inputCostIndex: '35% reduction in synthetic N purchasing by Year 3',
-        marketVolatility: 'Diversified income stream with small grain seed sales & carbon credits',
-      },
-      limitations: 'Requires specialized seed drill or aerial seeding equipment; spring cover crop termination timing must prevent soil moisture robbing in dry springs.',
-      explainability: {
-        strategyCode: 'B' as const,
-        whySuggested: 'Optimized for biological regeneration, maximum organic matter accumulation, and biological nitrogen fixation.',
-        nasaObservationsUsed: [
-          'NASA SMAP root zone moisture indicates sufficient spring storage (0.284 m³/m³) to support cover crop emergence without robbing subsequent cash crop moisture',
-          'NASA SRTM 30m digital elevation model reveals 2.3% slope vulnerable to rill erosion without vegetative armor',
-          'NASA MODIS NDVI tracks 365-day green canopy presence, eliminating bare soil vulnerability',
-        ],
-        soilInformationUsed: [
-          'Clarion loam aggregate structure responds strongly to fibrous cereal rye mycorrhizal root exudates',
-          'Soil organic matter target of >4.5% will increase water holding capacity by 22,000 gallons/acre',
-        ],
-        cropCharacteristicsInfluenced: [
-          'Hairy vetch fixes 85 lbs N/acre with rapid 11:1 C:N release for early corn vegetative growth',
-          'Cereal rye deep fibrous root structure penetrates compacted plow-pans up to 1.8 meters',
-        ],
-        farmerPrioritiesInfluenced: [
-          'Directly addresses high priorities for Soil Organic Matter, Nitrogen Fixation, and Erosion Reduction',
-        ],
-        expectedPotentialBenefits: [
-          'Reduction of synthetic fertilizer purchases by $45–$65 per acre annually by year 3',
-          'Elimination of bare-field periods from 135 days down to 0 days',
-        ],
-        environmentalAndAgriculturalRisks: [
-          'Late wet spring may delay roller-crimper termination, creating competition for seedling corn',
-        ],
-        missingInformation: [
-          'Local seed dealer pricing and availability for high-germination hairy vetch seed',
-        ],
-        uncertaintyAndLimitations: [
-          'Biological nitrogen release rate depends on soil microbial temperature in May; cool springs delay availability.',
-        ],
-        localExpertValidationChecklist: [
-          'Validate cover crop termination herbicide timing with your local Certified Crop Advisor (CCA).',
-        ],
-      },
-    },
-    {
-      id: 'strategy-c',
-      code: 'C' as const,
-      title: 'Climate-Resilient & Water-Conserving Rotation',
-      tagline: 'Deep-Rooted Cereals, Drought-Tolerant Legumes & Adaptive Fallowing',
-      score: scoreC,
-      isIllustrative: true,
-      cropSequence: [
-        'Drought-Tolerant Corn Hybrid',
-        'Triticale Winter Cover',
-        'Grain Sorghum (Milo)',
-        'Field Peas / Chickpeas',
-        'Confectionery Sunflowers',
-      ],
-      seasons: ['Staggered Water Demand Peak Cycles', 'Continuous Soil Armor & Fiber'],
-      soilBenefits: {
-        nitrogenFixation: 'High (Cool season pulse legumes contribute biological nitrogen)',
-        organicMatterGrowth: '+0.22% estimated 3-yr delta with deep fibrous sunflower taproots',
-        erosionMitigation: 'High (Stubble residue breaks surface wind velocity)',
-        rootDiversityScore: 94,
-      },
-      climateResilience: {
-        waterEfficiency: 'Superior (Grain sorghum consumes 32% less water than corn)',
-        droughtTolerance: 'Exceptional (Survives prolonged 4-week dry spells detected by GPM)',
-        heatRiskExposure: 'Sorghum & sunflower photosynthesize efficiently at temps up to 38°C',
-      },
-      economicProfile: {
-        grossMarginEst: '$760 - $855 / acre / yr',
-        inputCostIndex: 'Lowest water and synthetic chemical dependency',
-        marketVolatility: 'Resistant to single-commodity price shocks; emerging high-value specialty contracts',
-      },
-      limitations: 'Grain drying infrastructure and regional elevator grain acceptance for sorghum must be verified; sunflower harvest requires custom combine row-crop headers.',
-      explainability: {
-        strategyCode: 'C' as const,
-        whySuggested: 'Engineered for operational durability under climate volatility, water scarcity, and heat stress.',
-        nasaObservationsUsed: [
-          'NASA POWER climatology projects late July heat spells exceeding 34°C during corn silking',
-          'NASA ECOSTRESS Evaporative Stress Index highlights transpirational deficits in July',
-          'NASA GPM 10-year historical variability indicates multi-week mid-summer dry spells',
-        ],
-        soilInformationUsed: [
-          'Deep loamy subsoil layers permit deep rooting (>2.5m for sunflowers and sorghum) to access deep subsoil moisture',
-        ],
-        cropCharacteristicsInfluenced: [
-          'Grain sorghum C4 photosynthetic pathway consumes 32% less water than corn',
-          'Sunflower 2.5m taproots extract moisture and deep leached potassium from below typical row-crop zones',
-        ],
-        farmerPrioritiesInfluenced: [
-          'Directly addresses high priorities for Drought Resilience, Water Conservation, and Crop Diversity',
-        ],
-        expectedPotentialBenefits: [
-          'Consistent grain yields even when rainfall drops 30% below climatological normal',
-          'Diversified farm income across three distinct commodity market classes',
-        ],
-        environmentalAndAgriculturalRisks: [
-          'Sunflower residue is brittle and requires careful combine chaff spreading to prevent wind rill erosion',
-        ],
-        missingInformation: [
-          'Distance to regional grain terminal accepting grain sorghum (milo) and food-grade dry peas',
-        ],
-        uncertaintyAndLimitations: [
-          'Regional elevator basis bids for specialty pulse crops fluctuate with global export logistics.',
-        ],
-        localExpertValidationChecklist: [
-          'Confirm drying facility availability and moisture dockage rates for sunflower delivery.',
-        ],
-      },
-    },
-  ];
-
-  // Sort strategies by score descending
-  strategies.sort((a, b) => b.score - a.score);
-
-  return strategies;
-}
-
-// Secure password hashing using Node.js crypto scrypt & timing-safe equality
-export function hashPassword(password: string): string {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const derivedKey = crypto.scryptSync(password, salt, 64);
-  return `${salt}:${derivedKey.toString('hex')}`;
-}
-
-export function verifyPassword(password: string, storedHash: string): boolean {
-  try {
-    const [salt, key] = storedHash.split(':');
-    if (!salt || !key) return false;
-    const derivedKey = crypto.scryptSync(password, salt, 64);
-    const keyBuffer = Buffer.from(key, 'hex');
-    return crypto.timingSafeEqual(derivedKey, keyBuffer);
-  } catch {
-    return false;
-  }
-}
-
-// In-memory Auth session store
-interface UserSession {
-  email: string;
-  fullName: string;
-  passwordHash?: string;
-  token: string;
-  verified: boolean;
-  otpCode: string;
-  otpExpiresAt: number;
-}
-
-const activeUsers: Map<string, UserSession> = new Map();
-
-// Seed default accounts with cryptographically hashed passwords
-activeUsers.set('ahmed@example.com', {
-  email: 'ahmed@example.com',
-  fullName: 'Ahmed Raza',
-  passwordHash: hashPassword('password123'),
-  token: 'fs-token-demo-992812',
-  verified: true,
-  otpCode: '482910',
-  otpExpiresAt: Date.now() + 365 * 24 * 3600 * 1000,
-});
-
-activeUsers.set('test@test.com', {
-  email: 'test@test.com',
-  fullName: 'Test User',
-  passwordHash: hashPassword('12345678'),
-  token: 'fs-token-test-12345678',
-  verified: true,
-  otpCode: '123456',
-  otpExpiresAt: Date.now() + 365 * 24 * 3600 * 1000,
-});
-
-function extractRequestToken(req: Request): string | undefined {
-  const authHeader = req.headers.authorization;
-  let token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : (req.query.token as string | undefined);
-  if (!token && req.headers.cookie) {
-    const match = req.headers.cookie.match(/fieldshift_session=([^;]+)/);
-    if (match) {
-      token = decodeURIComponent(match[1]);
-    }
-  }
-  return token || undefined;
-}
-
-async function resolveRequestUser(req: Request): Promise<{ id?: string; email: string; fullName: string; verified: boolean } | null> {
-  const token = extractRequestToken(req);
-  if (!token) return null;
-
-  const admin = getSupabaseAdmin();
-  if (admin && token.split('.').length === 3) {
-    try {
-      const { data, error } = await admin.auth.getUser(token);
-      if (!error && data?.user) {
-        const metaName = data.user.user_metadata?.full_name;
-        return {
-          id: data.user.id,
-          email: data.user.email || '',
-          fullName: typeof metaName === 'string' && metaName.trim()
-            ? metaName.trim()
-            : (data.user.email?.split('@')[0] || 'Farmer'),
-          verified: !!data.user.email_confirmed_at || true,
-        };
-      }
-    } catch {
-      // Continue to fallback check
-    }
-  }
-
-  for (const user of activeUsers.values()) {
-    if (user.token === token) {
-      return { email: user.email, fullName: user.fullName, verified: user.verified };
-    }
-  }
-
-  return null;
+function clearSessionCookie(): string {
+  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  return `fieldshift_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isProd ? '; Secure' : ''}`;
 }
 
 /* ==========================================================================
-   API ROUTES
+   1. HEALTH & PUBLIC CATALOG ROUTES
    ========================================================================== */
 
-// 1. Health & Platform Status
-app.get('/api/health', (req: Request, res: Response) => {
+app.get('/api/health', async (_req: Request, res: Response) => {
+  let supabaseReachable = false;
+  const pubClient = getSupabasePublicClient() || getSupabaseAdminClient();
+  if (pubClient) {
+    try {
+      const { error } = await pubClient.from('nasa_datasets').select('id').limit(1);
+      supabaseReachable = !error;
+    } catch {
+      supabaseReachable = false;
+    }
+  }
+
   res.json({
-    status: 'healthy',
-    platform: 'Field Shift Agricultural Intelligence Platform',
-    version: '2.5.0',
-    geminiConfigured: !!process.env.GEMINI_API_KEY,
-    supabaseConfigured: !!getSupabaseAdmin(),
+    status: supabaseReachable ? 'healthy' : 'degraded',
+    platform: 'FieldShift Agricultural Intelligence Platform',
+    version: '2.6.0',
+    runtime: process.env.VERCEL ? 'vercel-serverless' : 'node-express',
+    supabaseConfigured: Boolean(getSupabaseAuthClient()),
+    supabaseReachable,
+    geminiConfigured: Boolean(getGeminiClient()),
+    nasaPowerEndpoint: 'https://power.larc.nasa.gov/api/temporal/daily/point',
     timestamp: new Date().toISOString(),
   });
 });
 
-// 2. Crop Characteristics Database (Requirement B)
 app.get('/api/crops', (req: Request, res: Response) => {
-  const familyFilter = req.query.family as string;
-  let crops = cropDatabase;
-  if (familyFilter) {
-    crops = crops.filter((c) => c.family.toLowerCase().includes(familyFilter.toLowerCase()));
-  }
+  const familyFilter = typeof req.query.family === 'string' ? req.query.family.trim() : '';
+  const crops = familyFilter
+    ? cropDatabase.filter((c) => c.family.toLowerCase().includes(familyFilter.toLowerCase()))
+    : cropDatabase;
+
   res.json({
     totalCrops: crops.length,
     crops,
@@ -1179,165 +186,1037 @@ app.get('/api/crops', (req: Request, res: Response) => {
   });
 });
 
-// 3. NASA Roadmap & Harmonization Catalog (Requirement F)
-app.get('/api/nasa/roadmap', (req: Request, res: Response) => {
+app.get('/api/scientific-methods', (_req: Request, res: Response) => {
   res.json({
-    totalMissions: nasaHarmonizedRoadmap.length,
-    datasets: nasaHarmonizedRoadmap,
-    harmonizationArchitecture: {
-      spatialResampling: 'Bilinear interpolation to a common 30m UTM grid for parcel overlays',
-      temporalAlignment: '16-day compositing baseline with 3-hour Kalman assimilated state updates',
-      crsStandardization: 'All satellite granules reprojected from native WGS84 (EPSG:4326) to Web Mercator (EPSG:3857)',
-      dataProvenanceRule: 'Satellite-derived indices are explicitly segregated from in-field laboratory measurements and farmer logs.',
-    },
+    framework: 'FieldShift Agricultural Science and Geospatial Modeling Protocols',
+    methods: scientificMethods,
+    scientificEthicsStatement:
+      'Correlation does not prove causation. Remote sensing indices support agronomic decision-making and never replace field scouting or laboratory soil testing.',
   });
 });
 
-// 4. Farmer Priorities Evaluation & Dynamic Re-ranking (Requirements A, H, I, J)
-app.post('/api/rotations/recalculate', async (req: Request, res: Response) => {
-  const { farmId, priorities, scenario } = req.body;
-  const reqUser = await resolveRequestUser(req);
-  const farm = await getFarmById(farmId, reqUser?.id);
-
-  const defaultPriorities: FarmerPriorities = {
-    waterConservation: 4,
-    profitability: 4,
-    forageValue: 2,
-    nitrogenFixing: 5,
-    soilOrganicMatter: 5,
-    erosionReduction: 4,
-    soilInfiltration: 4,
-    marketSuitability: 4,
-    droughtResilience: 4,
-    cropDiversity: 3,
-    equipmentCompatibility: 3,
-    plantingHarvestConstraints: 3,
-  };
-
-  const effectivePriorities: FarmerPriorities = {
-    ...defaultPriorities,
-    ...(priorities || {}),
-  };
-
-  const evaluatedStrategies = calculateStrategyEvaluations(farm, effectivePriorities, scenario);
-
-  // Generate plain-text narrative explaining why the rankings shifted
-  const topStrategy = evaluatedStrategies[0];
-  let rankingExplanation = `Under your specified priorities (emphasizing ${
-    effectivePriorities.soilOrganicMatter >= 4 ? 'Soil Organic Matter' : ''
-  } ${effectivePriorities.nitrogenFixing >= 4 ? '& Biological Nitrogen' : ''} ${
-    effectivePriorities.waterConservation >= 4 ? '& Water Conservation' : ''
-  }), **Strategy ${topStrategy.code} (${topStrategy.title})** ranks highest with an overall score of **${topStrategy.score}%**.`;
-
-  if (scenario && (scenario.rainfallChangePercent < -15 || scenario.extendedDrySeasonWeeks > 2)) {
-    rankingExplanation += ` Under your simulated What-If climate stress scenario (${scenario.rainfallChangePercent}% rainfall, +${scenario.extendedDrySeasonWeeks} weeks dry season), Strategy C gains relative advantage due to grain sorghum's drought tolerance.`;
+app.get(['/api/datasets', '/api/nasa/roadmap'], async (_req: Request, res: Response) => {
+  const pubClient = getSupabasePublicClient();
+  let dbDatasets: any[] | null = null;
+  if (pubClient) {
+    const { data, error } = await pubClient.from('nasa_datasets').select('*').order('id');
+    if (!error && data && data.length > 0) {
+      dbDatasets = data;
+    }
   }
 
   res.json({
-    farmId: farm.id,
-    priorities: effectivePriorities,
-    scenarioApplied: scenario || null,
-    strategies: evaluatedStrategies,
-    rankingExplanation,
-    disclaimer:
-      'Rankings reflect computational multi-criteria decision analysis based on farmer inputs and NASA satellite baselines. They do not replace local agronomic judgment.',
+    totalMissions: nasaHarmonizedRoadmap.length,
+    datasets: nasaHarmonizedRoadmap,
+    persistedCatalog: dbDatasets || [],
+    supportedSyncEndpoints: SUPPORTED_SYNC_DATASETS.map((ds) => ({
+      id: ds,
+      syncPath: `/api/datasets/${ds}/sync`,
+      observationsPath: `/api/datasets/${ds}/observations`,
+      accessMode: ds === 'nasa-power' ? 'live_public_api' : 'cmr_granule_discovery',
+    })),
+    harmonizationArchitecture: {
+      spatialResampling: 'Coarse grids (50km POWER, 10km GPM, 9km SMAP) are explicitly labeled and never claimed as sub-field measurements.',
+      temporalAlignment: 'Daily NASA POWER series and CMR granule timestamps preserved in UTC ISO-8601.',
+      crsStandardization: 'Geographic WGS84 (EPSG:4326) farm coordinates queried natively.',
+      dataProvenanceRule: 'Raw NASA observations are strictly segregated from soil tests, farmer logs, and deterministic strategy outputs.',
+    },
   });
 });
 
-// 5. Bare-Field Period Detection (Requirement C)
-app.get('/api/analysis/bare-field', async (req: Request, res: Response) => {
-  const farmId = (req.query.farmId as string) || 'farm-1';
-  const reqUser = await resolveRequestUser(req);
-  const farm = await getFarmById(farmId, reqUser?.id);
+app.get('/api/analysis/supplemental-income', (_req: Request, res: Response) => {
+  res.json({
+    opportunities: supplementalIncomeOpportunities,
+    disclaimer:
+      'FieldShift identifies potential economic avenues based on published agronomic extension budgets. Market prices fluctuate; treat estimates as illustrative.',
+  });
+});
 
-  const bareFieldAnalysis: BareFieldPeriod[] = [
-    {
-      strategyCode: 'A',
-      durationDays: 135,
-      calendarWindow: 'October 25 - April 10 (Post-harvest through spring planting)',
-      soilExposureRisk: 'High',
-      potentialErosionTonsPerAcre: 3.8,
-      coverCropOpportunity: 'Winter Cereal Rye or Triticale drilled immediately following grain harvest',
-      ndviThresholdObserved: 0.18,
-      caveat:
-        'Low winter NDVI (<0.20) in Landsat/MODIS observations indicates bare soil vulnerable to freeze-thaw and rainfall rill erosion. Ground residue can alter optical reading; ground check advised.',
+/* ==========================================================================
+   2. AUTHENTICATION ROUTES (Supabase Auth Only — Zero In-Memory Fallbacks)
+   ========================================================================== */
+
+const authRegisterPaths = ['/api/auth/register', '/api/v1/auth/register', '/auth/register', '/api/register', '/api/auth/signup', '/auth/signup'];
+app.post(authRegisterPaths, authRateLimit, async (req: Request, res: Response) => {
+  const parsed = parseBody(registerSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const supaAuth = getSupabaseAuthClient();
+  if (!supaAuth) {
+    res.status(503).json({ error: 'Authentication service is not configured.' });
+    return;
+  }
+
+  const { email, fullName, password } = parsed.data;
+  const normalizedEmail = email.toLowerCase();
+
+  try {
+    const { data, error } = await supaAuth.auth.signUp({
+      email: normalizedEmail,
+      password,
+      options: {
+        data: { full_name: fullName },
+      },
+    });
+
+    if (error) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+
+    if (data.session && data.user) {
+      res.set('Set-Cookie', buildSessionCookie(data.session.access_token));
+      res.status(201).json({
+        success: true,
+        autoConfirmed: true,
+        message: 'Account created and verified.',
+        user: {
+          email: data.user.email || normalizedEmail,
+          fullName,
+          verified: Boolean(data.user.email_confirmed_at),
+        },
+        token: data.session.access_token,
+      });
+      return;
+    }
+
+    res.status(201).json({
+      success: true,
+      autoConfirmed: false,
+      message: 'Verification email/code sent to your email address.',
+      email: normalizedEmail,
+    });
+  } catch (err: any) {
+    logEvent('Auth', 'REGISTER_EXCEPTION', { message: err?.message });
+    res.status(500).json({ error: 'Registration failed due to an upstream authentication error.' });
+  }
+});
+
+const authVerifyPaths = ['/api/auth/verify-otp', '/api/v1/auth/verify-otp', '/auth/verify-otp', '/api/verify-otp'];
+app.post(authVerifyPaths, authRateLimit, async (req: Request, res: Response) => {
+  const parsed = parseBody(verifyOtpSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const supaAuth = getSupabaseAuthClient();
+  if (!supaAuth) {
+    res.status(503).json({ error: 'Authentication service is not configured.' });
+    return;
+  }
+
+  const normalizedEmail = parsed.data.email.toLowerCase();
+  try {
+    const { data, error } = await supaAuth.auth.verifyOtp({
+      email: normalizedEmail,
+      token: parsed.data.code,
+      type: 'signup',
+    });
+
+    if (error || !data.session || !data.user) {
+      res.status(400).json({ error: error?.message || 'Invalid or expired verification code.' });
+      return;
+    }
+
+    const metaName = data.user.user_metadata?.full_name || normalizedEmail.split('@')[0];
+    res.set('Set-Cookie', buildSessionCookie(data.session.access_token));
+    res.json({
+      success: true,
+      user: {
+        email: data.user.email || normalizedEmail,
+        fullName: String(metaName),
+        verified: true,
+      },
+      token: data.session.access_token,
+    });
+  } catch (err: any) {
+    logEvent('Auth', 'VERIFY_OTP_EXCEPTION', { message: err?.message });
+    res.status(500).json({ error: 'Verification failed due to an upstream error.' });
+  }
+});
+
+const authResendPaths = ['/api/auth/resend-otp', '/api/v1/auth/resend-otp', '/auth/resend-otp', '/api/resend-otp'];
+app.post(authResendPaths, authRateLimit, async (req: Request, res: Response) => {
+  const parsed = parseBody(resendOtpSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const supaAuth = getSupabaseAuthClient();
+  if (!supaAuth) {
+    res.status(503).json({ error: 'Authentication service is not configured.' });
+    return;
+  }
+
+  try {
+    const { error } = await supaAuth.auth.resend({
+      type: 'signup',
+      email: parsed.data.email.toLowerCase(),
+    });
+    if (error) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    res.json({
+      success: true,
+      message: 'A new verification email/code has been dispatched.',
+    });
+  } catch (err: any) {
+    logEvent('Auth', 'RESEND_OTP_EXCEPTION', { message: err?.message });
+    res.status(500).json({ error: 'Unable to resend verification email.' });
+  }
+});
+
+const authLoginPaths = ['/api/auth/login', '/api/v1/auth/login', '/auth/login', '/api/login', '/login', '/api/auth/signin', '/auth/signin'];
+app.get(authLoginPaths, (_req: Request, res: Response) => {
+  res.set('Allow', 'POST, OPTIONS');
+  res.status(405).json({ error: 'Method Not Allowed. Use POST to authenticate.', status: 405 });
+});
+
+app.post(authLoginPaths, authRateLimit, async (req: Request, res: Response) => {
+  const parsed = parseBody(loginSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const supaAuth = getSupabaseAuthClient();
+  if (!supaAuth) {
+    res.status(503).json({ error: 'Authentication service is not configured.' });
+    return;
+  }
+
+  const normalizedEmail = parsed.data.email.toLowerCase();
+  try {
+    const { data, error } = await supaAuth.auth.signInWithPassword({
+      email: normalizedEmail,
+      password: parsed.data.password,
+    });
+
+    if (error || !data?.session || !data?.user) {
+      res.status(401).json({ error: error?.message || 'Invalid login credentials.' });
+      return;
+    }
+
+    const metaName = data.user.user_metadata?.full_name || normalizedEmail.split('@')[0];
+    res.set('Set-Cookie', buildSessionCookie(data.session.access_token));
+    res.json({
+      success: true,
+      user: {
+        email: data.user.email || normalizedEmail,
+        fullName: String(metaName),
+        verified: Boolean(data.user.email_confirmed_at),
+      },
+      token: data.session.access_token,
+    });
+  } catch (err: any) {
+    logEvent('Auth', 'LOGIN_EXCEPTION', { message: err?.message });
+    res.status(500).json({ error: 'An internal error occurred during authentication.' });
+  }
+});
+
+const authSessionPaths = ['/api/auth/session', '/api/v1/auth/session', '/auth/session', '/api/auth/me', '/auth/me', '/api/auth/user', '/auth/user'];
+app.get(authSessionPaths, async (req: Request, res: Response) => {
+  const user = await resolveRequestUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'No active valid session.' });
+    return;
+  }
+  res.json({
+    success: true,
+    user: {
+      id: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      verified: user.verified,
     },
-    {
-      strategyCode: 'B',
-      durationDays: 0,
-      calendarWindow: 'Continuous 365-Day Living Root Coverage',
-      soilExposureRisk: 'Negligible',
-      potentialErosionTonsPerAcre: 0.2,
-      coverCropOpportunity: 'Active multi-species rye + hairy vetch + crimson clover mix',
-      ndviThresholdObserved: 0.54,
-      caveat:
-        'Continuous green canopy confirmed via MODIS CV-MVC composite. Terminated in May using mechanical roller-crimper leaving protective weed-suppressive mulch.',
+  });
+});
+
+const authLogoutPaths = ['/api/auth/logout', '/api/v1/auth/logout', '/auth/logout', '/api/logout', '/logout'];
+app.post(authLogoutPaths, (_req: Request, res: Response) => {
+  res.set('Set-Cookie', clearSessionCookie());
+  res.json({ success: true, message: 'Logged out successfully.' });
+});
+
+const authResetPaths = ['/api/auth/password-reset', '/api/auth/forgot-password', '/auth/forgot-password', '/api/auth/reset-password', '/auth/reset-password'];
+app.post(authResetPaths, authRateLimit, async (req: Request, res: Response) => {
+  const parsed = parseBody(passwordResetSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const supaAuth = getSupabaseAuthClient();
+  if (!supaAuth) {
+    res.status(503).json({ error: 'Authentication service is not configured.' });
+    return;
+  }
+
+  try {
+    const redirectTo = process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, '')}/auth/sign-in` : undefined;
+    await supaAuth.auth.resetPasswordForEmail(
+      parsed.data.email.toLowerCase(),
+      redirectTo ? { redirectTo } : undefined
+    );
+  } catch {
+    // Intentionally suppress user enumeration errors
+  }
+
+  res.json({
+    success: true,
+    message: 'If an account matches this email, password reset instructions have been sent.',
+  });
+});
+
+/* ==========================================================================
+   3. PROFILE ROUTES (Protected)
+   ========================================================================== */
+
+app.get('/api/profile', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+
+  const { data, error } = await client
+    .from('profiles')
+    .select('*')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (error) {
+    logEvent('Profile', 'PROFILE_FETCH_ERROR', { error: error.message });
+    res.status(500).json({ error: 'Failed to load profile.' });
+    return;
+  }
+
+  if (!data) {
+    const { data: inserted, error: insertErr } = await client
+      .from('profiles')
+      .upsert({
+        id: user.id,
+        email: user.email,
+        full_name: user.fullName,
+        measurement_units: 'imperial',
+      })
+      .select('*')
+      .single();
+
+    if (insertErr) {
+      res.status(500).json({ error: 'Failed to initialize user profile.' });
+      return;
+    }
+
+    res.json({
+      profile: {
+        id: inserted.id,
+        email: inserted.email,
+        fullName: inserted.full_name,
+        measurementUnits: inserted.measurement_units,
+        updatedAt: inserted.updated_at,
+      },
+    });
+    return;
+  }
+
+  res.json({
+    profile: {
+      id: data.id,
+      email: data.email,
+      fullName: data.full_name,
+      measurementUnits: data.measurement_units,
+      updatedAt: data.updated_at,
     },
-    {
-      strategyCode: 'C',
-      durationDays: 45,
-      calendarWindow: 'Early August - September (Short pulse harvest gap)',
-      soilExposureRisk: 'Low',
-      potentialErosionTonsPerAcre: 0.8,
-      coverCropOpportunity: 'Quick-establishing brassica radish or buckwheat summer pollinator cover',
-      ndviThresholdObserved: 0.32,
-      caveat:
-        'Dense sorghum stover residue remains upright throughout winter, breaking ground wind speeds and minimizing particulate loss.',
+  });
+});
+
+app.patch('/api/profile', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const parsed = parseBody(profileUpdateSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const updates: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+  if (parsed.data.fullName !== undefined) updates.full_name = parsed.data.fullName;
+  if (parsed.data.measurementUnits !== undefined) updates.measurement_units = parsed.data.measurementUnits;
+
+  const { data, error } = await client
+    .from('profiles')
+    .update(updates)
+    .eq('id', user.id)
+    .select('*')
+    .single();
+
+  if (error || !data) {
+    logEvent('Profile', 'PROFILE_UPDATE_ERROR', { error: error?.message });
+    res.status(500).json({ error: 'Failed to update user profile.' });
+    return;
+  }
+
+  res.json({
+    success: true,
+    profile: {
+      id: data.id,
+      email: data.email,
+      fullName: data.full_name,
+      measurementUnits: data.measurement_units,
+      updatedAt: data.updated_at,
     },
-  ];
+  });
+});
+
+/* ==========================================================================
+   4. FARM MANAGEMENT ROUTES (Protected & Ownership-Verified via RLS)
+   ========================================================================== */
+
+app.get('/api/farms', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const farms = await listAccessibleFarms(req.authUser!);
+    res.json({
+      farms,
+      totalCount: farms.length,
+      source: 'supabase',
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Unable to load farms.' });
+  }
+});
+
+app.post('/api/farms', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const parsed = parseBody(createFarmSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farmId = `farm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const nowIso = new Date().toISOString();
+  const payload = parsed.data;
+
+  const { data, error } = await client
+    .from('farms')
+    .insert({
+      id: farmId,
+      user_id: user.id,
+      is_demo: false,
+      name: payload.name,
+      location: payload.location,
+      coordinates: payload.coordinates || [-93.62, 42.03],
+      acreage: payload.acreage,
+      current_crop: payload.currentCrop,
+      planting_season: payload.plantingSeason,
+      rotation_history: payload.rotationHistory && payload.rotationHistory.length > 0
+        ? payload.rotationHistory
+        : [payload.currentCrop],
+      soil_type: payload.soilType,
+      soil_ph: payload.soilPH,
+      organic_matter: payload.organicMatter,
+      nitrogen: payload.nitrogen,
+      phosphorus: payload.phosphorus,
+      potassium: payload.potassium,
+      drainage: payload.drainage,
+      last_soil_test: payload.lastSoilTest || nowIso.slice(0, 10),
+      created_at: nowIso,
+      updated_at: nowIso,
+    })
+    .select('*')
+    .single();
+
+  if (error || !data) {
+    logEvent('Farms', 'FARM_CREATE_ERROR', { error: error?.message });
+    res.status(500).json({ error: 'Failed to persist farm property.' });
+    return;
+  }
+
+  res.status(201).json({
+    success: true,
+    farm: mapDbFarmRow(data),
+    source: 'supabase',
+  });
+});
+
+app.get('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const farm = await getAccessibleFarmById(req.params.id, req.authUser!);
+    if (!farm) {
+      res.status(404).json({ error: 'Farm not found or access denied.' });
+      return;
+    }
+    res.json({ farm });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to retrieve farm.' });
+  }
+});
+
+app.patch('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const parsed = parseBody(updateFarmSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const existing = await getAccessibleFarmById(req.params.id, user);
+
+  if (!existing) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+  if (existing.isDemo || existing.userId !== user.id) {
+    res.status(403).json({ error: 'Only your own registered farm properties can be edited.' });
+    return;
+  }
+
+  const p = parsed.data;
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (p.name !== undefined) updates.name = p.name;
+  if (p.location !== undefined) updates.location = p.location;
+  if (p.coordinates !== undefined) updates.coordinates = p.coordinates;
+  if (p.acreage !== undefined) updates.acreage = p.acreage;
+  if (p.currentCrop !== undefined) updates.current_crop = p.currentCrop;
+  if (p.plantingSeason !== undefined) updates.planting_season = p.plantingSeason;
+  if (p.rotationHistory !== undefined) updates.rotation_history = p.rotationHistory;
+  if (p.soilType !== undefined) updates.soil_type = p.soilType;
+  if (p.soilPH !== undefined) updates.soil_ph = p.soilPH;
+  if (p.organicMatter !== undefined) updates.organic_matter = p.organicMatter;
+  if (p.nitrogen !== undefined) updates.nitrogen = p.nitrogen;
+  if (p.phosphorus !== undefined) updates.phosphorus = p.phosphorus;
+  if (p.potassium !== undefined) updates.potassium = p.potassium;
+  if (p.drainage !== undefined) updates.drainage = p.drainage;
+  if (p.lastSoilTest !== undefined) updates.last_soil_test = p.lastSoilTest;
+
+  const { data, error } = await client
+    .from('farms')
+    .update(updates)
+    .eq('id', req.params.id)
+    .eq('user_id', user.id)
+    .select('*')
+    .single();
+
+  if (error || !data) {
+    logEvent('Farms', 'FARM_UPDATE_ERROR', { farmId: req.params.id, error: error?.message });
+    res.status(500).json({ error: 'Failed to update farm property.' });
+    return;
+  }
+
+  res.json({ success: true, farm: mapDbFarmRow(data) });
+});
+
+app.delete('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const existing = await getAccessibleFarmById(req.params.id, user);
+
+  if (!existing) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+  if (existing.isDemo || existing.userId !== user.id) {
+    res.status(403).json({ error: 'Baseline demonstration farms and farms owned by other users cannot be deleted.' });
+    return;
+  }
+
+  const { error } = await client
+    .from('farms')
+    .delete()
+    .eq('id', req.params.id)
+    .eq('user_id', user.id);
+
+  if (error) {
+    logEvent('Farms', 'FARM_DELETE_ERROR', { farmId: req.params.id, error: error.message });
+    res.status(500).json({ error: 'Failed to delete farm property.' });
+    return;
+  }
+
+  res.json({ success: true, id: req.params.id });
+});
+
+/* ==========================================================================
+   5. FARMER PRIORITIES ROUTES (Protected & Scoped per User+Farm)
+   ========================================================================== */
+
+app.get('/api/priorities', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const { data, error } = await client
+    .from('farmer_priorities')
+    .select('*')
+    .eq('farm_id', farmId)
+    .eq('owner_scope', user.id)
+    .maybeSingle();
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to retrieve priorities.' });
+    return;
+  }
+
+  if (!data) {
+    res.json({ success: true, source: 'default', priorities: null });
+    return;
+  }
+
+  res.json({
+    success: true,
+    source: 'supabase',
+    priorities: {
+      waterConservation: data.water_conservation,
+      profitability: data.profitability,
+      forageValue: data.forage_value,
+      nitrogenFixing: data.nitrogen_fixing,
+      soilOrganicMatter: data.soil_organic_matter,
+      erosionReduction: data.erosion_reduction,
+      soilInfiltration: data.soil_infiltration,
+      marketSuitability: data.market_suitability,
+      droughtResilience: data.drought_resilience,
+      cropDiversity: data.crop_diversity,
+      equipmentCompatibility: data.equipment_compatibility,
+      plantingHarvestConstraints: data.planting_harvest_constraints,
+    },
+  });
+});
+
+app.put('/api/priorities', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const { farmId, priorities } = req.body || {};
+  if (!farmId || typeof farmId !== 'string') {
+    res.status(400).json({ error: 'farmId is required.' });
+    return;
+  }
+  const parsedPrio = parseBody(prioritiesSchema, priorities);
+  if (!parsedPrio.ok) {
+    res.status(400).json({ error: parsedPrio.error });
+    return;
+  }
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(farmId.trim(), user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const p = parsedPrio.data;
+  const { error } = await client
+    .from('farmer_priorities')
+    .upsert(
+      {
+        farm_id: farm.id,
+        user_id: user.id,
+        owner_scope: user.id,
+        water_conservation: p.waterConservation,
+        profitability: p.profitability,
+        forage_value: p.forageValue,
+        nitrogen_fixing: p.nitrogenFixing,
+        soil_organic_matter: p.soilOrganicMatter,
+        erosion_reduction: p.erosionReduction,
+        soil_infiltration: p.soilInfiltration,
+        market_suitability: p.marketSuitability,
+        drought_resilience: p.droughtResilience,
+        crop_diversity: p.cropDiversity,
+        equipment_compatibility: p.equipmentCompatibility,
+        planting_harvest_constraints: p.plantingHarvestConstraints,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'farm_id,owner_scope' }
+    );
+
+  if (error) {
+    logEvent('Priorities', 'UPSERT_ERROR', { farmId: farm.id, error: error.message });
+    res.status(500).json({ error: 'Failed to save priorities.' });
+    return;
+  }
+
+  res.json({ success: true, source: 'supabase' });
+});
+
+/* ==========================================================================
+   6. NASA DATASET INGESTION & OBSERVATION ROUTES (Protected & Ownership Verified)
+   ========================================================================== */
+
+app.get('/api/datasets/status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const [summary, jobsRes] = await Promise.all([
+    getFarmNasaObservationsSummary(client, farm.id),
+    client
+      .from('ingestion_jobs')
+      .select('*')
+      .eq('farm_id', farm.id)
+      .order('created_at', { ascending: false })
+      .limit(20),
+  ]);
 
   res.json({
     farmId: farm.id,
     farmName: farm.name,
-    slopePercent: 2.3,
-    analysis: bareFieldAnalysis,
-    scientificMethodology:
-      'Bare-field periods are calculated using historical MODIS 250m and Landsat 30m NDVI reflectance curves cross-referenced with crop calendar planting and harvest dates.',
+    coordinates: farm.coordinates,
+    summary,
+    recentJobs: jobsRes.data || [],
   });
 });
 
-// 6. Pest and Disease Cycle Interruption Evaluation (Requirement D)
-app.get('/api/analysis/pest-cycles', async (req: Request, res: Response) => {
-  const farmId = (req.query.farmId as string) || 'farm-1';
-  const reqUser = await resolveRequestUser(req);
-  const farm = await getFarmById(farmId, reqUser?.id);
+app.post('/api/datasets/:dataset/sync', requireAuth, nasaSyncRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+  const dataset = req.params.dataset as SupportedSyncDataset;
+  if (!SUPPORTED_SYNC_DATASETS.includes(dataset)) {
+    res.status(400).json({
+      error: `Unsupported dataset '${req.params.dataset}'. Supported datasets: ${SUPPORTED_SYNC_DATASETS.join(', ')}`,
+    });
+    return;
+  }
 
-  const evaluations: PestCycleEvaluation[] = [
-    {
-      strategyCode: 'A',
-      familyRotationDiversityScore: 42,
-      cornRootwormRisk: 'High',
-      soybeanCystNematodeRisk: 'Moderate',
-      fusariumHeadBlightRisk: 'Moderate',
-      cycleBreakMechanism: 'Alternating Poaceae and Fabaceae breaks rootworm, but variant rootworm beetles now lay eggs in soybeans.',
-      limitationDisclaimer:
-        'Notice: Satellite observations (NDVI, thermal stress) detect crop canopy anomalies but CANNOT confirm specific insect pest or disease presence. In-field scouting is mandatory.',
-    },
-    {
-      strategyCode: 'B',
-      familyRotationDiversityScore: 88,
-      cornRootwormRisk: 'Low',
-      soybeanCystNematodeRisk: 'Low',
-      fusariumHeadBlightRisk: 'Low',
-      cycleBreakMechanism: 'Multi-species cover crops stimulate diverse soil microbial antagonists (Pseudomonas, Trichoderma) that suppress soil-borne fungal pathogens.',
-      limitationDisclaimer:
-        'Notice: Satellite observations detect crop canopy anomalies but CANNOT confirm specific insect pest or disease presence. In-field scouting is mandatory.',
-    },
-    {
-      strategyCode: 'C',
-      familyRotationDiversityScore: 94,
-      cornRootwormRisk: 'Low',
-      soybeanCystNematodeRisk: 'Low',
-      fusariumHeadBlightRisk: 'Low',
-      cycleBreakMechanism: 'Introduction of Asteraceae (sunflower) and pulse crops completely removes grain host plants for 3 out of 4 years.',
-      limitationDisclaimer:
-        'Notice: Satellite observations detect crop canopy anomalies but CANNOT confirm specific insect pest or disease presence. In-field scouting is mandatory.',
-    },
-  ];
+  const parsed = parseBody(datasetSyncSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(parsed.data.farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  try {
+    if (dataset === 'nasa-power') {
+      const result = await syncNasaPowerForFarm(client, user.id, farm, {
+        startDate: parsed.data.startDate,
+        endDate: parsed.data.endDate,
+        days: parsed.data.days,
+      });
+      res.json({ success: true, ...result });
+      return;
+    }
+
+    const result = await syncEarthdataCmrForFarm(client, user.id, farm, dataset);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(502).json({
+      error: `Failed to sync ${dataset}: ${err?.message || 'Upstream NASA request failed'}`,
+    });
+  }
+});
+
+app.get('/api/datasets/:dataset/observations', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const dataset = req.params.dataset as SupportedSyncDataset;
+  if (!SUPPORTED_SYNC_DATASETS.includes(dataset)) {
+    res.status(400).json({
+      error: `Unsupported dataset '${req.params.dataset}'. Supported datasets: ${SUPPORTED_SYNC_DATASETS.join(', ')}`,
+    });
+    return;
+  }
+
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : '';
+  if (!farmId) {
+    res.status(400).json({ error: 'farmId query parameter is required.' });
+    return;
+  }
+
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const { data, count, error } = await client
+    .from('nasa_observations')
+    .select('*', { count: 'exact' })
+    .eq('farm_id', farm.id)
+    .eq('dataset_id', dataset)
+    .order('observed_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) {
+    res.status(500).json({ error: 'Failed to retrieve NASA observations.' });
+    return;
+  }
 
   res.json({
     farmId: farm.id,
-    evaluations,
+    dataset,
+    totalCount: count || 0,
+    limit,
+    offset,
+    observations: data || [],
+  });
+});
+
+// Dashboard compatibility observation & climate routes (Real persisted data — NO fake static numbers)
+app.get('/api/nasa/observations', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const summary = await getFarmNasaObservationsSummary(client, farm.id);
+  const smap = summary.cmrGranulesByDataset.smap;
+  const gpm = summary.cmrGranulesByDataset.gpm;
+  const modis = summary.cmrGranulesByDataset.modis;
+  const ecostress = summary.cmrGranulesByDataset.ecostress;
+
+  res.json({
+    farmId: farm.id,
+    farmName: farm.name,
+    coordinates: farm.coordinates,
+    catalog: nasaHarmonizedRoadmap,
+    summary,
+    realTimeMetrics: {
+      solarInsolationPOWER: summary.hasPowerData
+        ? {
+            status: 'synced',
+            dailyRadiation: summary.meanSolarRadiationMj,
+            unit: 'MJ/m²/day',
+            meanTempC: summary.meanTempC,
+            precipTotalMm: summary.precipTotalMm,
+            growingDegreeDays: summary.growingDegreeDaysBase10C,
+            daysObserved: summary.dailyTimeline.length,
+            sensor: 'NASA POWER Agroclimatology (0.5°)',
+            timestamp: summary.powerLastRetrievedAt,
+          }
+        : {
+            status: 'not_synced',
+            dailyRadiation: null,
+            unit: 'MJ/m²/day',
+            growingDegreeDays: null,
+            sensor: 'NASA POWER Agroclimatology (0.5°)',
+            notice: 'Click "Sync NASA POWER" to fetch live daily agroclimatology for this parcel.',
+          },
+      soilMoistureSMAP: {
+        status: smap?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
+        value: null,
+        unit: 'm³/m³',
+        latestGranuleId: smap?.latestGranuleId || null,
+        granuleTimestamp: smap?.latestTimeStart || null,
+        sensor: 'SMAP L4 (9km EASE-Grid 2.0)',
+        notice: 'Numeric HDF5 moisture pixel extraction requires Earthdata Login token.',
+      },
+      precipitationGPM: {
+        status: summary.hasPowerData ? 'power_precip_available' : gpm?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
+        value30DayTotal: summary.precipTotalMm,
+        unit: 'mm',
+        latestGranuleId: gpm?.latestGranuleId || null,
+        sensor: summary.hasPowerData ? 'NASA POWER PRECTOTCORR + GPM CMR' : 'GPM IMERG Late (0.1°)',
+        timestamp: summary.powerLastRetrievedAt || gpm?.retrievedAt || null,
+      },
+      vegetationNDVI: {
+        status: modis?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
+        currentNDVI: null,
+        latestGranuleId: modis?.latestGranuleId || null,
+        granuleTimestamp: modis?.latestTimeStart || null,
+        sensor: 'MODIS MOD13Q1 (250m)',
+        notice: 'Numeric NDVI raster extraction requires Earthdata Login HDF-EOS reader.',
+      },
+      evapotranspirationECOSTRESS: {
+        status: ecostress?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
+        waterStressIndex: null,
+        latestGranuleId: ecostress?.latestGranuleId || null,
+        granuleTimestamp: ecostress?.latestTimeStart || null,
+        sensor: 'ECOSTRESS ISS (70m)',
+        notice: 'Numeric thermal ET GeoTIFF extraction requires Earthdata Login token.',
+      },
+    },
+  });
+});
+
+app.get('/api/climate/timeline', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const summary = await getFarmNasaObservationsSummary(client, farm.id);
+
+  res.json({
+    farmId: farm.id,
+    farmName: farm.name,
+    hasLivePowerData: summary.hasPowerData,
+    lastRetrievedAt: summary.powerLastRetrievedAt,
+    timeline: summary.dailyTimeline.map((d) => ({
+      date: d.date,
+      rainfallMm: d.precipMm,
+      tempMeanC: d.t2m,
+      tempMaxC: d.t2mMax,
+      tempMinC: d.t2mMin,
+      humidityPct: d.rh2m,
+      solarRadiationMj: d.solarMj,
+    })),
+    provenance: summary.hasPowerData
+      ? 'NASA Langley POWER Agroclimatology Daily Point API (0.5° grid)'
+      : 'No NASA POWER records synced yet for this parcel.',
+  });
+});
+
+app.get('/api/soil/profiles', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
+  const user = req.authUser!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  res.json({
+    farmId: farm.id,
+    soilType: farm.soilType,
+    metrics: {
+      pH: { value: farm.soilPH, targetRange: '6.2 - 6.8', status: farm.soilPH >= 6.0 && farm.soilPH <= 7.2 ? 'Optimal' : 'Needs Calibration' },
+      organicMatter: { value: farm.organicMatter, unit: '%', status: farm.organicMatter >= 3.5 ? 'Good' : 'Building' },
+      nitrogen: { value: farm.nitrogen, recommendation: 'Supplement with winter legume green manure if below 20 ppm' },
+      phosphorus: { value: farm.phosphorus, recommendation: 'Verify banded P fertility rates with local soil lab' },
+      potassium: { value: farm.potassium, recommendation: 'Monitor K removal under high-biomass forage harvests' },
+      drainageClass: farm.drainage,
+      lastTestDate: farm.lastSoilTest,
+    },
+    provenance: 'Farmer-entered & laboratory soil test record (segregated from satellite data)',
+    limitations: [
+      'Satellite radiometry (SMAP 9km) cannot measure soil pH, phosphorus, potassium, or field-tile drainage.',
+      'Periodic laboratory soil cores remain mandatory for nutrient prescription accuracy.',
+    ],
+  });
+});
+
+app.get('/api/risk/field-analysis', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const summary = await getFarmNasaObservationsSummary(client, farm.id);
+  const indicators = [];
+
+  if (summary.hasPowerData && summary.maxTempC !== null) {
+    const heatScore = summary.maxTempC >= 34 ? 72 : summary.maxTempC >= 28 ? 44 : 20;
+    indicators.push({
+      name: 'Observed Thermal Heat Exposure',
+      level: heatScore >= 65 ? 'HIGH' : heatScore >= 40 ? 'MODERATE' : 'LOW',
+      score: heatScore,
+      dataSource: 'NASA POWER Daily Agroclimatology (Synced)',
+      observation: `Synced window peak temperature: ${summary.maxTempC}°C (mean ${summary.meanTempC}°C).`,
+    });
+  } else {
+    indicators.push({
+      name: 'Observed Thermal Heat Exposure',
+      level: 'MODERATE',
+      score: null,
+      dataSource: 'NASA POWER (Not Yet Synced)',
+      observation: 'Sync NASA POWER observations to calculate parcel thermal stress from live daily temperatures.',
+    });
+  }
+
+  if (summary.hasPowerData && summary.precipTotalMm !== null) {
+    const rainRisk = summary.precipTotalMm < 15 ? 65 : summary.precipTotalMm > 140 ? 55 : 25;
+    indicators.push({
+      name: 'Precipitation Deficit / Excess Runoff Risk',
+      level: rainRisk >= 60 ? 'HIGH' : rainRisk >= 40 ? 'MODERATE' : 'LOW',
+      score: rainRisk,
+      dataSource: 'NASA POWER PRECTOTCORR (Synced)',
+      observation: `Cumulative ${summary.dailyTimeline.length}-day precipitation: ${summary.precipTotalMm} mm.`,
+    });
+  } else {
+    indicators.push({
+      name: 'Precipitation Deficit / Excess Runoff Risk',
+      level: 'MODERATE',
+      score: null,
+      dataSource: 'NASA POWER / GPM (Not Yet Synced)',
+      observation: 'Sync NASA POWER to inspect cumulative precipitation over the recent window.',
+    });
+  }
+
+  indicators.push({
+    name: 'Organic Matter Moisture Buffer',
+    level: farm.organicMatter < 2.5 ? 'HIGH' : farm.organicMatter < 3.5 ? 'MODERATE' : 'LOW',
+    score: farm.organicMatter < 2.5 ? 68 : farm.organicMatter < 3.5 ? 42 : 22,
+    dataSource: `Persisted Farm Soil Record (${farm.soilType})`,
+    observation: `Measured soil organic matter of ${farm.organicMatter}% with ${farm.drainage} hydrology.`,
+  });
+
+  res.json({
+    farmId: farm.id,
+    hasLivePowerData: summary.hasPowerData,
+    indicators,
+    scientificNotice:
+      'NASA POWER grid cells (~50 km) do not capture field-level frost pockets or tile drainage variations.',
+  });
+});
+
+app.get('/api/analysis/bare-field', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const summary = await getFarmNasaObservationsSummary(client, farm.id);
+  res.json({
+    farmId: farm.id,
+    farmName: farm.name,
+    analysis: buildBareFieldAnalysis(farm, summary),
+    scientificMethodology:
+      'Bare-field windows combine crop calendar residue persistence benchmarks with synced NASA climate records.',
+  });
+});
+
+app.get('/api/analysis/pest-cycles', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
+  const user = req.authUser!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  res.json({
+    farmId: farm.id,
+    evaluations: buildPestCycles(farm),
     botanicalFamiliesUtilized: [
       { family: 'Poaceae', commonName: 'Grasses / Cereals', crops: ['Corn', 'Cereal Rye', 'Sorghum', 'Triticale'] },
       { family: 'Fabaceae', commonName: 'Legumes / Pulses', crops: ['Soybeans', 'Hairy Vetch', 'Crimson Clover', 'Field Peas', 'Alfalfa'] },
@@ -1346,1118 +1225,314 @@ app.get('/api/analysis/pest-cycles', async (req: Request, res: Response) => {
   });
 });
 
-// 7. Supplemental Income Opportunities (Requirement E)
-app.get('/api/analysis/supplemental-income', (req: Request, res: Response) => {
-  const opportunities: SupplementalIncome[] = [
-    {
-      category: 'Livestock Forage & Grazing Contracts',
-      opportunityName: 'Winter Cereal Rye / Triticale Stubble Grazing Lease',
-      estimatedGrossValuePerAcre: '$25 - $45 / acre',
-      localMarketRequirement: 'Proximity to cow-calf operations and temporary electric perimeter fencing',
-      missingDataNotice: 'Local custom grazing rates fluctuate by county; exact livestock density agreements required.',
-      feasibility: 'High',
-    },
-    {
-      category: 'Conservation Program Incentives',
-      opportunityName: 'USDA NRCS Conservation Stewardship Program (CSP) E328 Cover Enhancements',
-      estimatedGrossValuePerAcre: '$18 - $34 / acre / yr',
-      localMarketRequirement: 'Formal conservation plan contract with local NRCS service center',
-      missingDataNotice: 'Subject to annual Congressional farm bill appropriations and county ranking pools.',
-      feasibility: 'High',
-    },
-    {
-      category: 'Regenerative Carbon Insetting Credits',
-      opportunityName: 'Soil Carbon Accrual & Scope 3 Supply Chain Insetting',
-      estimatedGrossValuePerAcre: '$15 - $28 / acre / yr (Estimated 0.4t CO2e/ac)',
-      localMarketRequirement: 'Multi-year verified soil core carbon testing and satellite verification protocol',
-      missingDataNotice: 'Carbon offset registries require 5-10 year permanence commitments; contract terms must be reviewed with legal counsel.',
-      feasibility: 'Moderate',
-    },
-    {
-      category: 'Specialty Grain & Pulse Premiums',
-      opportunityName: 'Food-Grade Yellow Field Peas & Confectionery Sunflowers',
-      estimatedGrossValuePerAcre: '$80 - $140 / acre premium above commodity corn',
-      localMarketRequirement: 'Direct identity-preserved (IP) delivery contract with regional processing elevator',
-      missingDataNotice: 'Elevator trucking distance and clean-out inspection requirements not included in estimate.',
-      feasibility: 'Conditional',
-    },
-  ];
+/* ==========================================================================
+   7. CROP ROTATION ENGINE & PERSISTED ASSESSMENTS (Protected)
+   ========================================================================== */
 
-  res.json({
-    opportunities,
-    disclaimer:
-      'Field Shift identifies potential economic avenues based on published agronomic extension budgets. Market prices fluctuate; never treat estimates as guaranteed revenues.',
+app.get('/api/rotations', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : undefined;
+
+  let query = client
+    .from('rotation_assessments')
+    .select('*, rotation_scenarios(id, name, priorities, scenario_params, is_hypothetical, created_at)')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (farmId) {
+    query = query.eq('farm_id', farmId);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    res.status(500).json({ error: 'Failed to retrieve saved rotation assessments.' });
+    return;
+  }
+
+  res.json({ rotations: data || [] });
+});
+
+app.post('/api/rotations', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const parsed = parseBody(rotationCreateSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(parsed.data.farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const effectivePriorities = parsed.data.priorities || DEFAULT_PRIORITIES;
+  const scenario = parsed.data.scenario || null;
+  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id);
+  const evaluation = calculateStrategyEvaluations(farm, effectivePriorities, scenario, nasaSummary);
+
+  const { data: scenarioRow, error: scenErr } = await client
+    .from('rotation_scenarios')
+    .insert({
+      farm_id: farm.id,
+      user_id: user.id,
+      name: parsed.data.name,
+      priorities: effectivePriorities,
+      scenario_params: scenario,
+      is_hypothetical: Boolean(scenario),
+    })
+    .select('*')
+    .single();
+
+  if (scenErr || !scenarioRow) {
+    logEvent('Rotations', 'SCENARIO_INSERT_ERROR', { error: scenErr?.message });
+    res.status(500).json({ error: 'Failed to save rotation scenario.' });
+    return;
+  }
+
+  const { data: assessmentRow, error: assessErr } = await client
+    .from('rotation_assessments')
+    .insert({
+      scenario_id: scenarioRow.id,
+      farm_id: farm.id,
+      user_id: user.id,
+      strategies: evaluation.strategies,
+      ranking_explanation: evaluation.rankingExplanation,
+      nasa_evidence_summary: evaluation.nasaEvidenceSummary,
+      missing_data_notices: evaluation.missingDataNotices,
+    })
+    .select('*')
+    .single();
+
+  if (assessErr || !assessmentRow) {
+    logEvent('Rotations', 'ASSESSMENT_INSERT_ERROR', { error: assessErr?.message });
+    res.status(500).json({ error: 'Failed to save rotation assessment.' });
+    return;
+  }
+
+  res.status(201).json({
+    success: true,
+    scenario: scenarioRow,
+    assessment: assessmentRow,
+    ...evaluation,
   });
 });
 
-// 8. Scientific Methodology Documentation (Requirement G)
-app.get('/api/scientific-methods', (req: Request, res: Response) => {
-  res.json({
-    framework: 'Field Shift Agricultural Science and Geospatial Modeling Protocols',
-    methods: [
-      {
-        title: 'Rainfall Anomaly & Drought Intensity (SPI & GPM IMERG)',
-        formula: 'SPI = (P - Mean_P) / StdDev_P over 30-year NASA POWER / GPM climatological normal',
-        units: 'Standardized deviations (z-score) and millimeters (mm)',
-        explanation:
-          'Quantifies precipitation deficits relative to local multi-decadal historical expectations, distinguishing seasonal dry spells from structural droughts.',
-      },
-      {
-        title: 'Growing Degree Days & Thermal Heat Stress (NASA POWER)',
-        formula: 'GDD = sum(max(0, (Tmax + Tmin)/2 - Tbase)) with Tbase=10°C, Tmax_cutoff=30°C',
-        units: 'Thermal heat units (°C days)',
-        explanation:
-          'Predicts crop phenological progression and identifies dangerous pollination temperature spikes (>34°C) where corn pollen viability degrades.',
-      },
-      {
-        title: 'Root-Zone Volumetric Soil Moisture & Water Depletion (NASA SMAP)',
-        formula: 'Depletion Fraction = (FieldCapacity - VolumetricMoisture) / (FieldCapacity - PermanentWiltingPoint)',
-        units: 'Cubic meters of water per cubic meter of soil (m³/m³)',
-        explanation:
-          'Determines whether soil water is in the freely available root zone or approaching critical plant stress levels.',
-      },
-      {
-        title: 'Vegetation Canopy Health & Cover Continuity (MODIS & Landsat)',
-        formula: 'NDVI = (NIR - Red) / (NIR + Red)',
-        units: 'Dimensionless ratio (-1.0 to +1.0)',
-        explanation:
-          'Quantifies active chlorophyll absorption to monitor crop growth and confirm whether living roots are shielding topsoil throughout winter.',
-      },
-      {
-        title: 'Topographic Slope & Erosion Vulnerability (NASA SRTM)',
-        formula: 'Slope (%) = sqrt((dz/dx)^2 + (dz/dy)^2) * 100 via 30m DEM grid',
-        units: 'Percent gradient (%) and elevation in meters (m ASL)',
-        explanation:
-          'Identifies runoff velocity hazard zones where unarmored bare soils experience severe rill and gully soil displacement during intense GPM rain events.',
-      },
-    ],
-    scientificEthicsStatement:
-      'Correlation does not prove causation. Statistical associations between remote sensing reflectance and crop performance serve as decision support tools, not autonomous agronomic prescriptions.',
-  });
-});
+app.get('/api/rotations/strategies', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
 
-// 9. Existing Routes (Preserved and Enhanced)
-app.get('/api/nasa/observations', async (req: Request, res: Response) => {
-  const farmId = (req.query.farmId as string) || 'farm-1';
-  const reqUser = await resolveRequestUser(req);
-  const farm = await getFarmById(farmId, reqUser?.id);
-
-  res.json({
-    farmId: farm.id,
-    farmName: farm.name,
-    coordinates: farm.coordinates,
-    catalog: nasaHarmonizedRoadmap,
-    realTimeMetrics: {
-      soilMoistureSMAP: {
-        value: 0.284,
-        unit: 'm³/m³',
-        interpretation: 'Adequate available water capacity for root development',
-        anomaly: '+4.2% above 10-year April mean',
-        sensor: 'SMAP L4 (9km assimilated)',
-        timestamp: new Date().toISOString(),
-      },
-      precipitationGPM: {
-        value30DayTotal: 68.4,
-        unit: 'mm',
-        anomaly: '+12.1 mm above historical baseline',
-        rainDaysLast30: 9,
-        sensor: 'GPM IMERG Late Run',
-        timestamp: new Date().toISOString(),
-      },
-      vegetationNDVI: {
-        currentNDVI: 0.72,
-        peakSeasonalNDVI: 0.81,
-        canopyHealth: 'Vigorous',
-        sensor: 'MODIS MOD13Q1 (250m)',
-        timestamp: new Date().toISOString(),
-      },
-      solarInsolationPOWER: {
-        dailyRadiation: 19.4,
-        unit: 'MJ/m²/day',
-        coolingDegreeDays: 14,
-        growingDegreeDays: 168,
-        sensor: 'NASA POWER Agroclimatology',
-        timestamp: new Date().toISOString(),
-      },
-      evapotranspirationECOSTRESS: {
-        waterStressIndex: 0.18,
-        transpirationRate: '4.6 mm/day',
-        sensor: 'ECOSTRESS ISS (70m)',
-        timestamp: new Date().toISOString(),
-      },
-    },
-  });
-});
-
-app.get('/api/rotations/strategies', async (req: Request, res: Response) => {
-  const farmId = (req.query.farmId as string) || 'farm-1';
-  const reqUser = await resolveRequestUser(req);
-  const farm = await getFarmById(farmId, reqUser?.id);
-  const defaultPriorities: FarmerPriorities = {
-    waterConservation: 4,
-    profitability: 4,
-    forageValue: 2,
-    nitrogenFixing: 5,
-    soilOrganicMatter: 5,
-    erosionReduction: 4,
-    soilInfiltration: 4,
-    marketSuitability: 4,
-    droughtResilience: 4,
-    cropDiversity: 3,
-    equipmentCompatibility: 3,
-    plantingHarvestConstraints: 3,
-  };
-
-  const strategies = calculateStrategyEvaluations(farm, defaultPriorities);
+  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id);
+  const evaluation = calculateStrategyEvaluations(farm, DEFAULT_PRIORITIES, null, nasaSummary);
 
   res.json({
     farmId: farm.id,
     currentCrop: farm.currentCrop,
     soilType: farm.soilType,
-    strategies,
+    ...evaluation,
     disclaimer:
-      'Percentage scores are model-derived indicators based on regional NASA Earth observations and USDA soil surveys. These support farmer judgment and do not guarantee field-scale yields.',
+      'Percentage scores are model-derived indicators based on persisted NASA observations, soil records, and farmer priorities. They do not guarantee field-scale yields.',
   });
 });
 
-app.get('/api/soil/profiles', async (req: Request, res: Response) => {
-  const farmId = (req.query.farmId as string) || 'farm-1';
-  const reqUser = await resolveRequestUser(req);
-  const farm = await getFarmById(farmId, reqUser?.id);
+app.get('/api/rotations/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
 
-  res.json({
-    farmId: farm.id,
-    soilType: farm.soilType,
-    metrics: {
-      pH: { value: farm.soilPH, targetRange: '6.2 - 6.8', status: 'Optimal' },
-      organicMatter: { value: farm.organicMatter, unit: '%', status: 'Good (Target: >4.5% for high resilience)' },
-      nitrogen: { value: farm.nitrogen, recommendation: 'Supplement with winter legume green manure' },
-      phosphorus: { value: farm.phosphorus, recommendation: 'Band phosphorus application near furrow zone' },
-      potassium: { value: farm.potassium, recommendation: 'Adequate for continuous grain cropping' },
-      drainageClass: farm.drainage,
-      cationExchangeCapacity: '22 meq/100g (High nutrient retention buffer)',
-      lastTestDate: farm.lastSoilTest,
-    },
-    limitations: [
-      'Subsoil compaction risk in tractor traffic lanes under high spring moisture.',
-      'Clarion-Nicollet association has localized swales with temporary ponding after heavy GPM rain events (>50mm in 24h).',
-      'Organic matter depletion over decades of row cropping requires fibrous cover crops to restore aggregate stability.',
-    ],
-    scientificInsights:
-      'High organic matter soils buffer against both extreme rain events (absorbing up to 8 inches/hour) and prolonged drought by retaining pore moisture.',
-  });
-});
+  const { data, error } = await client
+    .from('rotation_assessments')
+    .select('*, rotation_scenarios(*)')
+    .eq('id', req.params.id)
+    .eq('user_id', user.id)
+    .maybeSingle();
 
-app.get('/api/risk/field-analysis', async (req: Request, res: Response) => {
-  const farmId = (req.query.farmId as string) || 'farm-1';
-  const reqUser = await resolveRequestUser(req);
-  const farm = await getFarmById(farmId, reqUser?.id);
-
-  res.json({
-    farmId: farm.id,
-    overallRiskScore: 34,
-    riskLevel: 'Moderate - Managed',
-    indicators: [
-      {
-        name: 'Root-Zone Water Stress',
-        level: 'LOW',
-        score: 22,
-        dataSource: 'NASA SMAP (9km) + ECOSTRESS ESI',
-        observation: '0.28 m³/m³ volumetric moisture within root zone. No immediate drought stress detected.',
-      },
-      {
-        name: 'Thermal Heat Spike Risk',
-        level: 'MODERATE',
-        score: 48,
-        dataSource: 'NASA POWER Climatology (0.5°)',
-        observation: 'Late July forecast indicates 3-5 days exceeding 34°C. Silking corn may experience pollination stress.',
-      },
-      {
-        name: 'Precipitation Intensity & Flood Exposure',
-        level: 'LOW-MODERATE',
-        score: 36,
-        dataSource: 'NASA GPM IMERG 10-day Forecast',
-        observation: 'Cumulative 10-day rainfall projected at 28mm. Low risk of flash saturation on gentle 2.3% slope.',
-      },
-      {
-        name: 'Erosion Vulnerability',
-        level: 'MODERATE',
-        score: 42,
-        dataSource: 'NASA SRTM (30m) Elevation Slope + Soil Erodibility K-factor',
-        observation: 'Topographic slope of 2.3% with silty loam texture creates moderate rill erosion hazard if soil left unarmored.',
-      },
-      {
-        name: 'Early Season Frost Exposure',
-        level: 'LOW',
-        score: 14,
-        dataSource: 'NASA POWER Minimum Temperature Records',
-        observation: 'Last spring freeze probability drops below 5% after April 24. Safe planting window open.',
-      },
-    ],
-    scientificNotice:
-      'Calculated using satellite spatial grids. Field-scale microclimates, hedgerows, and drainage tiles may alter local in-field observations.',
-  });
-});
-
-app.get('/api/climate/timeline', (req: Request, res: Response) => {
-  const months = ['May 2025', 'Jun 2025', 'Jul 2025', 'Aug 2025', 'Sep 2025', 'Oct 2025', 'Nov 2025', 'Dec 2025', 'Jan 2026', 'Feb 2026', 'Mar 2026', 'Apr 2026'];
-  const data = months.map((month, idx) => ({
-    month,
-    rainfallGPM: Math.round(45 + Math.sin(idx / 2) * 35 + (idx === 2 ? 55 : 0)),
-    rainfallBaseline: 55,
-    tempMeanPOWER: Math.round(10 + Math.sin((idx - 1) / 1.8) * 16),
-    soilMoistureSMAP: Number((0.22 + Math.cos(idx / 2.2) * 0.09).toFixed(3)),
-    vegetationNDVI: Number((idx >= 1 && idx <= 5 ? 0.65 + idx * 0.03 : 0.25 + (idx % 3) * 0.05).toFixed(2)),
-  }));
-
-  res.json({
-    timeline: data,
-    provenance: 'NASA GPM (Precipitation), NASA POWER (Temperature), NASA SMAP (Moisture), NASA MODIS (NDVI)',
-    summary: 'Past 12 months show wetter-than-average summer followed by normal winter freeze and recharge in March-April 2026.',
-  });
-});
-
-app.get('/api/farms', async (req: Request, res: Response) => {
-  const reqUser = await resolveRequestUser(req);
-  const { farms, source } = await getAccessibleFarms(reqUser?.id);
-  res.json({
-    farms,
-    totalCount: farms.length,
-    source,
-  });
-});
-
-app.post('/api/farms', async (req: Request, res: Response) => {
-  const { name, location, acreage, currentCrop, soilType, soilPH, organicMatter } = req.body;
-  if (!name || !location) {
-    res.status(400).json({ error: 'Farm name and location are required.' });
+  if (error || !data) {
+    res.status(404).json({ error: 'Saved rotation assessment not found.' });
     return;
   }
 
-  const reqUser = await resolveRequestUser(req);
-  const newFarm: FarmRecord = {
-    id: `farm-${Date.now()}`,
-    name: String(name).trim(),
-    location: String(location).trim(),
-    coordinates: [-93.5, 42.1],
-    acreage: Number(acreage) || 250,
-    currentCrop: currentCrop || 'Corn',
-    plantingSeason: 'Spring 2026',
-    rotationHistory: [currentCrop || 'Corn'],
-    soilType: soilType || 'Silt Loam',
-    soilPH: Number(soilPH) || 6.5,
-    organicMatter: Number(organicMatter) || 3.2,
-    nitrogen: 'Medium',
-    phosphorus: 'Medium',
-    potassium: 'Medium',
-    drainage: 'Well Drained',
-    lastSoilTest: new Date().toISOString().split('T')[0],
-    createdAt: new Date().toISOString(),
-  };
+  res.json({ rotation: data });
+});
 
-  const admin = getSupabaseAdmin();
-  if (admin) {
-    const { data, error } = await admin
-      .from('farms')
+app.post(['/api/rotations/recalculate', '/api/rotations/compare', '/api/rotations/assess'], requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const { farmId, priorities, scenario, save, name } = req.body || {};
+  const targetFarmId = typeof farmId === 'string' && farmId.trim() ? farmId.trim() : 'farm-1';
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+
+  const farm = await getAccessibleFarmById(targetFarmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const parsedPrio = priorities ? parseBody(prioritiesSchema, priorities) : { ok: true as const, data: DEFAULT_PRIORITIES };
+  if (!parsedPrio.ok) {
+    res.status(400).json({ error: parsedPrio.error });
+    return;
+  }
+
+  let parsedScen = null;
+  if (scenario) {
+    const sRes = parseBody(scenarioSchema, scenario);
+    if (!sRes.ok) {
+      res.status(400).json({ error: sRes.error });
+      return;
+    }
+    parsedScen = sRes.data;
+  }
+
+  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id);
+  const evaluation = calculateStrategyEvaluations(farm, parsedPrio.data, parsedScen, nasaSummary);
+
+  let savedAssessmentId: string | null = null;
+  if (save || req.path.endsWith('/assess')) {
+    const { data: scenRow } = await client
+      .from('rotation_scenarios')
       .insert({
-        id: newFarm.id,
-        user_id: reqUser?.id || null,
-        is_demo: !reqUser?.id,
-        name: newFarm.name,
-        location: newFarm.location,
-        coordinates: newFarm.coordinates,
-        acreage: newFarm.acreage,
-        current_crop: newFarm.currentCrop,
-        planting_season: newFarm.plantingSeason,
-        rotation_history: newFarm.rotationHistory,
-        soil_type: newFarm.soilType,
-        soil_ph: newFarm.soilPH,
-        organic_matter: newFarm.organicMatter,
-        nitrogen: newFarm.nitrogen,
-        phosphorus: newFarm.phosphorus,
-        potassium: newFarm.potassium,
-        drainage: newFarm.drainage,
-        last_soil_test: newFarm.lastSoilTest,
-        created_at: newFarm.createdAt,
+        farm_id: farm.id,
+        user_id: user.id,
+        name: typeof name === 'string' && name.trim() ? name.trim().slice(0, 140) : 'Rotation Assessment',
+        priorities: parsedPrio.data,
+        scenario_params: parsedScen,
+        is_hypothetical: Boolean(parsedScen),
       })
-      .select('*')
+      .select('id')
       .single();
 
-    if (!error && data) {
-      res.status(201).json({ success: true, farm: mapDbFarmRow(data), source: 'supabase' });
-      return;
-    }
-    if (error) {
-      logGeminiEvent('SUPABASE_FARM_INSERT_ERROR', { error: error.message });
-    }
-  }
+    const { data: assessRow } = await client
+      .from('rotation_assessments')
+      .insert({
+        scenario_id: scenRow?.id || null,
+        farm_id: farm.id,
+        user_id: user.id,
+        strategies: evaluation.strategies,
+        ranking_explanation: evaluation.rankingExplanation,
+        nasa_evidence_summary: evaluation.nasaEvidenceSummary,
+        missing_data_notices: evaluation.missingDataNotices,
+      })
+      .select('id')
+      .single();
 
-  mockFarms.unshift(newFarm);
-  res.status(201).json({ success: true, farm: newFarm, source: 'memory' });
-});
-
-app.delete('/api/farms/:id', async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const reqUser = await resolveRequestUser(req);
-  const admin = getSupabaseAdmin();
-
-  if (['farm-1', 'farm-2', 'farm-3'].includes(id)) {
-    res.status(400).json({ error: 'Default baseline demonstration farms cannot be deleted.' });
-    return;
-  }
-
-  if (admin) {
-    const { data: existing } = await admin.from('farms').select('id, user_id').eq('id', id).maybeSingle();
-    if (!existing) {
-      res.status(404).json({ error: 'Farm not found.' });
-      return;
-    }
-    if (existing.user_id && existing.user_id !== reqUser?.id) {
-      res.status(403).json({ error: 'Unauthorized to delete this farm property.' });
-      return;
-    }
-    const { error } = await admin.from('farms').delete().eq('id', id);
-    if (error) {
-      res.status(500).json({ error: 'Failed to delete farm property.' });
-      return;
-    }
-    res.json({ success: true, id });
-    return;
-  }
-
-  const idx = mockFarms.findIndex((f) => f.id === id);
-  if (idx === -1) {
-    res.status(404).json({ error: 'Farm not found.' });
-    return;
-  }
-  mockFarms.splice(idx, 1);
-  res.json({ success: true, id });
-});
-
-app.get('/api/priorities', async (req: Request, res: Response) => {
-  const farmId = (req.query.farmId as string) || 'farm-1';
-  const admin = getSupabaseAdmin();
-  if (admin) {
-    const { data, error } = await admin
-      .from('farmer_priorities')
-      .select('*')
-      .eq('farm_id', farmId)
-      .maybeSingle();
-
-    if (!error && data) {
-      res.json({
-        success: true,
-        source: 'supabase',
-        priorities: {
-          waterConservation: data.water_conservation,
-          profitability: data.profitability,
-          forageValue: data.forage_value,
-          nitrogenFixing: data.nitrogen_fixing,
-          soilOrganicMatter: data.soil_organic_matter,
-          erosionReduction: data.erosion_reduction,
-          soilInfiltration: data.soil_infiltration,
-          marketSuitability: data.market_suitability,
-          droughtResilience: data.drought_resilience,
-          cropDiversity: data.crop_diversity,
-          equipmentCompatibility: data.equipment_compatibility,
-          plantingHarvestConstraints: data.planting_harvest_constraints,
-        },
-      });
-      return;
-    }
-  }
-  res.json({ success: true, source: 'default', priorities: null });
-});
-
-app.put('/api/priorities', async (req: Request, res: Response) => {
-  const { farmId, priorities } = req.body || {};
-  if (!farmId || !priorities) {
-    res.status(400).json({ error: 'farmId and priorities are required.' });
-    return;
-  }
-
-  const reqUser = await resolveRequestUser(req);
-  const admin = getSupabaseAdmin();
-  if (admin) {
-    const { error } = await admin
-      .from('farmer_priorities')
-      .upsert(
-        {
-          farm_id: farmId,
-          user_id: reqUser?.id || null,
-          water_conservation: Number(priorities.waterConservation) || 4,
-          profitability: Number(priorities.profitability) || 4,
-          forage_value: Number(priorities.forageValue) || 2,
-          nitrogen_fixing: Number(priorities.nitrogenFixing) || 5,
-          soil_organic_matter: Number(priorities.soilOrganicMatter) || 5,
-          erosion_reduction: Number(priorities.erosionReduction) || 4,
-          soil_infiltration: Number(priorities.soilInfiltration) || 4,
-          market_suitability: Number(priorities.marketSuitability) || 4,
-          drought_resilience: Number(priorities.droughtResilience) || 4,
-          crop_diversity: Number(priorities.cropDiversity) || 3,
-          equipment_compatibility: Number(priorities.equipmentCompatibility) || 3,
-          planting_harvest_constraints: Number(priorities.plantingHarvestConstraints) || 3,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'farm_id' }
-      );
-    if (!error) {
-      res.json({ success: true, source: 'supabase' });
-      return;
-    }
-    logGeminiEvent('SUPABASE_PRIORITIES_UPSERT_ERROR', { error: error.message });
-  }
-
-  res.json({ success: true, source: 'memory' });
-});
-
-// ==========================================================================
-// Authentication Endpoints (Supports Supabase Auth + Local Seeded Fallback)
-// ==========================================================================
-
-// 1. User Registration
-const authRegisterPaths = [
-  '/api/auth/register',
-  '/api/v1/auth/register',
-  '/auth/register',
-  '/api/register',
-  '/api/auth/signup',
-  '/auth/signup',
-];
-app.post(authRegisterPaths, async (req: Request, res: Response) => {
-  const { email, fullName, password } = req.body || {};
-  if (!email || !fullName) {
-    res.status(400).json({ error: 'Email and Full Name are required' });
-    return;
-  }
-
-  const normalizedEmail = (email as string).trim().toLowerCase();
-  const cleanName = (fullName as string).trim();
-  const supaAuth = getSupabaseAuthClient();
-
-  if (supaAuth && password) {
-    try {
-      const { data, error } = await supaAuth.auth.signUp({
-        email: normalizedEmail,
-        password: String(password),
-        options: {
-          data: { full_name: cleanName },
-        },
-      });
-      if (error) {
-        res.status(400).json({ error: error.message });
-        return;
-      }
-      if (data.session && data.user) {
-        const isProd = process.env.NODE_ENV === 'production';
-        res.setHeader(
-          'Set-Cookie',
-          `fieldshift_session=${encodeURIComponent(data.session.access_token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isProd ? '; Secure' : ''}`
-        );
-        res.status(201).json({
-          success: true,
-          autoConfirmed: true,
-          message: 'Account created and verified.',
-          user: { email: normalizedEmail, fullName: cleanName, verified: true },
-          token: data.session.access_token,
-        });
-        return;
-      }
-
-      res.status(201).json({
-        success: true,
-        autoConfirmed: false,
-        message: 'Verification code / confirmation link sent to your email address.',
-        email: normalizedEmail,
-      });
-      return;
-    } catch (err: any) {
-      logGeminiEvent('SUPABASE_REGISTER_ERROR', { error: err?.message });
-    }
-  }
-
-  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-  const token = `fs-token-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-
-  activeUsers.set(normalizedEmail, {
-    email: normalizedEmail,
-    fullName: cleanName,
-    passwordHash: password ? hashPassword(password) : undefined,
-    token,
-    verified: false,
-    otpCode,
-    otpExpiresAt: Date.now() + 10 * 60 * 1000,
-  });
-
-  res.status(201).json({
-    success: true,
-    message: 'Verification code sent to your email address.',
-    email: normalizedEmail,
-    devOtpCode: otpCode,
-  });
-});
-
-// 2. OTP Verification
-const authVerifyPaths = ['/api/auth/verify-otp', '/api/v1/auth/verify-otp', '/auth/verify-otp', '/api/verify-otp'];
-app.post(authVerifyPaths, async (req: Request, res: Response) => {
-  const { email, code } = req.body || {};
-  const normalizedEmail = (email || '').toString().trim().toLowerCase();
-  const cleanCode = (code || '').toString().trim();
-
-  const supaAuth = getSupabaseAuthClient();
-  if (supaAuth && normalizedEmail && cleanCode) {
-    try {
-      const { data, error } = await supaAuth.auth.verifyOtp({
-        email: normalizedEmail,
-        token: cleanCode,
-        type: 'signup',
-      });
-      if (!error && data?.session && data?.user) {
-        const metaName = data.user.user_metadata?.full_name || normalizedEmail.split('@')[0];
-        const isProd = process.env.NODE_ENV === 'production';
-        res.setHeader(
-          'Set-Cookie',
-          `fieldshift_session=${encodeURIComponent(data.session.access_token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isProd ? '; Secure' : ''}`
-        );
-        res.json({
-          success: true,
-          user: { email: normalizedEmail, fullName: String(metaName), verified: true },
-          token: data.session.access_token,
-        });
-        return;
-      }
-      if (error && !activeUsers.has(normalizedEmail)) {
-        res.status(400).json({ error: error.message || 'Invalid or expired verification code.' });
-        return;
-      }
-    } catch {
-      // Fallback to local OTP verification
-    }
-  }
-
-  const user = activeUsers.get(normalizedEmail);
-  if (!user) {
-    res.status(404).json({ error: 'User not found. Please register first.' });
-    return;
-  }
-
-  if (user.otpCode === cleanCode || cleanCode === '123456' || cleanCode === '482910') {
-    user.verified = true;
-    res.setHeader(
-      'Set-Cookie',
-      `fieldshift_session=${user.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
-    );
-    res.json({
-      success: true,
-      user: { email: user.email, fullName: user.fullName, verified: true },
-      token: user.token,
-    });
-  } else {
-    res.status(400).json({ error: 'Invalid or expired 6-digit verification code. Please check and try again.' });
-  }
-});
-
-// 3. Resend OTP
-const authResendPaths = ['/api/auth/resend-otp', '/api/v1/auth/resend-otp', '/auth/resend-otp', '/api/resend-otp'];
-app.post(authResendPaths, async (req: Request, res: Response) => {
-  const { email } = req.body || {};
-  const normalizedEmail = (email || '').toString().trim().toLowerCase();
-
-  const supaAuth = getSupabaseAuthClient();
-  if (supaAuth && normalizedEmail) {
-    try {
-      const { error } = await supaAuth.auth.resend({
-        type: 'signup',
-        email: normalizedEmail,
-      });
-      if (!error) {
-        res.json({
-          success: true,
-          message: 'A new verification email/code has been dispatched.',
-        });
-        return;
-      }
-    } catch {
-      // Fall through to local resend
-    }
-  }
-
-  const user = activeUsers.get(normalizedEmail);
-  const newCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-  if (user) {
-    user.otpCode = newCode;
-    user.otpExpiresAt = Date.now() + 10 * 60 * 1000;
+    savedAssessmentId = assessRow?.id || null;
   }
 
   res.json({
-    success: true,
-    message: 'A new 6-digit verification code has been dispatched.',
-    devOtpCode: newCode,
+    farmId: farm.id,
+    priorities: parsedPrio.data,
+    scenarioApplied: parsedScen,
+    savedAssessmentId,
+    ...evaluation,
+    disclaimer:
+      'Rankings reflect deterministic multi-criteria decision analysis based on farmer inputs and persisted NASA observations.',
   });
 });
 
-// 4. User Sign In (Supports /api/auth/login, /api/v1/auth/login, /auth/login, /api/login, /login, /api/auth/signin, /auth/signin)
-const authLoginPaths = [
-  '/api/auth/login',
-  '/api/v1/auth/login',
-  '/auth/login',
-  '/api/login',
-  '/login',
-  '/api/auth/signin',
-  '/auth/signin',
-];
+/* ==========================================================================
+   8. AI AGRICULTURAL ADVISOR ROUTES (Protected + History Persisted)
+   ========================================================================== */
 
-// Return 405 Method Not Allowed on GET
-app.get(authLoginPaths, (_req: Request, res: Response) => {
-  res.setHeader('Allow', 'POST, OPTIONS');
-  res.status(405).json({
-    error: 'Method Not Allowed. Use POST to authenticate.',
-    status: 405,
-    endpoint: '/api/auth/login',
+app.post(['/api/ai/advisor', '/api/gemini/advisor', '/api/advisor'], requireAuth, aiAdvisorRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+  const parsed = parseBody(advisorRequestSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const targetFarmId = parsed.data.farmId || 'farm-1';
+
+  const farm = await getAccessibleFarmById(targetFarmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id);
+  const result = await runGroundedAdvisor({
+    farm,
+    prompt: parsed.data.prompt,
+    priorities: parsed.data.priorities,
+    scenario: parsed.data.scenario,
+    nasaSummary,
+    userClient: client,
+    userId: user.id,
   });
+
+  res.json(result);
 });
 
-app.post(authLoginPaths, async (req: Request, res: Response) => {
-  try {
-    const { email, password } = req.body || {};
-    if (!email || typeof email !== 'string' || !email.trim()) {
-      res.status(400).json({ error: 'Email and password are required' });
-      return;
-    }
-    if (!password || typeof password !== 'string') {
-      res.status(400).json({ error: 'Email and password are required' });
-      return;
-    }
+app.get('/api/ai/history', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : undefined;
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const isProd = process.env.NODE_ENV === 'production';
-    const supaAuth = getSupabaseAuthClient();
+  let query = client
+    .from('ai_advisor_history')
+    .select('id, farm_id, prompt, reply, model_source, is_fallback, fallback_reason, latency_ms, grounding_summary, created_at')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+    .limit(50);
 
-    if (supaAuth) {
-      try {
-        const { data, error } = await supaAuth.auth.signInWithPassword({
-          email: normalizedEmail,
-          password,
-        });
-        if (!error && data?.session && data?.user) {
-          const metaName = data.user.user_metadata?.full_name || normalizedEmail.split('@')[0];
-          res.setHeader(
-            'Set-Cookie',
-            `fieldshift_session=${encodeURIComponent(data.session.access_token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isProd ? '; Secure' : ''}`
-          );
-          res.status(200).json({
-            success: true,
-            user: {
-              email: data.user.email || normalizedEmail,
-              fullName: String(metaName),
-              verified: !!data.user.email_confirmed_at || true,
-            },
-            token: data.session.access_token,
-          });
-          return;
-        }
-        // Only fall back to local activeUsers if Supabase didn't know the user or had a config issue;
-        // if Supabase explicitly says Invalid login credentials and not in local activeUsers, return 401
-        if (error && !activeUsers.has(normalizedEmail)) {
-          res.status(401).json({ error: error.message || 'Invalid login credentials.' });
-          return;
-        }
-      } catch (err: any) {
-        logGeminiEvent('SUPABASE_LOGIN_FALLBACK', { error: err?.message });
-      }
-    }
-
-    const user = activeUsers.get(normalizedEmail);
-
-    if (!user) {
-      res.status(401).json({
-        error: 'Invalid credentials. No account found for this email address. Please register.',
-      });
-      return;
-    }
-
-    if (!user.passwordHash || !verifyPassword(password, user.passwordHash)) {
-      res.status(401).json({ error: 'Invalid password. Please check your credentials.' });
-      return;
-    }
-
-    // Refresh token if needed
-    const token = user.token || `fs-token-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
-    user.token = token;
-
-    // Set secure HTTP-only session cookie
-    res.setHeader(
-      'Set-Cookie',
-      `fieldshift_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isProd ? '; Secure' : ''}`
-    );
-
-    res.status(200).json({
-      success: true,
-      user: {
-        email: user.email,
-        fullName: user.fullName,
-        verified: user.verified,
-      },
-      token: user.token,
-    });
-  } catch (err: any) {
-    res.status(500).json({
-      error: 'An internal error occurred during authentication. Please try again.',
-    });
+  if (farmId) {
+    query = query.eq('farm_id', farmId);
   }
-});
 
-// 5. Session Verification
-const authSessionPaths = [
-  '/api/auth/session',
-  '/api/v1/auth/session',
-  '/auth/session',
-  '/api/auth/me',
-  '/auth/me',
-  '/api/auth/user',
-  '/auth/user',
-];
-app.get(authSessionPaths, async (req: Request, res: Response) => {
-  const token = extractRequestToken(req);
-  if (!token) {
-    res.status(401).json({ error: 'No active session token provided.' });
+  const { data, error } = await query;
+  if (error) {
+    res.status(500).json({ error: 'Failed to retrieve AI advisor history.' });
     return;
   }
 
-  const user = await resolveRequestUser(req);
-  if (user) {
-    res.json({
-      success: true,
-      user: { email: user.email, fullName: user.fullName, verified: user.verified },
-    });
-    return;
-  }
-
-  res.status(401).json({ error: 'Session expired or invalid. Please sign in again.' });
+  res.json({ history: data || [] });
 });
 
-// 6. User Logout
-const authLogoutPaths = ['/api/auth/logout', '/api/v1/auth/logout', '/auth/logout', '/api/logout', '/logout'];
-app.post(authLogoutPaths, (req: Request, res: Response) => {
-  res.setHeader('Set-Cookie', 'fieldshift_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
-  res.json({ success: true, message: 'Logged out successfully.' });
-});
+/* ==========================================================================
+   9. SEO & CATCH-ALL JSON 404 + CENTRAL ERROR HANDLER
+   ========================================================================== */
 
-// 7. Password Reset / Recovery
-const authForgotPaths = ['/api/auth/forgot-password', '/auth/forgot-password', '/api/auth/reset-password', '/auth/reset-password'];
-app.post(authForgotPaths, async (req: Request, res: Response) => {
-  const { email } = req.body;
-  if (!email) {
-    res.status(400).json({ error: 'Email address is required' });
-    return;
-  }
-  const supaAuth = getSupabaseAuthClient();
-  if (supaAuth) {
-    try {
-      await supaAuth.auth.resetPasswordForEmail(String(email).trim().toLowerCase());
-    } catch {
-      // Do not leak user existence
-    }
-  }
-  res.json({
-    success: true,
-    message: 'Password reset link dispatched to your email address.',
-  });
-});
-
-// AI Agricultural Advisor (Gemini 3.8 Flash + Resilient Fallback Engine)
-// Handles both /api/advisor and /api/gemini/advisor
-app.post(['/api/advisor', '/api/gemini/advisor'], async (req: Request, res: Response) => {
-  const { prompt, farmId, priorities, scenario } = req.body;
-  const requestId = `fs-adv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-  const startTime = Date.now();
-
-  if (!prompt || typeof prompt !== 'string') {
-    res.status(400).json({ error: 'Valid prompt string is required' });
-    return;
-  }
-
-  const reqUser = await resolveRequestUser(req);
-  const selectedFarm = await getFarmById(farmId, reqUser?.id);
-
-  // Request deduplication for simultaneous concurrent requests
-  const dedupKey = `${selectedFarm.id}-${prompt.trim().toLowerCase()}`;
-  if (inFlightAdvisorRequests.has(dedupKey)) {
-    logGeminiEvent('GEMINI_DEDUP_ATTACHED', { requestId, dedupKey, farmId: selectedFarm.id });
-    try {
-      const cachedResult = await inFlightAdvisorRequests.get(dedupKey);
-      res.json({ ...cachedResult, requestId: `${requestId}-dedup` });
-      return;
-    } catch {
-      // In-flight error, will proceed fresh below
-    }
-  }
-
-  const systemInstruction = `You are the Field Shift AI Agricultural Advisor, a world-class agronomic decision-support engine.
-Your mission is to help farmers make informed crop rotation, soil conservation, and climate-resilience decisions based on retrieved NASA Earth observation datasets, structured crop characteristics, and farmer priorities.
-
-Core Guidelines:
-1. Ground advice in NASA Earth observations (SMAP soil moisture, GPM precipitation, MODIS NDVI vigor, NASA POWER solar/temp, SRTM elevation, ECOSTRESS water efficiency).
-2. Factor in the farmer's specific priorities (e.g. water conservation, biological nitrogen, profitability, equipment compatibility).
-3. If what-if scenarios are specified (e.g. -25% rainfall), evaluate how crop families and root architectures respond.
-4. Clearly distinguish between satellite observation trends, laboratory soil tests, and predictive models.
-5. Emphasize that your analysis supports farmer judgment and local agronomic expertise; it does not replace professional on-the-ground soil testing.
-6. Format responses with clean markdown headings, bullet points, and explicit uncertainty notices.`;
-
-  const farmContextString = `
-Active Farm Context:
-- Farm Name: ${selectedFarm.name}
-- Location: ${selectedFarm.location} (Lat/Long: ${selectedFarm.coordinates.join(', ')})
-- Acreage: ${selectedFarm.acreage} acres | Current Crop: ${selectedFarm.currentCrop}
-- Soil Attributes: ${selectedFarm.soilType} | pH: ${selectedFarm.soilPH} | Organic Matter: ${selectedFarm.organicMatter}%
-- Soil Nutrient Profile: Nitrogen: ${selectedFarm.nitrogen} | Phosphorus: ${selectedFarm.phosphorus} | Potassium: ${selectedFarm.potassium}
-- Soil Drainage: ${selectedFarm.drainage} | Last Soil Test: ${selectedFarm.lastSoilTest}
-- Historical Rotation Sequence: ${selectedFarm.rotationHistory.join(' → ')}
-- NASA Satellite Telemetry Grounding:
-  * SMAP L4 Root-Zone Soil Moisture: 0.284 m³/m³ (Optimal root hydration)
-  * GPM IMERG 30-Day Precipitation: 68.4 mm (+12.1 mm regional anomaly)
-  * MODIS Canopy NDVI: 0.72 (High vegetative vigor)
-  * NASA POWER Daily Solar Flux: 19.4 MJ/m²/day | Growing Degree Days (GDD): 168
-  * SRTM Topographic Slope: 2.3% (Moderate rill erosion susceptibility under bare fallow)
-${priorities ? `- Farmer Priority Weightings: ${JSON.stringify(priorities)}` : ''}
-${scenario ? `- Simulated What-If Climate Scenario: ${JSON.stringify(scenario)}` : ''}
-`;
-
-  // Deterministic Fallback Builder function grounded in real farm profile
-  const buildDeterministicFallback = (fallbackReason: string) => {
-    const p = priorities || {};
-    const priorityHighlights: string[] = [];
-
-    if ((p.nitrogenFixing || 0) >= 4) {
-      priorityHighlights.push(`* **Biological Nitrogen Synthesis:** Hairy vetch and crimson clover in Strategy B biologically fix **75–95 lbs N/acre**, substituting synthetic fertilizer inputs by up to 35% by Year 2.`);
-    }
-    if ((p.waterConservation || 0) >= 4 || (p.droughtResilience || 0) >= 4) {
-      priorityHighlights.push(`* **Moisture Conservation & Drought Buffer:** Substituting continuous corn with grain sorghum (Strategy C) reduces evapotranspiration demand by **32%** through C4 photosynthetic efficiency while preserving SMAP 0.284 m³/m³ root-zone reserves.`);
-    }
-    if ((p.soilOrganicMatter || 0) >= 4 || (p.erosionReduction || 0) >= 4) {
-      priorityHighlights.push(`* **Erosion Mitigation & Biomass:** Overcoming the 135-day bare field period with a cereal rye cover crop builds **0.15% organic matter annually** and armors your ${selectedFarm.soilType} against rainfall detachment on the 2.3% SRTM slope.`);
-    }
-    if (priorityHighlights.length === 0) {
-      priorityHighlights.push(`* **Balanced Sequence:** Alternating ${selectedFarm.currentCrop} with a legume cover crop stabilizes soil biological activity while maintaining high net cash margin.`);
-    }
-
-    return `> ⚠️ **Field Shift Agronomic Advisory Notice**
-> *Status:* Generated via Field Shift Deterministic Agronomic Engine.
-> *Reason:* Live Gemini AI service was temporarily unavailable (${fallbackReason}). 
-> *Assurance:* All recommendations below are calculated strictly from your verified farm profile and NASA satellite observations. You can click "Retry with Live Gemini" below at any time.
-
----
-
-### Agronomic Decision Assessment for ${selectedFarm.name}
-
-#### 1. NASA Earth Observations & Local Soil Baseline
-* **NASA SMAP Root-Zone Moisture:** 0.284 m³/m³ (Adequate water bank in top 100 cm).
-* **NASA GPM Rainfall Anomaly:** +12.1 mm above historical normal over the previous 30-day window.
-* **MODIS Canopy NDVI:** 0.72 indicates active photosynthetic vigor for current ${selectedFarm.currentCrop}.
-* **Farm Soil Characteristics:** ${selectedFarm.soilType} with **${selectedFarm.organicMatter}% OM**, **pH ${selectedFarm.soilPH}**, and **${selectedFarm.drainage}** hydrology.
-
-#### 2. Prioritized Rotation Strategy Insights
-${priorityHighlights.join('\n')}
-
-#### 3. Crop Sequence & Risk Recommendations
-* **Pest Host Cycle Interruption:** Rotating out of continuous ${selectedFarm.currentCrop} eliminates the larval reproductive cycle of Western Corn Rootworm and reduces fungal inoculum (*Cercospora zeae-maydis*).
-* **Soil Chemistry Alignment:** With soil pH at ${selectedFarm.soilPH}, macronutrient availability for nitrogen and phosphorus is optimal. Avoid over-application of synthetic ammonium nitrate to protect microbial fungal networks.
-
-#### 4. Scientific Uncertainty & Satellite Resolution Notices
-* **Spatial Resolution:** NASA SMAP (9 km) and GPM (10 km) observe regional grid cells; localized sub-field depression waterlogging may vary from grid means.
-* **On-Field Verification:** Always confirm seed inoculation and local burndown herbicides with your certified crop advisor or local university extension.`;
-  };
-
-  // Helper to determine transient errors eligible for bounded retry
-  const isTransientError = (err: any): boolean => {
-    const msg = (err?.message || '').toLowerCase();
-    const status = err?.status || err?.statusCode || (err?.response && err.response.status);
-    if (status === 429 || status === 500 || status === 503 || status === 504) return true;
-    if (msg.includes('503') || msg.includes('unavailable') || msg.includes('high demand') || msg.includes('429') || msg.includes('rate limit') || msg.includes('resource_exhausted')) return true;
-    if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('econnreset') || msg.includes('fetch failed')) return true;
-    return false;
-  };
-
-  // Execution with Concurrency Deduplication and Multi-Model Resilience
-  const executeQuery = async () => {
-    const gemini = getGeminiClient();
-    const timeoutMs = Number(process.env.GEMINI_TIMEOUT_MS) || 25000; // 25s default (resolves 4.5s premature cutoff)
-
-    if (!gemini) {
-      logGeminiEvent('GEMINI_CONFIG_NOTICE', {
-        requestId,
-        farmId: selectedFarm.id,
-        reason: 'GEMINI_API_KEY environment variable not configured',
-      });
-      const fallbackText = buildDeterministicFallback('Gemini API key is not configured in environment');
-      return {
-        reply: fallbackText,
-        source: 'field-shift-deterministic-engine',
-        isFallback: true,
-        fallbackReason: 'Gemini API key pending configuration',
-        requestId,
-        latencyMs: Date.now() - startTime,
-        farmId: selectedFarm.id,
-      };
-    }
-
-    // Supported modern @google/genai models (primary gemini-4-hydrogen, fast fallback gemini-3.1-flash-lite)
-    const candidateModels = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
-    let lastError: any = null;
-    const maxAttempts = candidateModels.length;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const activeModel = candidateModels[attempt];
-      try {
-        logGeminiEvent('GEMINI_REQUEST_START', {
-          requestId,
-          model: activeModel,
-          attempt: attempt + 1,
-          farmId: selectedFarm.id,
-          farmName: selectedFarm.name,
-          promptSnippet: prompt.slice(0, 120),
-          timeoutMs,
-          hasPriorities: !!priorities,
-          hasScenario: !!scenario,
-        });
-
-        const generatePromise = gemini.models.generateContent({
-          model: activeModel,
-          contents: `${farmContextString}\n\nFarmer Question / Decision Analysis Request:\n${prompt}`,
-          config: {
-            systemInstruction,
-          },
-        });
-
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Gemini API timeout after ${timeoutMs}ms`)), timeoutMs)
-        );
-
-        const response = await Promise.race([generatePromise, timeoutPromise]);
-        const latencyMs = Date.now() - startTime;
-
-        logGeminiEvent('GEMINI_RESPONSE_SUCCESS', {
-          requestId,
-          model: activeModel,
-          latencyMs,
-          attempt: attempt + 1,
-        });
-
-        return {
-          reply: response.text || 'Agronomic analysis completed with verified NASA Earth observation models.',
-          source: activeModel,
-          isFallback: false,
-          requestId,
-          latencyMs,
-          farmId: selectedFarm.id,
-        };
-      } catch (err: any) {
-        lastError = err;
-        const latencyMs = Date.now() - startTime;
-
-        if (err?.message?.includes('timeout')) {
-          logGeminiEvent('GEMINI_TIMEOUT', { requestId, model: activeModel, attempt: attempt + 1, latencyMs, timeoutMs });
-        } else if (err?.status === 429 || err?.message?.includes('429')) {
-          logGeminiEvent('GEMINI_RATE_LIMIT', { requestId, model: activeModel, attempt: attempt + 1, latencyMs, status: 429 });
-        } else if (err?.status === 401 || err?.status === 403 || err?.message?.includes('API_KEY_INVALID')) {
-          logGeminiEvent('GEMINI_AUTH_ERROR', { requestId, status: err.status, message: err.message });
-          // Non-transient: break immediately to avoid retry
-          break;
-        } else {
-          logGeminiEvent('GEMINI_ERROR', { requestId, model: activeModel, attempt: attempt + 1, message: err.message });
-        }
-
-        // Bounded jittered retry for transient errors (503 high demand, 429 rate limit, timeout, network)
-        if (attempt < maxAttempts - 1 && isTransientError(err)) {
-          const backoff = 800 + Math.floor(Math.random() * 400);
-          logGeminiEvent('GEMINI_TRANSIENT_RETRY', {
-            requestId,
-            failedModel: activeModel,
-            nextModel: candidateModels[attempt + 1],
-            retryAttempt: attempt + 1,
-            backoffMs: backoff,
-            cause: err.message,
-          });
-          await new Promise((resolve) => setTimeout(resolve, backoff));
-        } else {
-          break;
-        }
-      }
-    }
-
-    // Fallback activation
-    const fallbackReason = lastError?.message || 'Gemini service temporarily unreachable';
-    logGeminiEvent('FALLBACK_ACTIVATION', {
-      requestId,
-      reason: fallbackReason,
-      farmId: selectedFarm.id,
-      latencyMs: Date.now() - startTime,
-    });
-
-    const fallbackText = buildDeterministicFallback(fallbackReason);
-    return {
-      reply: fallbackText,
-      source: 'field-shift-deterministic-engine',
-      isFallback: true,
-      fallbackReason,
-      requestId,
-      latencyMs: Date.now() - startTime,
-      farmId: selectedFarm.id,
-    };
-  };
-
-  // Register promise in in-flight map
-  const queryPromise = executeQuery();
-  inFlightAdvisorRequests.set(dedupKey, queryPromise);
-
-  try {
-    const result = await queryPromise;
-    res.json(result);
-  } catch (err: any) {
-    const fallbackText = buildDeterministicFallback(err.message || 'Unexpected server error');
-    res.json({
-      reply: fallbackText,
-      source: 'field-shift-deterministic-engine',
-      isFallback: true,
-      fallbackReason: err.message || 'System error',
-      requestId,
-      latencyMs: Date.now() - startTime,
-      farmId: selectedFarm.id,
-    });
-  } finally {
-    inFlightAdvisorRequests.delete(dedupKey);
-  }
-});
-
-// Explicit SEO Crawl Endpoints
 app.get('/robots.txt', (_req: Request, res: Response) => {
-  const robotsPath = path.resolve(__dirname, 'public', 'robots.txt');
+  const robotsPath = path.resolve(process.cwd(), 'public', 'robots.txt');
   if (fs.existsSync(robotsPath)) {
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.set('Content-Type', 'text/plain; charset=utf-8');
     res.sendFile(robotsPath);
   } else {
-    res.type('text/plain').send('User-agent: *\nAllow: /\nDisallow: /dashboard\nSitemap: https://fieldshift.ag/sitemap.xml\n');
+    res.type('text/plain').send('User-agent: *\nAllow: /\nDisallow: /dashboard\n');
   }
 });
 
 app.get('/sitemap.xml', (_req: Request, res: Response) => {
-  const sitemapPath = path.resolve(__dirname, 'public', 'sitemap.xml');
+  const sitemapPath = path.resolve(process.cwd(), 'public', 'sitemap.xml');
   if (fs.existsSync(sitemapPath)) {
-    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.set('Content-Type', 'application/xml; charset=utf-8');
     res.sendFile(sitemapPath);
   } else {
     res.status(404).send('Sitemap not found');
   }
 });
 
-// Catch-all: ensure any unmatched /api/* route returns clean JSON 404 (never HTML fallback)
 app.all(['/api', '/api/*'], (req: Request, res: Response) => {
   res.status(404).json({
-    error: `API endpoint '${req.method} ${req.path}' not found. Please verify the endpoint path.`,
+    error: `API endpoint '${req.method} ${req.path}' not found.`,
     status: 404,
   });
 });
-export { app };
-export default app;
 
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  logEvent('Express', 'UNHANDLED_ERROR', { message: err?.message || 'Unexpected error' });
+  res.status(500).json({
+    error: 'Internal server error.',
+  });
+});
+
+export default app;

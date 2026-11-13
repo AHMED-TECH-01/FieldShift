@@ -165,16 +165,16 @@ export const NasaExplorerPreview: React.FC<NasaExplorerPreviewProps> = ({ onOpen
             </div>
           </div>
 
-          {/* Right: Real-Time Telemetry Readout Box */}
+          {/* Right: Illustrative Telemetry Preview Box */}
           <div className="lg:col-span-5 bg-gradient-to-br from-[#073D2B] to-[#145C3D] rounded-2xl p-5 sm:p-6 text-white flex flex-col justify-between shadow-lg">
             <div>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-mono uppercase tracking-wider text-[#9BD85A] flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-[#76B93F] animate-ping" />
-                  Live Farm Telemetry
+                  <span className="w-2 h-2 rounded-full bg-[#76B93F]" />
+                  Reference Benchmark Preview
                 </span>
                 <span className="text-[10px] bg-white/10 px-2 py-0.5 rounded text-white/80">
-                  UTC ACTIVE
+                  ILLUSTRATIVE SAMPLE
                 </span>
               </div>
 
@@ -191,8 +191,8 @@ export const NasaExplorerPreview: React.FC<NasaExplorerPreviewProps> = ({ onOpen
             </div>
 
             <div className="pt-5 mt-6 border-t border-white/15 text-xs text-white/75 flex flex-wrap items-center justify-between gap-2">
-              <span>Station: Prairie Ridge (Iowa)</span>
-              <span className="text-[#9BD85A] font-semibold">Verified Ground Link</span>
+              <span>Example Parcel: Ames, Iowa (Demo)</span>
+              <span className="text-[#9BD85A] font-semibold">Sign In for Live Sync</span>
             </div>
           </div>
 

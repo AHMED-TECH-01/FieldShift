@@ -32,6 +32,10 @@ import {
   FileCheck2,
   Menu,
   X,
+  Pencil,
+  Trash2,
+  CloudDownload,
+  BookmarkCheck,
 } from 'lucide-react';
 import {
   Farm,
@@ -57,6 +61,7 @@ interface DashboardProps {
   activeSubPage: string;
   onNavigate: (path: string) => void;
   onLogout: () => void;
+  onUserUpdated?: (user: User) => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({
@@ -64,6 +69,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   activeSubPage,
   onNavigate,
   onLogout,
+  onUserUpdated,
 }) => {
   // State
   const [farms, setFarms] = useState<Farm[]>([]);
@@ -122,13 +128,56 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // New Farm form state
   const [newFarmName, setNewFarmName] = useState('');
   const [newFarmLocation, setNewFarmLocation] = useState('');
+  const [newFarmLat, setNewFarmLat] = useState('');
+  const [newFarmLon, setNewFarmLon] = useState('');
   const [newFarmAcreage, setNewFarmAcreage] = useState('320');
   const [newFarmCrop, setNewFarmCrop] = useState('Corn (Maize)');
   const [newFarmSoilType, setNewFarmSoilType] = useState('Silt Loam');
   const [newFarmPH, setNewFarmPH] = useState('6.5');
   const [newFarmOM, setNewFarmOM] = useState('3.4');
 
+  // Edit / Delete Farm state
+  const [editingFarmId, setEditingFarmId] = useState<string | null>(null);
+  const [editFarmName, setEditFarmName] = useState('');
+  const [editFarmLocation, setEditFarmLocation] = useState('');
+  const [editFarmAcreage, setEditFarmAcreage] = useState('');
+  const [editFarmCrop, setEditFarmCrop] = useState('');
+  const [editFarmPH, setEditFarmPH] = useState('');
+  const [editFarmOM, setEditFarmOM] = useState('');
+  const [savingEditFarm, setSavingEditFarm] = useState(false);
+  const [confirmDeleteFarmId, setConfirmDeleteFarmId] = useState<string | null>(null);
+
+  // Real NASA Telemetry, Climate, Soil, Risk & Rotation Assessments state
+  const [nasaTelemetry, setNasaTelemetry] = useState<any>(null);
+  const [nasaLoading, setNasaLoading] = useState<boolean>(false);
+  const [nasaError, setNasaError] = useState<string | null>(null);
+  const [syncingPower, setSyncingPower] = useState<boolean>(false);
+  const [syncingCmr, setSyncingCmr] = useState<boolean>(false);
+  const [syncBanner, setSyncBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const [climateTimeline, setClimateTimeline] = useState<any[]>([]);
+  const [climateProvenance, setClimateProvenance] = useState<string>('');
+  const [soilProfileData, setSoilProfileData] = useState<any>(null);
+  const [fieldRiskIndicators, setFieldRiskIndicators] = useState<any[]>([]);
+  const [fieldRiskNotice, setFieldRiskNotice] = useState<string>('');
+  const [savedRotations, setSavedRotations] = useState<any[]>([]);
+  const [savingRotation, setSavingRotation] = useState<boolean>(false);
+  const [rotationSaveFeedback, setRotationSaveFeedback] = useState<string | null>(null);
+
+  // Settings / Profile state
+  const [profileFullName, setProfileFullName] = useState<string>(currentUser.fullName || '');
+  const [measurementUnits, setMeasurementUnits] = useState<'imperial' | 'metric'>('imperial');
+  const [savingProfile, setSavingProfile] = useState<boolean>(false);
+  const [profileFeedback, setProfileFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
   // AI Advisor state
+  const buildWelcomeMessage = (farmName?: string) => ({
+    sender: 'ai' as const,
+    text: `Hello ${currentUser.fullName || 'Farmer'}! I am your FieldShift Agronomic Advisor powered by Google Gemini.\nResponses for ${farmName || 'your active farm'} are grounded in your persisted farm soil profile, farmer priorities, and synced NASA POWER / Earthdata CMR observations.\n\nHow can I help evaluate your crop rotation strategies or climate risks today?`,
+    source: 'gemini-4-hydrogen',
+    isFallback: false,
+  });
+
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiChatHistory, setAiChatHistory] = useState<
     Array<{
@@ -140,23 +189,89 @@ export const Dashboard: React.FC<DashboardProps> = ({
       originalPrompt?: string;
       latencyMs?: number;
     }>
-  >([
-    {
-      sender: 'ai',
-      text: `Hello ${currentUser.fullName || 'Farmer'}! I am your Field Shift Agronomic Advisor powered by Gemini 3.8 Flash.
-I am actively synced with your farm's NASA SMAP soil moisture readings (0.284 m³/m³), GPM precipitation records, and your custom priorities profile.
-
-How can I help optimize your crop sequence, evaluate what-if climate scenarios, or break pest host cycles today?`,
-      source: 'gemini-3.8-flash',
-      isFallback: false,
-    },
-  ]);
+  >([buildWelcomeMessage()]);
   const [aiLoading, setAiLoading] = useState(false);
 
-  // Load farms & initial rotation strategies
+  // Load farms & user profile on mount
   useEffect(() => {
     fetchFarms();
+    fetchUserProfile();
   }, []);
+
+  const fetchUserProfile = async () => {
+    try {
+      const res = await apiClient.get('/api/profile');
+      if (res?.profile) {
+        setProfileFullName(res.profile.fullName || currentUser.fullName || '');
+        if (res.profile.measurementUnits === 'metric' || res.profile.measurementUnits === 'imperial') {
+          setMeasurementUnits(res.profile.measurementUnits);
+        }
+      }
+    } catch {
+      // Keep optimistic defaults from currentUser
+    }
+  };
+
+  const fetchNasaAndFarmAnalytics = async (farmId: string) => {
+    setNasaLoading(true);
+    setNasaError(null);
+    try {
+      const [obsRes, climateRes, soilRes, riskRes, rotRes, aiHistRes] = await Promise.allSettled([
+        apiClient.get('/api/nasa/observations', { params: { farmId } }),
+        apiClient.get('/api/climate/timeline', { params: { farmId } }),
+        apiClient.get('/api/soil/profiles', { params: { farmId } }),
+        apiClient.get('/api/risk/field-analysis', { params: { farmId } }),
+        apiClient.get('/api/rotations', { params: { farmId } }),
+        apiClient.get('/api/ai/history', { params: { farmId } }),
+      ]);
+
+      if (obsRes.status === 'fulfilled') {
+        setNasaTelemetry(obsRes.value);
+      } else {
+        setNasaError('Unable to load NASA observation summary for this parcel.');
+      }
+
+      if (climateRes.status === 'fulfilled') {
+        setClimateTimeline(Array.isArray(climateRes.value.timeline) ? climateRes.value.timeline : []);
+        setClimateProvenance(climateRes.value.provenance || '');
+      }
+
+      if (soilRes.status === 'fulfilled') {
+        setSoilProfileData(soilRes.value);
+      }
+
+      if (riskRes.status === 'fulfilled') {
+        setFieldRiskIndicators(Array.isArray(riskRes.value.indicators) ? riskRes.value.indicators : []);
+        setFieldRiskNotice(riskRes.value.scientificNotice || '');
+      }
+
+      if (rotRes.status === 'fulfilled') {
+        setSavedRotations(Array.isArray(rotRes.value.rotations) ? rotRes.value.rotations : []);
+      }
+
+      if (aiHistRes.status === 'fulfilled' && Array.isArray(aiHistRes.value.history)) {
+        const persisted = [...aiHistRes.value.history].reverse();
+        const turns: typeof aiChatHistory = [buildWelcomeMessage()];
+        for (const item of persisted) {
+          if (item.prompt) turns.push({ sender: 'user', text: item.prompt });
+          if (item.reply) {
+            turns.push({
+              sender: 'ai',
+              text: item.reply,
+              source: item.model_source || 'gemini-4-hydrogen',
+              isFallback: Boolean(item.is_fallback),
+              fallbackReason: item.fallback_reason || undefined,
+              latencyMs: item.latency_ms || undefined,
+              originalPrompt: item.prompt,
+            });
+          }
+        }
+        setAiChatHistory(turns);
+      }
+    } finally {
+      setNasaLoading(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -173,6 +288,7 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
       }
       if (active) {
         recalculateStrategies(effectivePriorities, activeScenario);
+        fetchNasaAndFarmAnalytics(selectedFarmId);
       }
     };
     syncFarmPrioritiesAndStrategies();
@@ -187,12 +303,67 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
       const data = await apiClient.get('/api/farms');
       if (data.farms && data.farms.length > 0) {
         setFarms(data.farms);
-        setSelectedFarmId(data.farms[0].id);
+        setSelectedFarmId((prev) =>
+          data.farms.some((f: Farm) => f.id === prev) ? prev : data.farms[0].id
+        );
       }
     } catch (e) {
       console.error('Failed to load farms', e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSyncNasaPower = async () => {
+    setSyncingPower(true);
+    setSyncBanner(null);
+    try {
+      const res = await apiClient.post('/api/datasets/nasa-power/sync', {
+        farmId: selectedFarmId,
+        days: 30,
+      });
+      setSyncBanner({
+        type: 'success',
+        message: `Synced ${res.recordsSaved || 0} live NASA POWER records (${res.startDate} to ${res.endDate}).`,
+      });
+      await fetchNasaAndFarmAnalytics(selectedFarmId);
+      await recalculateStrategies(priorities, activeScenario);
+    } catch (err: any) {
+      setSyncBanner({
+        type: 'error',
+        message: err?.message || 'Failed to sync NASA POWER agroclimatology.',
+      });
+    } finally {
+      setSyncingPower(false);
+    }
+  };
+
+  const handleDiscoverCmrGranules = async () => {
+    setSyncingCmr(true);
+    setSyncBanner(null);
+    try {
+      const targets: Array<'smap' | 'gpm' | 'modis' | 'ecostress'> = ['smap', 'gpm', 'modis', 'ecostress'];
+      const results = await Promise.allSettled(
+        targets.map((ds) => apiClient.post(`/api/datasets/${ds}/sync`, { farmId: selectedFarmId }))
+      );
+      const totalGranules = results.reduce((sum, r) => {
+        if (r.status === 'fulfilled') {
+          return sum + (r.value.granulesFound ?? r.value.recordsSaved ?? 0);
+        }
+        return sum;
+      }, 0);
+      setSyncBanner({
+        type: 'success',
+        message: `Indexed ${totalGranules} NASA Earthdata CMR granules across SMAP, GPM, MODIS & ECOSTRESS.`,
+      });
+      await fetchNasaAndFarmAnalytics(selectedFarmId);
+    } catch (err: any) {
+      setSyncBanner({
+        type: 'error',
+        message: err?.message || 'Failed to query NASA Earthdata CMR granules.',
+      });
+    } finally {
+      setSyncingCmr(false);
     }
   };
 
@@ -212,6 +383,31 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
       console.error('Failed to recalculate strategies', e);
     } finally {
       setRecalculating(false);
+    }
+  };
+
+  const handleSaveRotationAssessment = async () => {
+    setSavingRotation(true);
+    setRotationSaveFeedback(null);
+    try {
+      const label = activeScenario
+        ? `${activeFarm.name} (What-If Scenario)`
+        : `${activeFarm.name} Baseline Assessment`;
+      await apiClient.post('/api/rotations', {
+        farmId: selectedFarmId,
+        name: label,
+        priorities,
+        scenario: activeScenario || null,
+      });
+      setRotationSaveFeedback('Rotation strategy assessment saved to PostgreSQL.');
+      const rotRes = await apiClient.get('/api/rotations', { params: { farmId: selectedFarmId } });
+      if (Array.isArray(rotRes?.rotations)) {
+        setSavedRotations(rotRes.rotations);
+      }
+    } catch (err: any) {
+      setRotationSaveFeedback(err?.message || 'Could not save assessment right now.');
+    } finally {
+      setSavingRotation(false);
     }
   };
 
@@ -240,10 +436,18 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
       return;
     }
 
+    const latParsed = newFarmLat.trim() ? Number(newFarmLat) : 42.03;
+    const lonParsed = newFarmLon.trim() ? Number(newFarmLon) : -93.62;
+    if (!Number.isFinite(latParsed) || latParsed < -90 || latParsed > 90 || !Number.isFinite(lonParsed) || lonParsed < -180 || lonParsed > 180) {
+      setFarmCreateStatus({ type: 'error', message: 'Coordinates must be valid Latitude (-90..90) and Longitude (-180..180).' });
+      return;
+    }
+
     try {
       const data = await apiClient.post('/api/farms', {
         name: newFarmName.trim(),
         location: newFarmLocation.trim(),
+        coordinates: [lonParsed, latParsed],
         acreage: Number(newFarmAcreage) || 320,
         currentCrop: newFarmCrop,
         soilType: newFarmSoilType,
@@ -255,15 +459,91 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
         setSelectedFarmId(data.farm.id);
         setNewFarmName('');
         setNewFarmLocation('');
+        setNewFarmLat('');
+        setNewFarmLon('');
         setFarmCreateStatus({
           type: 'success',
-          message: `${data.farm.name} has been registered and set as your active farm.`,
+          message: `${data.farm.name} has been registered in Supabase PostgreSQL and set as your active farm.`,
         });
         onNavigate('/dashboard/farms');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to create farm', e);
-      setFarmCreateStatus({ type: 'error', message: 'Could not save farm property right now. Please try again.' });
+      setFarmCreateStatus({ type: 'error', message: e?.message || 'Could not save farm property right now. Please try again.' });
+    }
+  };
+
+  const startEditFarm = (farm: Farm) => {
+    setEditingFarmId(farm.id);
+    setEditFarmName(farm.name);
+    setEditFarmLocation(farm.location);
+    setEditFarmAcreage(String(farm.acreage));
+    setEditFarmCrop(farm.currentCrop);
+    setEditFarmPH(String(farm.soilPH));
+    setEditFarmOM(String(farm.organicMatter));
+  };
+
+  const handleSaveEditFarm = async (farmId: string) => {
+    setSavingEditFarm(true);
+    setFarmCreateStatus(null);
+    try {
+      const res = await apiClient.patch(`/api/farms/${farmId}`, {
+        name: editFarmName.trim(),
+        location: editFarmLocation.trim(),
+        acreage: Number(editFarmAcreage) || 100,
+        currentCrop: editFarmCrop.trim(),
+        soilPH: Number(editFarmPH) || 6.5,
+        organicMatter: Number(editFarmOM) || 3.0,
+      });
+      if (res?.farm) {
+        setFarms((prev) => prev.map((f) => (f.id === farmId ? res.farm : f)));
+        setEditingFarmId(null);
+        setFarmCreateStatus({ type: 'success', message: `Updated ${res.farm.name}.` });
+      }
+    } catch (err: any) {
+      setFarmCreateStatus({ type: 'error', message: err?.message || 'Failed to update farm property.' });
+    } finally {
+      setSavingEditFarm(false);
+    }
+  };
+
+  const handleDeleteFarm = async (farmId: string) => {
+    setFarmCreateStatus(null);
+    try {
+      await apiClient.delete(`/api/farms/${farmId}`);
+      const remaining = farms.filter((f) => f.id !== farmId);
+      setFarms(remaining);
+      setConfirmDeleteFarmId(null);
+      if (selectedFarmId === farmId && remaining.length > 0) {
+        setSelectedFarmId(remaining[0].id);
+      }
+      setFarmCreateStatus({ type: 'success', message: 'Farm property removed.' });
+    } catch (err: any) {
+      setFarmCreateStatus({ type: 'error', message: err?.message || 'Unable to delete farm property.' });
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingProfile(true);
+    setProfileFeedback(null);
+    try {
+      const res = await apiClient.patch('/api/profile', {
+        fullName: profileFullName.trim(),
+        measurementUnits,
+      });
+      if (res?.profile) {
+        setProfileFeedback({ type: 'success', message: 'Profile and measurement preferences saved.' });
+        onUserUpdated?.({
+          email: currentUser.email,
+          fullName: res.profile.fullName || profileFullName.trim(),
+          verified: currentUser.verified,
+        });
+      }
+    } catch (err: any) {
+      setProfileFeedback({ type: 'error', message: err?.message || 'Failed to save profile settings.' });
+    } finally {
+      setSavingProfile(false);
     }
   };
 
@@ -275,18 +555,27 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
     const payload = {
       report: isCsp
         ? 'USDA Conservation Stewardship Program (CSP) Living Cover Brief'
-        : 'NASA Earth Observations Seasonal Moisture Audit',
+        : 'NASA Earth Observations Agroclimatology & Granule Audit',
       generatedAt: new Date().toISOString(),
       farm: {
         name: activeFarm.name,
         location: activeFarm.location,
+        coordinates: activeFarm.coordinates,
         acreage: activeFarm.acreage,
         soilType: activeFarm.soilType,
         soilPH: activeFarm.soilPH,
         organicMatter: activeFarm.organicMatter,
       },
-      strategies: strategies.map((s) => ({ code: s.code, title: s.title, score: s.score })),
-      nasaTelemetry: { smap: '0.284 m3/m3', gpm30Day: '68.4 mm', modisNdvi: 0.72 },
+      strategies: strategies.map((s) => ({
+        code: s.code,
+        title: s.title,
+        score: s.score,
+        cropSequence: s.cropSequence,
+      })),
+      nasaTelemetry: nasaTelemetry?.realTimeMetrics || {
+        status: 'not_synced',
+        notice: 'No persisted NASA observations synced yet for this parcel.',
+      },
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -314,7 +603,7 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
     setAiLoading(true);
 
     try {
-      const data = await apiClient.post('/api/gemini/advisor', {
+      const data = await apiClient.post('/api/ai/advisor', {
         prompt: text,
         farmId: selectedFarmId,
         priorities,
@@ -325,7 +614,7 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
         {
           sender: 'ai',
           text: data.reply || 'Agronomic assessment completed.',
-          source: data.source || 'gemini-3.8-flash',
+          source: data.source || 'gemini-4-hydrogen',
           isFallback: !!data.isFallback,
           fallbackReason: data.fallbackReason,
           originalPrompt: text,
@@ -337,9 +626,9 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
         ...newHistory,
         {
           sender: 'ai',
-          text: 'Unable to reach the agricultural advisor server. Please check network connectivity.',
+          text: e?.message || 'Unable to reach the agricultural advisor server. Please check network connectivity.',
           isFallback: true,
-          fallbackReason: 'Network connection interrupted',
+          fallbackReason: e?.status === 401 ? 'Session expired — please sign in again' : 'Request failed',
           originalPrompt: text,
         },
       ]);
@@ -737,58 +1026,199 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
         <div className="p-3 sm:p-6 md:p-8 space-y-6">
 
           {/* 1. OVERVIEW PAGE */}
-          {activeSubPage === '/dashboard' && (
+          {activeSubPage === '/dashboard' && (() => {
+            const rt = nasaTelemetry?.realTimeMetrics;
+            const power = rt?.solarInsolationPOWER;
+            const smap = rt?.soilMoistureSMAP;
+            const gpm = rt?.precipitationGPM;
+            const modis = rt?.vegetationNDVI;
+            const topStrategy = [...strategies].sort((a, b) => b.score - a.score)[0];
+
+            return (
             <div className="space-y-6">
               
-              {/* NASA Live Telemetry Strip */}
+              {/* Live NASA Telemetry Sync Action Bar */}
+              <div className="bg-white p-4 sm:p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#145C3D] flex items-center gap-1.5">
+                    <Satellite className="w-3.5 h-3.5 text-[#76B93F]" />
+                    Parcel Earth Observation Link &bull; {activeFarm.coordinates[1].toFixed(2)}°N, {activeFarm.coordinates[0].toFixed(2)}°
+                  </span>
+                  <p className="text-xs text-[#527367] mt-0.5">
+                    {power?.status === 'synced'
+                      ? `Live NASA POWER window synced (${power.daysObserved} days observed, updated ${new Date(power.timestamp).toLocaleDateString()}).`
+                      : 'Sync live NASA POWER daily agroclimatology and Earthdata CMR granule metadata for this parcel.'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={syncingPower || syncingCmr}
+                    onClick={handleSyncNasaPower}
+                    className="min-h-[42px] px-4 py-2 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold inline-flex items-center gap-1.5 transition-all disabled:opacity-50 shadow-xs"
+                  >
+                    <CloudDownload className={`w-3.5 h-3.5 text-[#76B93F] ${syncingPower ? 'animate-pulse' : ''}`} />
+                    <span>{syncingPower ? 'Syncing POWER...' : 'Sync NASA POWER'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={syncingPower || syncingCmr}
+                    onClick={handleDiscoverCmrGranules}
+                    className="min-h-[42px] px-4 py-2 rounded-full bg-[#EAF5DF] hover:bg-[#D8ECC8] text-[#145C3D] text-xs font-bold inline-flex items-center gap-1.5 transition-all disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${syncingCmr ? 'animate-spin' : ''}`} />
+                    <span>{syncingCmr ? 'Querying CMR...' : 'Index CMR Granules'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {syncBanner && (
+                <div
+                  className={`p-3.5 rounded-2xl text-xs font-medium flex items-center justify-between gap-2 border ${
+                    syncBanner.type === 'success'
+                      ? 'bg-[#EAF5DF] border-[#76B93F] text-[#073D2B]'
+                      : 'bg-rose-50 border-rose-200 text-rose-800'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    {syncBanner.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-[#145C3D] shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                    )}
+                    {syncBanner.message}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSyncBanner(null)}
+                    className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-black/5"
+                    aria-label="Dismiss notice"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {nasaError && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center justify-between gap-3">
+                  <span>{nasaError}</span>
+                  <button
+                    type="button"
+                    onClick={() => fetchNasaAndFarmAnalytics(selectedFarmId)}
+                    className="px-3 py-1.5 rounded-full bg-rose-700 text-white font-bold text-[11px] shrink-0"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {/* NASA Live Telemetry Strip (Honest Persisted Values Only) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 
-                <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
-                  <div className="flex items-center justify-between text-xs text-[#527367]">
-                    <span className="flex items-center gap-1">
-                      <Satellite className="w-3.5 h-3.5 text-sky-600" />
-                      NASA SMAP
-                    </span>
-                    <span className="text-[10px] font-mono text-emerald-600 font-bold">9km L4</span>
-                  </div>
-                  <div className="font-display text-2xl font-bold text-[#073D2B]">0.284 m³/m³</div>
-                  <p className="text-[11px] text-[#2A4D3E]">Root-Zone Soil Moisture (Optimal)</p>
-                </div>
-
-                <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
-                  <div className="flex items-center justify-between text-xs text-[#527367]">
-                    <span className="flex items-center gap-1">
-                      <Droplets className="w-3.5 h-3.5 text-blue-600" />
-                      NASA GPM
-                    </span>
-                    <span className="text-[10px] font-mono text-emerald-600 font-bold">IMERG 30m</span>
-                  </div>
-                  <div className="font-display text-2xl font-bold text-[#073D2B]">68.4 mm</div>
-                  <p className="text-[11px] text-[#2A4D3E]">30-Day Rain Total (+12mm anomaly)</p>
-                </div>
-
-                <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
-                  <div className="flex items-center justify-between text-xs text-[#527367]">
-                    <span className="flex items-center gap-1">
-                      <Sprout className="w-3.5 h-3.5 text-emerald-600" />
-                      NASA MODIS
-                    </span>
-                    <span className="text-[10px] font-mono text-emerald-600 font-bold">250m NDVI</span>
-                  </div>
-                  <div className="font-display text-2xl font-bold text-[#073D2B]">0.72 NDVI</div>
-                  <p className="text-[11px] text-[#2A4D3E]">Canopy Health (Vigorous Photosynthesis)</p>
-                </div>
-
+                {/* Card 1: NASA POWER Solar & GDD */}
                 <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
                   <div className="flex items-center justify-between text-xs text-[#527367]">
                     <span className="flex items-center gap-1">
                       <Thermometer className="w-3.5 h-3.5 text-amber-600" />
                       NASA POWER
                     </span>
-                    <span className="text-[10px] font-mono text-emerald-600 font-bold">Daily Flux</span>
+                    <span className="text-[10px] font-mono text-emerald-700 font-bold">
+                      {power?.status === 'synced' ? 'LIVE 0.5°' : 'NOT SYNCED'}
+                    </span>
                   </div>
-                  <div className="font-display text-2xl font-bold text-[#073D2B]">19.4 MJ/m²</div>
-                  <p className="text-[11px] text-[#2A4D3E]">Solar Radiation (GDD Index: 168)</p>
+                  <div className="font-display text-2xl font-bold text-[#073D2B]">
+                    {nasaLoading
+                      ? 'Loading...'
+                      : power?.dailyRadiation !== null && power?.dailyRadiation !== undefined
+                      ? `${power.dailyRadiation} MJ/m²`
+                      : 'Unavailable'}
+                  </div>
+                  <p className="text-[11px] text-[#2A4D3E]">
+                    {power?.status === 'synced'
+                      ? `Mean Solar Flux • GDD(10°C): ${power.growingDegreeDays ?? '—'} • ${power.meanTempC ?? '—'}°C`
+                      : 'Click "Sync NASA POWER" above to retrieve daily insolation & temp'}
+                  </p>
+                </div>
+
+                {/* Card 2: NASA POWER / GPM Precip */}
+                <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
+                  <div className="flex items-center justify-between text-xs text-[#527367]">
+                    <span className="flex items-center gap-1">
+                      <Droplets className="w-3.5 h-3.5 text-blue-600" />
+                      Precip (POWER/GPM)
+                    </span>
+                    <span className="text-[10px] font-mono text-emerald-700 font-bold">
+                      {gpm?.value30DayTotal !== null && gpm?.value30DayTotal !== undefined
+                        ? 'LIVE MM'
+                        : gpm?.latestGranuleId
+                        ? 'CMR INDEXED'
+                        : 'NOT SYNCED'}
+                    </span>
+                  </div>
+                  <div className="font-display text-2xl font-bold text-[#073D2B]">
+                    {nasaLoading
+                      ? 'Loading...'
+                      : gpm?.value30DayTotal !== null && gpm?.value30DayTotal !== undefined
+                      ? `${gpm.value30DayTotal} mm`
+                      : gpm?.latestGranuleId
+                      ? 'Granule Only'
+                      : 'Unavailable'}
+                  </div>
+                  <p className="text-[11px] text-[#2A4D3E]">
+                    {gpm?.value30DayTotal !== null && gpm?.value30DayTotal !== undefined
+                      ? `Observed Window Total (${power?.daysObserved || 30}d)${gpm?.latestGranuleId ? ` • GPM: ${gpm.latestGranuleId.slice(0, 14)}...` : ''}`
+                      : 'Sync NASA POWER for cumulative daily PRECTOTCORR precipitation'}
+                  </p>
+                </div>
+
+                {/* Card 3: NASA SMAP CMR */}
+                <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
+                  <div className="flex items-center justify-between text-xs text-[#527367]">
+                    <span className="flex items-center gap-1">
+                      <Satellite className="w-3.5 h-3.5 text-sky-600" />
+                      NASA SMAP L4
+                    </span>
+                    <span className="text-[10px] font-mono text-sky-700 font-bold">
+                      {smap?.latestGranuleId ? '9km CMR' : 'NOT SYNCED'}
+                    </span>
+                  </div>
+                  <div className="font-display text-xl sm:text-2xl font-bold text-[#073D2B]">
+                    {nasaLoading
+                      ? 'Loading...'
+                      : smap?.latestGranuleId
+                      ? 'Granule Indexed'
+                      : 'Not Synced'}
+                  </div>
+                  <p className="text-[11px] text-[#2A4D3E] break-words">
+                    {smap?.latestGranuleId
+                      ? `Pass: ${smap.granuleTimestamp ? new Date(smap.granuleTimestamp).toLocaleDateString() : 'Indexed'} • Pixel HDF5 requires Earthdata token`
+                      : 'Index CMR granules to verify SMAP L4 orbital overpass availability'}
+                  </p>
+                </div>
+
+                {/* Card 4: NASA MODIS CMR */}
+                <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
+                  <div className="flex items-center justify-between text-xs text-[#527367]">
+                    <span className="flex items-center gap-1">
+                      <Sprout className="w-3.5 h-3.5 text-emerald-600" />
+                      NASA MODIS
+                    </span>
+                    <span className="text-[10px] font-mono text-emerald-700 font-bold">
+                      {modis?.latestGranuleId ? '250m CMR' : 'NOT SYNCED'}
+                    </span>
+                  </div>
+                  <div className="font-display text-xl sm:text-2xl font-bold text-[#073D2B]">
+                    {nasaLoading
+                      ? 'Loading...'
+                      : modis?.latestGranuleId
+                      ? 'Granule Indexed'
+                      : 'Not Synced'}
+                  </div>
+                  <p className="text-[11px] text-[#2A4D3E] break-words">
+                    {modis?.latestGranuleId
+                      ? `MOD13Q1: ${modis.granuleTimestamp ? new Date(modis.granuleTimestamp).toLocaleDateString() : 'Indexed'} • HDF-EOS raster needs Earthdata auth`
+                      : 'Index CMR granules to verify MODIS 250m vegetation tile coverage'}
+                  </p>
                 </div>
 
               </div>
@@ -798,15 +1228,14 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                 <div className="lg:col-span-8 space-y-3 min-w-0">
                   <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold">
                     <RefreshCw className="w-3.5 h-3.5" />
-                    Recommended Rotation Transition
+                    Top-Ranked Strategy for Your Priorities
                   </div>
                   <h3 className="font-display text-fluid-h2 font-extrabold text-[#073D2B]">
-                    Strategy B: Soil Restoration & Living Root Cover
+                    {topStrategy ? `Strategy ${topStrategy.code}: ${topStrategy.title}` : 'Strategy B: Soil Restoration & Living Root Cover'}
                   </h3>
                   <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
-                    By introducing a winter Cereal Rye + Hairy Vetch cover crop following {activeFarm.currentCrop},
-                    your soil will biological fix approximately <strong>75–95 lbs N/acre</strong> while mitigating winter runoff erosion
-                    across your 2.3% topography.
+                    {topStrategy?.explainability?.whySuggested ||
+                      `By introducing a winter cover sequence following ${activeFarm.currentCrop}, this strategy aligns with your active farmer priorities and soil parameters (${activeFarm.soilType}, OM ${activeFarm.organicMatter}%).`}
                   </p>
                   <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2.5 sm:gap-3 pt-2">
                     <button
@@ -859,7 +1288,7 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                     ))}
                   </div>
                   <p className="text-[11px] text-[#527367] italic pt-1">
-                    *Calibrated using your 12 farmer priority inputs & NASA SMAP soil moisture.
+                    *Model-derived ranking from your 12 priority inputs, soil record &amp; persisted NASA POWER data.
                   </p>
                 </div>
               </div>
@@ -918,7 +1347,8 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
               </div>
 
             </div>
-          )}
+            );
+          })()}
 
           {/* 1B. FARM PROPERTIES MANAGEMENT */}
           {activeSubPage === '/dashboard/farms' && (
@@ -944,6 +1374,8 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {farms.map((farm) => {
                     const isSelected = farm.id === activeFarm.id;
+                    const isEditingThis = editingFarmId === farm.id;
+                    const canManage = !farm.isDemo;
                     return (
                       <div
                         key={farm.id}
@@ -962,10 +1394,15 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                                   ACTIVE
                                 </span>
                               )}
+                              {farm.isDemo && (
+                                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold">
+                                  DEMO PARCEL
+                                </span>
+                              )}
                             </div>
                             <p className="text-xs text-[#527367] flex items-center gap-1 mt-0.5">
                               <MapPin className="w-3.5 h-3.5 text-[#76B93F] flex-shrink-0" />
-                              <span>{farm.location}</span>
+                              <span>{farm.location} ({farm.coordinates[1].toFixed(2)}°, {farm.coordinates[0].toFixed(2)}°)</span>
                             </p>
                           </div>
                           <span className="px-2.5 py-1 rounded-lg bg-white border border-[#D5E5CA] text-xs font-bold text-[#073D2B]">
@@ -973,41 +1410,163 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                          <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
-                            <span className="text-[10px] text-[#527367] block">Current Crop</span>
-                            <span className="font-bold text-[#073D2B]">{farm.currentCrop}</span>
+                        {isEditingThis ? (
+                          <div className="p-3 bg-white rounded-xl border border-[#76B93F]/50 space-y-3 text-xs">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              <div>
+                                <label className="block font-bold text-[#073D2B] mb-1">Name</label>
+                                <input
+                                  type="text"
+                                  value={editFarmName}
+                                  onChange={(e) => setEditFarmName(e.target.value)}
+                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                />
+                              </div>
+                              <div>
+                                <label className="block font-bold text-[#073D2B] mb-1">Location</label>
+                                <input
+                                  type="text"
+                                  value={editFarmLocation}
+                                  onChange={(e) => setEditFarmLocation(e.target.value)}
+                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                />
+                              </div>
+                              <div>
+                                <label className="block font-bold text-[#073D2B] mb-1">Acreage</label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={editFarmAcreage}
+                                  onChange={(e) => setEditFarmAcreage(e.target.value)}
+                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                />
+                              </div>
+                              <div>
+                                <label className="block font-bold text-[#073D2B] mb-1">Current Crop</label>
+                                <input
+                                  type="text"
+                                  value={editFarmCrop}
+                                  onChange={(e) => setEditFarmCrop(e.target.value)}
+                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                />
+                              </div>
+                              <div>
+                                <label className="block font-bold text-[#073D2B] mb-1">Soil pH</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={editFarmPH}
+                                  onChange={(e) => setEditFarmPH(e.target.value)}
+                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                />
+                              </div>
+                              <div>
+                                <label className="block font-bold text-[#073D2B] mb-1">OM %</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={editFarmOM}
+                                  onChange={(e) => setEditFarmOM(e.target.value)}
+                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditingFarmId(null)}
+                                className="px-3.5 py-1.5 rounded-full border border-[#D5E5CA] text-xs font-bold text-[#527367]"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                disabled={savingEditFarm}
+                                onClick={() => handleSaveEditFarm(farm.id)}
+                                className="px-4 py-1.5 rounded-full bg-[#073D2B] text-white text-xs font-bold disabled:opacity-50"
+                              >
+                                {savingEditFarm ? 'Saving...' : 'Save Changes'}
+                              </button>
+                            </div>
                           </div>
-                          <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
-                            <span className="text-[10px] text-[#527367] block">Soil Series</span>
-                            <span className="font-bold text-[#073D2B]">{farm.soilType}</span>
+                        ) : (
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                            <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
+                              <span className="text-[10px] text-[#527367] block">Current Crop</span>
+                              <span className="font-bold text-[#073D2B]">{farm.currentCrop}</span>
+                            </div>
+                            <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
+                              <span className="text-[10px] text-[#527367] block">Soil Series</span>
+                              <span className="font-bold text-[#073D2B]">{farm.soilType}</span>
+                            </div>
+                            <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
+                              <span className="text-[10px] text-[#527367] block">Soil pH</span>
+                              <span className="font-bold text-[#073D2B]">{farm.soilPH}</span>
+                            </div>
+                            <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
+                              <span className="text-[10px] text-[#527367] block">Organic Matter</span>
+                              <span className="font-bold text-[#073D2B]">{farm.organicMatter}%</span>
+                            </div>
                           </div>
-                          <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
-                            <span className="text-[10px] text-[#527367] block">Soil pH</span>
-                            <span className="font-bold text-[#073D2B]">{farm.soilPH}</span>
-                          </div>
-                          <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
-                            <span className="text-[10px] text-[#527367] block">Organic Matter</span>
-                            <span className="font-bold text-[#073D2B]">{farm.organicMatter}%</span>
-                          </div>
-                        </div>
+                        )}
 
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-[#E2E8DE]">
                           <span className="text-[11px] text-[#527367]">
                             Drainage: <strong className="text-[#073D2B]">{farm.drainage}</strong>
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedFarmId(farm.id)}
-                            disabled={isSelected}
-                            className={`min-h-[44px] px-4 py-2 rounded-full text-xs font-bold transition-all ${
-                              isSelected
-                                ? 'bg-[#EAF5DF] text-[#145C3D] cursor-default'
-                                : 'bg-[#073D2B] hover:bg-[#145C3D] text-white'
-                            }`}
-                          >
-                            {isSelected ? 'Selected Active Farm' : 'Set as Active Farm'}
-                          </button>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {canManage && !isEditingThis && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => startEditFarm(farm)}
+                                  className="min-h-[40px] px-3 py-1.5 rounded-full border border-[#D5E5CA] bg-white hover:bg-[#F0F5EE] text-[#073D2B] text-xs font-bold inline-flex items-center gap-1"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                  <span>Edit</span>
+                                </button>
+                                {confirmDeleteFarmId === farm.id ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteFarm(farm.id)}
+                                      className="min-h-[40px] px-3 py-1.5 rounded-full bg-rose-700 text-white text-xs font-bold"
+                                    >
+                                      Confirm Delete
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteFarmId(null)}
+                                      className="min-h-[40px] px-3 py-1.5 rounded-full border border-[#D5E5CA] text-xs font-bold text-[#527367]"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteFarmId(farm.id)}
+                                    className="min-h-[40px] px-3 py-1.5 rounded-full border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold inline-flex items-center gap-1"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>Delete</span>
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setSelectedFarmId(farm.id)}
+                              disabled={isSelected}
+                              className={`min-h-[42px] px-4 py-2 rounded-full text-xs font-bold transition-all ${
+                                isSelected
+                                  ? 'bg-[#EAF5DF] text-[#145C3D] cursor-default'
+                                  : 'bg-[#073D2B] hover:bg-[#145C3D] text-white'
+                              }`}
+                            >
+                              {isSelected ? 'Selected Active Farm' : 'Set as Active Farm'}
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );
@@ -1026,7 +1585,7 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                     Register New Farm Property
                   </h3>
                   <p className="text-xs text-[#527367] mt-1">
-                    Add parcel metadata and baseline soil lab attributes for strategy simulation.
+                    Add parcel coordinates and baseline soil lab attributes for live NASA ingestion &amp; rotation simulation.
                   </p>
                 </div>
 
@@ -1129,6 +1688,32 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                       />
                     </div>
                   </div>
+                  <div>
+                    <label className="block font-bold text-[#073D2B] mb-1">Latitude (Optional)</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      min="-90"
+                      max="90"
+                      value={newFarmLat}
+                      onChange={(e) => setNewFarmLat(e.target.value)}
+                      placeholder="42.0300"
+                      className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-[#D5E5CA] text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-[#073D2B] mb-1">Longitude (Optional)</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      min="-180"
+                      max="180"
+                      value={newFarmLon}
+                      onChange={(e) => setNewFarmLon(e.target.value)}
+                      placeholder="-93.6200"
+                      className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-[#D5E5CA] text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex justify-end">
@@ -1160,12 +1745,17 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
           )}
 
           {/* 4. CROP ROTATION ENGINE (Requirements I, J) */}
-          {activeSubPage === '/dashboard/crop-rotation' && (
+          {activeSubPage === '/dashboard/crop-rotation' && (() => {
+            const stratA = strategies.find((s) => s.code === 'A');
+            const stratB = strategies.find((s) => s.code === 'B');
+            const stratC = strategies.find((s) => s.code === 'C');
+
+            return (
             <div className="space-y-6">
               
               {/* Mandatory 3-Strategy Comparison Table & Mobile Cards */}
               <div className="bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E2E8DE] pb-4">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-[#E2E8DE] pb-4">
                   <div>
                     <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
                       Requirement J: Mandatory Three-Strategy Comparison
@@ -1174,91 +1764,77 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                       Multi-Year Crop Sequence Comparison Matrix
                     </h2>
                     <p className="text-xs text-[#527367] mt-1">
-                      Comparing your baseline operation against restorative cover cropping and climate-resilient pulses.
+                      Comparing baseline operation against restorative cover cropping and climate-resilient pulses for {activeFarm.name}.
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setIncomeModalOpen(true)}
-                    className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold self-start sm:self-auto"
-                  >
-                    <DollarSign className="w-4 h-4" />
-                    <span>Supplemental Income Opportunities</span>
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={savingRotation}
+                      onClick={handleSaveRotationAssessment}
+                      className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold disabled:opacity-50"
+                    >
+                      <BookmarkCheck className="w-4 h-4 text-[#76B93F]" />
+                      <span>{savingRotation ? 'Saving...' : 'Save Assessment Snapshot'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIncomeModalOpen(true)}
+                      className="inline-flex items-center justify-center gap-1.5 min-h-[44px] px-4 py-2 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold"
+                    >
+                      <DollarSign className="w-4 h-4" />
+                      <span>Supplemental Income</span>
+                    </button>
+                  </div>
                 </div>
+
+                {rotationSaveFeedback && (
+                  <div className="p-3 rounded-xl bg-[#EAF5DF] border border-[#76B93F] text-xs font-medium text-[#073D2B] flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-[#145C3D] shrink-0" />
+                    <span>{rotationSaveFeedback}</span>
+                  </div>
+                )}
 
                 {/* Mobile Stacked Strategy Comparison Cards (< md) */}
                 <div className="md:hidden space-y-4">
                   {[
-                    {
-                      code: 'A',
-                      title: 'Strategy A: Baseline Monoculture',
-                      score: `${strategies.find((s) => s.code === 'A')?.score || 72}%`,
-                      badgeClass: 'bg-amber-100 text-amber-900',
-                      cardClass: 'bg-amber-50/30 border-amber-200',
-                      sequence: 'Corn → Soybean (Biennial)',
-                      bare: '135 Days (High Erosion)',
-                      bareClass: 'text-rose-700 font-semibold',
-                      nitrogen: '~35 lbs N/acre',
-                      water: 'High (Peak July transpirational demand)',
-                      pest: 'Incomplete rootworm break',
-                    },
-                    {
-                      code: 'B',
-                      title: 'Strategy B: Soil Restoration',
-                      score: `${strategies.find((s) => s.code === 'B')?.score || 86}%`,
-                      badgeClass: 'bg-emerald-100 text-emerald-900',
-                      cardClass: 'bg-emerald-50/40 border-emerald-300',
-                      sequence: 'Corn → Rye/Vetch Cover → Soybean → Small Grain',
-                      bare: '0 Days (365 Continuous Armor)',
-                      bareClass: 'text-emerald-700 font-semibold',
-                      nitrogen: '+75 to +95 lbs N/acre',
-                      water: '+22,000 gal/ac soil holding buffer',
-                      pest: 'Stimulates antagonistic microbes',
-                    },
-                    {
-                      code: 'C',
-                      title: 'Strategy C: Climate Resilient',
-                      score: `${strategies.find((s) => s.code === 'C')?.score || 91}%`,
-                      badgeClass: 'bg-blue-100 text-blue-900',
-                      cardClass: 'bg-blue-50/30 border-blue-200',
-                      sequence: 'Corn → Triticale → Sorghum → Field Peas → Sunflower',
-                      bare: '45 Days (Resilient Stover)',
-                      bareClass: 'text-blue-700 font-semibold',
-                      nitrogen: '+60 lbs N/acre (Pulse legumes)',
-                      water: '32% less water consumed',
-                      pest: 'Breaks cereal & legume pests',
-                    },
-                  ].map((item) => (
-                    <div key={item.code} className={`p-4 rounded-2xl border space-y-3 text-xs ${item.cardClass}`}>
+                    { s: stratA, badgeClass: 'bg-amber-100 text-amber-900', cardClass: 'bg-amber-50/30 border-amber-200', code: 'A' },
+                    { s: stratB, badgeClass: 'bg-emerald-100 text-emerald-900', cardClass: 'bg-emerald-50/40 border-emerald-300', code: 'B' },
+                    { s: stratC, badgeClass: 'bg-blue-100 text-blue-900', cardClass: 'bg-blue-50/30 border-blue-200', code: 'C' },
+                  ].map(({ s, badgeClass, cardClass, code }) => (
+                    <div key={code} className={`p-4 rounded-2xl border space-y-3 text-xs ${cardClass}`}>
                       <div className="flex items-center justify-between gap-2 pb-2 border-b border-black/5">
-                        <span className={`px-2.5 py-1 rounded-lg font-bold ${item.badgeClass}`}>{item.title}</span>
-                        <span className="font-display font-extrabold text-base text-[#073D2B]">{item.score}</span>
+                        <span className={`px-2.5 py-1 rounded-lg font-bold ${badgeClass}`}>
+                          Strategy {code}: {s?.title || ''}
+                        </span>
+                        <span className="font-display font-extrabold text-base text-[#073D2B]">
+                          {s ? `${s.score}%` : '—'}
+                        </span>
                       </div>
                       <dl className="space-y-2 text-[#2A4D3E]">
                         <div>
                           <dt className="text-[11px] font-bold text-[#073D2B]">Crop Sequence</dt>
-                          <dd>{item.sequence}</dd>
+                          <dd>{s?.cropSequence?.join(' → ') || 'Loading...'}</dd>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <dt className="text-[11px] font-bold text-[#073D2B]">Bare-Field Exposure</dt>
-                            <dd className={item.bareClass}>{item.bare}</dd>
+                            <dt className="text-[11px] font-bold text-[#073D2B]">Erosion Mitigation</dt>
+                            <dd className="font-semibold">{s?.soilBenefits?.erosionMitigation || '—'}</dd>
                           </div>
                           <div>
                             <dt className="text-[11px] font-bold text-[#073D2B]">Biological N Fix</dt>
-                            <dd className="font-semibold">{item.nitrogen}</dd>
+                            <dd className="font-semibold">{s?.soilBenefits?.nitrogenFixation || '—'}</dd>
                           </div>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <dt className="text-[11px] font-bold text-[#073D2B]">Water Use</dt>
-                            <dd>{item.water}</dd>
+                            <dt className="text-[11px] font-bold text-[#073D2B]">Water Efficiency</dt>
+                            <dd>{s?.climateResilience?.waterEfficiency || '—'}</dd>
                           </div>
                           <div>
-                            <dt className="text-[11px] font-bold text-[#073D2B]">Pest Break</dt>
-                            <dd>{item.pest}</dd>
+                            <dt className="text-[11px] font-bold text-[#073D2B]">Gross Margin Est.</dt>
+                            <dd>{s?.economicProfile?.grossMarginEst || '—'}</dd>
                           </div>
                         </div>
                       </dl>
@@ -1272,58 +1848,86 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                     <thead>
                       <tr className="border-b border-[#E2E8DE] text-[#073D2B]">
                         <th className="py-3 px-4 font-bold">Criteria</th>
-                        <th className="py-3 px-4 font-bold text-amber-900 bg-amber-50/50">Strategy A: Baseline Monoculture</th>
-                        <th className="py-3 px-4 font-bold text-emerald-900 bg-emerald-50/50">Strategy B: Soil Restoration</th>
-                        <th className="py-3 px-4 font-bold text-blue-900 bg-blue-50/50">Strategy C: Climate Resilient</th>
+                        <th className="py-3 px-4 font-bold text-amber-900 bg-amber-50/50">
+                          Strategy A: {stratA?.title || 'Baseline'}
+                        </th>
+                        <th className="py-3 px-4 font-bold text-emerald-900 bg-emerald-50/50">
+                          Strategy B: {stratB?.title || 'Soil Restoration'}
+                        </th>
+                        <th className="py-3 px-4 font-bold text-blue-900 bg-blue-50/50">
+                          Strategy C: {stratC?.title || 'Climate Resilient'}
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#E2E8DE] text-[#2A4D3E]">
                       <tr>
                         <td className="py-3 px-4 font-bold text-[#073D2B]">Current Model Score</td>
-                        <td className="py-3 px-4 font-bold text-amber-800 bg-amber-50/20">{strategies.find(s=>s.code==='A')?.score || 72}%</td>
-                        <td className="py-3 px-4 font-bold text-emerald-800 bg-emerald-50/20">{strategies.find(s=>s.code==='B')?.score || 86}%</td>
-                        <td className="py-3 px-4 font-bold text-blue-800 bg-blue-50/20">{strategies.find(s=>s.code==='C')?.score || 91}%</td>
+                        <td className="py-3 px-4 font-bold text-amber-800 bg-amber-50/20">{stratA ? `${stratA.score}%` : '—'}</td>
+                        <td className="py-3 px-4 font-bold text-emerald-800 bg-emerald-50/20">{stratB ? `${stratB.score}%` : '—'}</td>
+                        <td className="py-3 px-4 font-bold text-blue-800 bg-blue-50/20">{stratC ? `${stratC.score}%` : '—'}</td>
                       </tr>
                       <tr>
                         <td className="py-3 px-4 font-semibold text-[#073D2B]">Crop Sequence</td>
-                        <td className="py-3 px-4 bg-amber-50/20">Corn → Soybean (Biennial)</td>
-                        <td className="py-3 px-4 bg-emerald-50/20">Corn → Rye/Vetch Cover → Soybean → Small Grain</td>
-                        <td className="py-3 px-4 bg-blue-50/20">Corn → Triticale → Sorghum → Field Peas → Sunflower</td>
+                        <td className="py-3 px-4 bg-amber-50/20">{stratA?.cropSequence?.join(' → ') || '—'}</td>
+                        <td className="py-3 px-4 bg-emerald-50/20">{stratB?.cropSequence?.join(' → ') || '—'}</td>
+                        <td className="py-3 px-4 bg-blue-50/20">{stratC?.cropSequence?.join(' → ') || '—'}</td>
                       </tr>
                       <tr>
-                        <td className="py-3 px-4 font-semibold text-[#073D2B]">Bare-Field Exposure</td>
-                        <td className="py-3 px-4 bg-amber-50/20 text-rose-700 font-semibold">135 Days (High Erosion)</td>
-                        <td className="py-3 px-4 bg-emerald-50/20 text-emerald-700 font-semibold">0 Days (365 Continuous Armor)</td>
-                        <td className="py-3 px-4 bg-blue-50/20 text-blue-700 font-semibold">45 Days (Resilient Stover)</td>
+                        <td className="py-3 px-4 font-semibold text-[#073D2B]">Erosion Mitigation</td>
+                        <td className="py-3 px-4 bg-amber-50/20 text-rose-700 font-semibold">{stratA?.soilBenefits?.erosionMitigation || '—'}</td>
+                        <td className="py-3 px-4 bg-emerald-50/20 text-emerald-700 font-semibold">{stratB?.soilBenefits?.erosionMitigation || '—'}</td>
+                        <td className="py-3 px-4 bg-blue-50/20 text-blue-700 font-semibold">{stratC?.soilBenefits?.erosionMitigation || '—'}</td>
                       </tr>
                       <tr>
                         <td className="py-3 px-4 font-semibold text-[#073D2B]">Biological Nitrogen Fix</td>
-                        <td className="py-3 px-4 bg-amber-50/20">~35 lbs N/acre</td>
-                        <td className="py-3 px-4 bg-emerald-50/20 font-bold text-emerald-700">+75 to +95 lbs N/acre</td>
-                        <td className="py-3 px-4 bg-blue-50/20">+60 lbs N/acre (Pulse legumes)</td>
+                        <td className="py-3 px-4 bg-amber-50/20">{stratA?.soilBenefits?.nitrogenFixation || '—'}</td>
+                        <td className="py-3 px-4 bg-emerald-50/20 font-bold text-emerald-700">{stratB?.soilBenefits?.nitrogenFixation || '—'}</td>
+                        <td className="py-3 px-4 bg-blue-50/20">{stratC?.soilBenefits?.nitrogenFixation || '—'}</td>
                       </tr>
                       <tr>
-                        <td className="py-3 px-4 font-semibold text-[#073D2B]">Water Consumption</td>
-                        <td className="py-3 px-4 bg-amber-50/20">High (Peak July transpirational demand)</td>
-                        <td className="py-3 px-4 bg-emerald-50/20">+22,000 gal/ac soil holding buffer</td>
-                        <td className="py-3 px-4 bg-blue-50/20 font-bold text-blue-700">32% less water consumed</td>
+                        <td className="py-3 px-4 font-semibold text-[#073D2B]">Water Efficiency</td>
+                        <td className="py-3 px-4 bg-amber-50/20">{stratA?.climateResilience?.waterEfficiency || '—'}</td>
+                        <td className="py-3 px-4 bg-emerald-50/20">{stratB?.climateResilience?.waterEfficiency || '—'}</td>
+                        <td className="py-3 px-4 bg-blue-50/20 font-bold text-blue-700">{stratC?.climateResilience?.waterEfficiency || '—'}</td>
                       </tr>
                       <tr>
-                        <td className="py-3 px-4 font-semibold text-[#073D2B]">Pest Host Interruption</td>
-                        <td className="py-3 px-4 bg-amber-50/20 text-amber-700">Incomplete rootworm break</td>
-                        <td className="py-3 px-4 bg-emerald-50/20">Stimulates antagonistic microbes</td>
-                        <td className="py-3 px-4 bg-blue-50/20 font-bold text-blue-700">Breaks cereal & legume pests</td>
+                        <td className="py-3 px-4 font-semibold text-[#073D2B]">Estimated Gross Margin</td>
+                        <td className="py-3 px-4 bg-amber-50/20">{stratA?.economicProfile?.grossMarginEst || '—'}</td>
+                        <td className="py-3 px-4 bg-emerald-50/20">{stratB?.economicProfile?.grossMarginEst || '—'}</td>
+                        <td className="py-3 px-4 bg-blue-50/20 font-bold text-blue-700">{stratC?.economicProfile?.grossMarginEst || '—'}</td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
+
+                {savedRotations.length > 0 && (
+                  <div className="pt-4 border-t border-[#E2E8DE] space-y-2">
+                    <span className="text-[11px] font-bold uppercase text-[#527367] block">
+                      Saved Rotation Assessments ({savedRotations.length})
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                      {savedRotations.slice(0, 6).map((rot: any) => (
+                        <div key={rot.id} className="p-3 rounded-xl bg-[#FAFDF8] border border-[#E2E8DE] space-y-1">
+                          <div className="font-bold text-[#073D2B] truncate">
+                            {rot.rotation_scenarios?.name || 'Saved Assessment'}
+                          </div>
+                          <div className="text-[11px] text-[#527367]">
+                            {rot.rotation_scenarios?.is_hypothetical ? 'Hypothetical Scenario' : 'Baseline Evaluation'} &bull;{' '}
+                            {new Date(rot.created_at).toLocaleDateString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 10-Point Explainability Explorer (Requirement I) */}
               {strategies.length > 0 && <ExplainabilityExplorer strategies={strategies} />}
 
             </div>
-          )}
+            );
+          })()}
 
           {/* 5. WHAT-IF SCENARIOS (Requirement H) */}
           {activeSubPage === '/dashboard/scenarios' && (
@@ -1337,7 +1941,11 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
 
           {/* 6. NASA ROADMAP & DATA FUSION (Requirement F & G) */}
           {activeSubPage === '/dashboard/earth-observation' && (
-            <NasaRoadmapExplorer />
+            <NasaRoadmapExplorer
+              farmId={selectedFarmId}
+              farmName={activeFarm.name}
+              onSynced={() => fetchNasaAndFarmAnalytics(selectedFarmId)}
+            />
           )}
 
           {/* 7. INTERACTIVE FARM MAP (Requirement K) */}
@@ -1394,15 +2002,23 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
               </div>
 
               <div className="bg-white rounded-3xl p-4 sm:p-6 border border-[#D5E5CA] space-y-3">
-                <h3 className="font-bold text-base text-[#073D2B]">Agronomic Soil Limitations</h3>
+                <h3 className="font-bold text-base text-[#073D2B]">Agronomic Soil Limitations &amp; Provenance</h3>
+                {soilProfileData?.provenance && (
+                  <p className="text-[11px] font-semibold text-[#145C3D]">{soilProfileData.provenance}</p>
+                )}
                 <ul className="space-y-2 text-xs text-[#2A4D3E]">
-                  <li className="flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                    <span>Compaction risk: Clarions are prone to subsoil plow-pans when driven upon during early spring high moisture.</span>
-                  </li>
+                  {(soilProfileData?.limitations || [
+                    'Satellite radiometry cannot measure soil pH, phosphorus, potassium, or field-tile drainage.',
+                    'Periodic laboratory soil cores remain mandatory for nutrient prescription accuracy.',
+                  ]).map((lim: string, idx: number) => (
+                    <li key={idx} className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <span>{lim}</span>
+                    </li>
+                  ))}
                   <li className="flex items-start gap-2">
                     <CheckCircle2 className="w-4 h-4 text-[#76B93F] flex-shrink-0 mt-0.5" />
-                    <span>Deep taproots from sunflower or forage radish will fracture hardpan layers without mechanical tillage.</span>
+                    <span>Last Laboratory Soil Test: <strong>{activeFarm.lastSoilTest}</strong> &bull; Drainage: <strong>{activeFarm.drainage}</strong></span>
                   </li>
                 </ul>
               </div>
@@ -1412,70 +2028,80 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
           {/* 11. FIELD RISK ANALYSIS */}
           {activeSubPage === '/dashboard/field-risk' && (
             <div className="space-y-6">
-              <div>
-                <h2 className="font-display text-fluid-h2 font-bold text-[#073D2B]">Geospatial Field Risk Diagnostics</h2>
-                <p className="text-xs text-[#527367]">
-                  Vulnerability indices calculated from NASA SRTM elevation, NASA POWER heat waves, and GPM storms.
-                </p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-display text-fluid-h2 font-bold text-[#073D2B]">Geospatial Field Risk Diagnostics</h2>
+                  <p className="text-xs text-[#527367]">
+                    Vulnerability indices grounded in persisted farm soil records and synced NASA POWER agroclimatology.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={syncingPower}
+                  onClick={handleSyncNasaPower}
+                  className="min-h-[42px] px-4 py-2 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold inline-flex items-center gap-1.5 self-start sm:self-auto"
+                >
+                  <CloudDownload className="w-3.5 h-3.5 text-[#76B93F]" />
+                  <span>{syncingPower ? 'Syncing NASA POWER...' : 'Refresh NASA Climate Risk'}</span>
+                </button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                 <div className="bg-white p-4 sm:p-6 rounded-3xl border border-[#D5E5CA] space-y-4">
-                  <h3 className="font-bold text-base text-[#073D2B]">Vulnerability Scores</h3>
-                  <div className="space-y-3 text-xs">
-                    <div>
-                      <div className="flex flex-wrap justify-between gap-1 mb-1">
-                        <span className="text-[#527367]">Root-Zone Water Deficit:</span>
-                        <span className="font-bold text-emerald-700">LOW (22%)</span>
+                  <h3 className="font-bold text-base text-[#073D2B]">Persisted Parcel Risk Indicators</h3>
+                  <div className="space-y-4 text-xs">
+                    {fieldRiskIndicators.map((ind: any, idx: number) => (
+                      <div key={idx} className="space-y-1">
+                        <div className="flex flex-wrap justify-between gap-1">
+                          <span className="font-semibold text-[#073D2B]">{ind.name}</span>
+                          {ind.score !== null && ind.score !== undefined ? (
+                            <span
+                              className={`font-bold ${
+                                ind.level === 'HIGH'
+                                  ? 'text-rose-700'
+                                  : ind.level === 'MODERATE'
+                                  ? 'text-amber-700'
+                                  : 'text-emerald-700'
+                              }`}
+                            >
+                              {ind.level} ({ind.score}%)
+                            </span>
+                          ) : (
+                            <span className="font-bold text-slate-600">NOT SYNCED</span>
+                          )}
+                        </div>
+                        {ind.score !== null && ind.score !== undefined && (
+                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div
+                              style={{ width: `${Math.min(100, Math.max(0, ind.score))}%` }}
+                              className={`h-full ${
+                                ind.level === 'HIGH'
+                                  ? 'bg-rose-500'
+                                  : ind.level === 'MODERATE'
+                                  ? 'bg-amber-500'
+                                  : 'bg-emerald-500'
+                              }`}
+                            />
+                          </div>
+                        )}
+                        <p className="text-[11px] text-[#527367]">{ind.observation}</p>
+                        <p className="text-[10px] font-mono text-[#145C3D]">{ind.dataSource}</p>
                       </div>
-                      <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                        <div className="bg-emerald-500 h-full w-[22%]" />
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex flex-wrap justify-between gap-1 mb-1">
-                        <span className="text-[#527367]">Summer Thermal Heat Stress:</span>
-                        <span className="font-bold text-amber-700">MODERATE (48%)</span>
-                      </div>
-                      <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                        <div className="bg-amber-500 h-full w-[48%]" />
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex flex-wrap justify-between gap-1 mb-1">
-                        <span className="text-[#527367]">Slope Runoff & Rill Erosion:</span>
-                        <span className="font-bold text-amber-700">MODERATE (42%)</span>
-                      </div>
-                      <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                        <div className="bg-amber-500 h-full w-[42%]" />
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex flex-wrap justify-between gap-1 mb-1">
-                        <span className="text-[#527367]">Early Season Frost Probability:</span>
-                        <span className="font-bold text-emerald-700">LOW (14%)</span>
-                      </div>
-                      <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                        <div className="bg-emerald-500 h-full w-[14%]" />
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
 
                 <div className="bg-white p-4 sm:p-6 rounded-3xl border border-[#D5E5CA] space-y-3">
-                  <h3 className="font-bold text-base text-[#073D2B]">Mitigation Action Plan</h3>
+                  <h3 className="font-bold text-base text-[#073D2B]">Mitigation &amp; Scientific Notice</h3>
                   <p className="text-xs text-[#527367]">
-                    Recommendations to guard your acreage against detected hazard points:
+                    {fieldRiskNotice || 'NASA POWER grid cells (~50 km) do not capture field-level frost pockets or tile drainage variations.'}
                   </p>
                   <div className="space-y-2 text-xs text-[#2A4D3E]">
                     <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
-                      <strong>Contour Buffer Strips:</strong> Install 15-foot perennial grass strips along the 2.3% SRTM contour line to catch particulate soil.
+                      <strong>Winter Living Cover:</strong> Strategy B cereal rye + hairy vetch reduces winter runoff and improves spring infiltration in {activeFarm.soilType}.
                     </div>
                     <div className="p-3 bg-amber-50 rounded-xl border border-amber-200">
-                      <strong>Staggered Pollination Window:</strong> Plant two hybrid corn maturities (105-day and 111-day) to prevent full-crop exposure during late July heat waves.
+                      <strong>Staggered Pollination Window:</strong> Diversifying planting maturities spreads heat exposure across July-August reproductive stages.
                     </div>
                   </div>
                 </div>
@@ -1484,68 +2110,114 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
           )}
 
           {/* 12. CLIMATE TIMELINE */}
-          {activeSubPage === '/dashboard/climate-timeline' && (
+          {activeSubPage === '/dashboard/climate-timeline' && (() => {
+            const maxRain = Math.max(25, ...climateTimeline.map((d) => Number(d.rainfallMm || 0)));
+            const recentPoints = climateTimeline.slice(-24);
+
+            return (
             <div className="space-y-6">
-              <div>
-                <h2 className="font-display text-fluid-h2 font-bold text-[#073D2B]">Historical Climate & Moisture Timeline</h2>
-                <p className="text-xs text-[#527367]">
-                  12-month environmental trend line from NASA POWER, GPM, and SMAP data.
-                </p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-display text-fluid-h2 font-bold text-[#073D2B]">Historical Climate &amp; Precipitation Timeline</h2>
+                  <p className="text-xs text-[#527367]">
+                    {climateProvenance || 'Daily agroclimatology time series from NASA POWER API for your parcel coordinates.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={syncingPower}
+                  onClick={handleSyncNasaPower}
+                  className="min-h-[42px] px-4 py-2 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold inline-flex items-center gap-1.5 self-start sm:self-auto"
+                >
+                  <CloudDownload className="w-3.5 h-3.5 text-[#76B93F]" />
+                  <span>{syncingPower ? 'Syncing NASA POWER...' : 'Sync 30-Day NASA POWER'}</span>
+                </button>
               </div>
 
               <div className="bg-white p-4 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <span className="text-xs font-bold text-[#145C3D] uppercase">12-Month Rainfall vs Baseline</span>
-                    <h3 className="text-lg sm:text-xl font-bold text-[#073D2B]">Cumulative Seasonal Precipitation</h3>
+                    <span className="text-xs font-bold text-[#145C3D] uppercase">Real Persisted Daily Series</span>
+                    <h3 className="text-lg sm:text-xl font-bold text-[#073D2B]">Daily Precipitation (PRECTOTCORR, mm)</h3>
                   </div>
                   <span className="text-xs bg-[#EAF5DF] text-[#145C3D] font-bold px-3 py-1 rounded-full">
-                    NASA GPM Historical Reanalysis
+                    {recentPoints.length > 0 ? `${recentPoints.length} Observed Days` : 'Awaiting Sync'}
                   </span>
                 </div>
 
-                <div className="overflow-x-auto pb-2">
-                  <div className="min-w-[480px] flex items-end gap-3 pt-4">
-                    <div className="h-44 flex flex-col justify-between text-[10px] font-mono text-[#8C9E94] pb-6 pr-1 border-r border-[#E2E8DE] shrink-0">
-                      <span>100mm</span>
-                      <span>50mm</span>
-                      <span>0mm</span>
-                    </div>
-                    <div className="flex-1 grid grid-cols-12 gap-2 items-end h-44 border-b border-[#E2E8DE] pb-2">
-                      {['May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr'].map((m, idx) => {
-                        const heightPercent = Math.min(100, Math.round(35 + Math.sin(idx / 1.5) * 45 + (idx === 2 ? 20 : 0)));
-                        return (
-                          <div key={m} className="flex flex-col items-center gap-1 h-full justify-end group">
-                            <span className="text-[10px] font-semibold text-[#527367] tabular-nums">
-                              {heightPercent}
-                            </span>
-                            <div
-                              style={{ height: `${heightPercent}%` }}
-                              className={`w-full max-w-[28px] rounded-t-lg transition-all ${
-                                idx === 2 ? 'bg-[#76B93F]' : 'bg-[#145C3D]/85 group-hover:bg-[#145C3D]'
-                              }`}
-                            />
-                            <span className="text-[10px] font-bold text-[#073D2B]">{m}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
+                {recentPoints.length === 0 ? (
+                  <div className="p-8 rounded-2xl bg-[#FAFDF8] border border-[#E2E8DE] text-center space-y-3">
+                    <p className="text-sm font-bold text-[#073D2B]">No NASA POWER Observations Synced Yet</p>
+                    <p className="text-xs text-[#527367] max-w-md mx-auto">
+                      Click "Sync 30-Day NASA POWER" to fetch live daily precipitation, solar irradiance, and temperature series for {activeFarm.name}.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={syncingPower}
+                      onClick={handleSyncNasaPower}
+                      className="min-h-[44px] px-5 py-2.5 rounded-full bg-[#073D2B] text-white text-xs font-bold inline-flex items-center gap-2"
+                    >
+                      <CloudDownload className="w-4 h-4 text-[#76B93F]" />
+                      <span>{syncingPower ? 'Syncing...' : 'Sync NASA POWER Now'}</span>
+                    </button>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto pb-2">
+                      <div className="min-w-[540px] flex items-end gap-3 pt-4">
+                        <div className="h-44 flex flex-col justify-between text-[10px] font-mono text-[#8C9E94] pb-6 pr-1 border-r border-[#E2E8DE] shrink-0">
+                          <span>{Math.round(maxRain)}mm</span>
+                          <span>{Math.round(maxRain / 2)}mm</span>
+                          <span>0mm</span>
+                        </div>
+                        <div
+                          style={{ gridTemplateColumns: `repeat(${recentPoints.length}, minmax(16px, 1fr))` }}
+                          className="flex-1 grid gap-1.5 items-end h-44 border-b border-[#E2E8DE] pb-2"
+                        >
+                          {recentPoints.map((pt: any) => {
+                            const rain = Number(pt.rainfallMm ?? 0);
+                            const pct = Math.max(rain > 0 ? 6 : 2, Math.round((rain / maxRain) * 100));
+                            return (
+                              <div
+                                key={pt.date}
+                                title={`${pt.date}: ${rain.toFixed(1)} mm rain | ${pt.tempMeanC ?? '—'}°C mean`}
+                                className="flex flex-col items-center gap-1 h-full justify-end group"
+                              >
+                                <span className="text-[9px] font-semibold text-[#527367] tabular-nums">
+                                  {rain > 0 ? rain.toFixed(0) : ''}
+                                </span>
+                                <div
+                                  style={{ height: `${pct}%` }}
+                                  className={`w-full max-w-[20px] rounded-t-md transition-all ${
+                                    rain >= 15 ? 'bg-[#76B93F]' : 'bg-[#145C3D]/85 group-hover:bg-[#145C3D]'
+                                  }`}
+                                />
+                                <span className="text-[9px] font-bold text-[#073D2B] -rotate-45 origin-top-left whitespace-nowrap">
+                                  {String(pt.date).slice(5)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
 
-                <div className="flex flex-wrap items-center gap-4 sm:gap-6 text-xs text-[#527367]">
-                  <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-sm bg-[#145C3D]" />
-                    <span>Monthly Measured Rainfall (GPM, mm)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-sm bg-[#76B93F]" />
-                    <span>Peak July Storm Pulse</span>
-                  </div>
-                </div>
+                    <div className="flex flex-wrap items-center gap-4 sm:gap-6 text-xs text-[#527367] pt-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-sm bg-[#145C3D]" />
+                        <span>Daily NASA POWER Rainfall (mm)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-sm bg-[#76B93F]" />
+                        <span>Heavy Rain Event (&ge; 15 mm/day)</span>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* 13. AI AGRICULTURAL ADVISOR */}
           {activeSubPage === '/dashboard/ai-advisor' && (
@@ -1555,11 +2227,11 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                   <Bot className="w-6 h-6 text-[#145C3D]" />
                   <h2 className="font-display text-fluid-h2 font-bold text-[#073D2B]">AI Agricultural Advisor</h2>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#EAF5DF] text-[#145C3D]">
-                    GEMINI 3.8 FLASH
+                    GEMINI GROUNDED
                   </span>
                 </div>
                 <p className="text-xs text-[#527367] mt-1">
-                  Real-time agronomic advisory grounded in your active farm telemetry, priorities, and NASA Earth observations.
+                  Persisted agronomic advisory grounded in your farm telemetry, farmer priorities, and synced NASA Earth observations.
                 </p>
               </div>
 
@@ -1600,7 +2272,7 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                             ) : (
                               <div className="flex items-center gap-1.5 text-[#145C3D] font-medium bg-[#EAF5DF] px-2.5 py-1 rounded-lg border border-[#C2E0B0]">
                                 <Sparkles className="w-3.5 h-3.5 text-[#76B93F] shrink-0" />
-                                <span>Gemini 3.8 Flash • NASA Grounded {msg.latencyMs ? `(${Math.round(msg.latencyMs / 100) / 10}s)` : ''}</span>
+                                <span>{msg.source || 'Gemini Grounded'} • NASA Telemetry {msg.latencyMs ? `(${Math.round(msg.latencyMs / 100) / 10}s)` : ''}</span>
                               </div>
                             )}
 
@@ -1744,20 +2416,34 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
 
           {/* 15. SETTINGS */}
           {activeSubPage === '/dashboard/settings' && (
-            <div className="max-w-2xl bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] space-y-6">
+            <form onSubmit={handleSaveSettings} className="max-w-2xl bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] space-y-6">
               <div>
-                <h2 className="font-display text-fluid-h2 font-bold text-[#073D2B]">Account & System Settings</h2>
-                <p className="text-xs text-[#527367]">Manage unit preferences, NASA API connections, and notifications.</p>
+                <h2 className="font-display text-fluid-h2 font-bold text-[#073D2B]">Account &amp; System Settings</h2>
+                <p className="text-xs text-[#527367]">Manage your profile details and measurement unit preferences persisted in Supabase.</p>
               </div>
+
+              {profileFeedback && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-medium flex items-center gap-2 border ${
+                    profileFeedback.type === 'success'
+                      ? 'bg-[#EAF5DF] border-[#76B93F] text-[#073D2B]'
+                      : 'bg-rose-50 border-rose-200 text-rose-800'
+                  }`}
+                >
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{profileFeedback.message}</span>
+                </div>
+              )}
 
               <div className="space-y-4 text-xs">
                 <div>
                   <label className="block font-bold text-[#073D2B] mb-1">Account Holder</label>
                   <input
                     type="text"
-                    disabled
-                    value={currentUser.fullName}
-                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm sm:text-xs text-slate-700"
+                    required
+                    value={profileFullName}
+                    onChange={(e) => setProfileFullName(e.target.value)}
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-[#D5E5CA] bg-white text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
                   />
                 </div>
                 <div>
@@ -1773,17 +2459,41 @@ How can I help optimize your crop sequence, evaluate what-if climate scenarios, 
                   <span className="font-bold text-[#073D2B] block">Measurement Units</span>
                   <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
                     <label className="flex items-center gap-2.5 min-h-[44px] cursor-pointer">
-                      <input type="radio" name="units" defaultChecked className="w-4 h-4 text-[#073D2B]" />
+                      <input
+                        type="radio"
+                        name="units"
+                        value="imperial"
+                        checked={measurementUnits === 'imperial'}
+                        onChange={() => setMeasurementUnits('imperial')}
+                        className="w-4 h-4 text-[#073D2B]"
+                      />
                       <span>Imperial (Acres, Gallons, mm/in)</span>
                     </label>
                     <label className="flex items-center gap-2.5 min-h-[44px] cursor-pointer">
-                      <input type="radio" name="units" className="w-4 h-4 text-[#073D2B]" />
+                      <input
+                        type="radio"
+                        name="units"
+                        value="metric"
+                        checked={measurementUnits === 'metric'}
+                        onChange={() => setMeasurementUnits('metric')}
+                        className="w-4 h-4 text-[#073D2B]"
+                      />
                       <span>Metric (Hectares, Litres, mm)</span>
                     </label>
                   </div>
                 </div>
               </div>
-            </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={savingProfile}
+                  className="min-h-[44px] px-6 py-2.5 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs sm:text-sm font-bold transition-all disabled:opacity-50"
+                >
+                  {savingProfile ? 'Saving Settings...' : 'Save Settings'}
+                </button>
+              </div>
+            </form>
           )}
 
         </div>

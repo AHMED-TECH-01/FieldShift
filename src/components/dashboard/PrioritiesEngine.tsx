@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sliders, RefreshCw, Sparkles, CheckCircle2, Info, ArrowRight, Award } from 'lucide-react';
 import { FarmerPriorities, CropRotationStrategy } from '../../types';
 
@@ -9,6 +9,16 @@ interface PrioritiesEngineProps {
   rankingExplanation?: string;
 }
 
+function renderFormattedExplanation(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  return parts.map((part, idx) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return <strong key={idx}>{part.slice(2, -2)}</strong>;
+    }
+    return <React.Fragment key={idx}>{part}</React.Fragment>;
+  });
+}
+
 export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
   initialPriorities,
   onApplyPriorities,
@@ -16,6 +26,10 @@ export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
   rankingExplanation,
 }) => {
   const [priorities, setPriorities] = useState<FarmerPriorities>(initialPriorities);
+
+  useEffect(() => {
+    setPriorities(initialPriorities);
+  }, [initialPriorities]);
 
   const priorityFields: Array<{
     key: keyof FarmerPriorities;
@@ -209,7 +223,7 @@ export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
           <Sparkles className="w-5 h-5 text-[#76B93F] flex-shrink-0 mt-0.5" />
           <div className="space-y-1 min-w-0">
             <h4 className="font-bold text-sm text-[#073D2B]">How Changing Priorities Influenced Your Rankings</h4>
-            <div className="leading-relaxed" dangerouslySetInnerHTML={{ __html: rankingExplanation.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }} />
+            <div className="leading-relaxed">{renderFormattedExplanation(rankingExplanation)}</div>
           </div>
         </div>
       )}

@@ -16,6 +16,8 @@ export interface Farm {
   drainage: string;
   lastSoilTest: string;
   createdAt: string;
+  userId?: string | null;
+  isDemo?: boolean;
 }
 
 export interface FarmerPriorities {

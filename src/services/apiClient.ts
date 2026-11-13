@@ -144,6 +144,13 @@ export const apiClient = {
       ...options,
     }),
 
+  patch: <T = any>(endpoint: string, body?: any, options?: ApiRequestOptions) =>
+    apiRequest<T>(endpoint, {
+      method: 'PATCH',
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      ...options,
+    }),
+
   delete: <T = any>(endpoint: string, options?: ApiRequestOptions) =>
     apiRequest<T>(endpoint, { method: 'DELETE', ...options }),
 };

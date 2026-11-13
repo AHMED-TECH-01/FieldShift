@@ -28,6 +28,10 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
     }
   };
 
+  const periodA = data.find((d) => d.strategyCode === 'A');
+  const periodB = data.find((d) => d.strategyCode === 'B');
+  const periodC = data.find((d) => d.strategyCode === 'C');
+
   return (
     <div className="bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
       
@@ -58,9 +62,12 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
 
       {/* Visual Seasonal Fallow Timeline */}
       <div className="space-y-4">
-        <h4 className="text-xs font-bold uppercase tracking-wider text-[#145C3D]">
-          Annual Living Root Ground Cover Comparison
-        </h4>
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-[#145C3D]">
+            Annual Living Root Ground Cover Comparison
+          </h4>
+          {loading && <span className="text-[11px] text-[#527367]">Syncing field analysis...</span>}
+        </div>
 
         {/* Timeline Months Bar */}
         <div className="overflow-x-auto pb-1">
@@ -76,7 +83,7 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-bold text-amber-900">Strategy A: Existing Monoculture</span>
             <span className="font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded">
-              135 Bare Days (High Vulnerability)
+              {periodA ? `${periodA.durationDays} Bare Days (${periodA.soilExposureRisk} Vulnerability)` : '135 Bare Days (High Vulnerability)'}
             </span>
           </div>
 
@@ -96,7 +103,8 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
             <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-emerald-600" /> May–Sep Canopy</span>
           </div>
           <p className="text-[11px] text-[#527367]">
-            Est. annual topsoil loss: <strong>3.8 tons / acre</strong> on 2.3% slope during spring thaw storms.
+            Est. annual topsoil loss: <strong>{periodA ? `${periodA.potentialErosionTonsPerAcre} tons / acre` : '3.8 tons / acre'}</strong>.{' '}
+            {periodA?.caveat || 'Exposed soil during spring thaw storms increases sheet erosion risk.'}
           </p>
         </div>
 
@@ -105,7 +113,7 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-bold text-emerald-900">Strategy B: Soil Restoration & Winter Cover</span>
             <span className="font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
-              0 Bare Days (365 Continuous Living Armor)
+              {periodB ? `${periodB.durationDays} Bare Days (Continuous Living Armor)` : '0 Bare Days (365 Continuous Living Armor)'}
             </span>
           </div>
 
@@ -125,7 +133,8 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
             <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-emerald-600" /> Main Canopy</span>
           </div>
           <p className="text-[11px] text-emerald-900 font-medium">
-            Est. annual topsoil loss: <strong>&lt; 0.2 tons / acre</strong> (94% erosion reduction confirmed).
+            Est. annual topsoil loss: <strong>&lt; {periodB ? `${periodB.potentialErosionTonsPerAcre} tons / acre` : '0.2 tons / acre'}</strong>.{' '}
+            {periodB?.caveat || '94% erosion reduction confirmed.'}
           </p>
         </div>
 
@@ -134,7 +143,7 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-bold text-blue-900">Strategy C: Climate Resilient & Stover Fiber</span>
             <span className="font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded">
-              45 Bare Days (Managed Stover Residue)
+              {periodC ? `${periodC.durationDays} Bare Days (Managed Stover Residue)` : '45 Bare Days (Managed Stover Residue)'}
             </span>
           </div>
 
@@ -159,7 +168,8 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
             <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-blue-800" /> Upright Stover</span>
           </div>
           <p className="text-[11px] text-[#527367]">
-            Est. annual topsoil loss: <strong>0.8 tons / acre</strong> (Stover residue buffers wind and surface runoff).
+            Est. annual topsoil loss: <strong>{periodC ? `${periodC.potentialErosionTonsPerAcre} tons / acre` : '0.8 tons / acre'}</strong>.{' '}
+            {periodC?.caveat || 'Stover residue buffers wind and surface runoff.'}
           </p>
         </div>
       </div>
@@ -172,7 +182,7 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
             <span className="text-xs font-bold text-[#073D2B]">In-Field Topsoil Protection Verification</span>
           </div>
           <span className="text-[10px] font-bold text-[#145C3D] bg-[#EAF5DF] px-2 py-0.5 rounded">
-            MODIS NDVI &amp; Field Trial
+            MODIS NDVI Benchmark &amp; Field Reference
           </span>
         </div>
         <div className="relative w-full h-56 sm:h-64 rounded-xl overflow-hidden border border-[#D5E5CA] shadow-2xs">
@@ -186,7 +196,7 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
           />
           <div className="absolute bottom-2 left-2 right-2 bg-[#073D2B]/90 backdrop-blur-xs text-white p-2.5 rounded-lg text-[11px] sm:text-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1">
             <span><strong>Left:</strong> Living Cereal Rye Armor (0.3 t/ac erosion)</span>
-            <span className="text-rose-300"><strong>Right:</strong> Bare Fallow Surface Gullying (3.8 t/ac loss)</span>
+            <span className="text-rose-300"><strong>Right:</strong> Bare Fallow Surface Gullying ({periodA?.potentialErosionTonsPerAcre ?? 3.8} t/ac loss)</span>
           </div>
         </div>
       </div>
@@ -198,14 +208,14 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
             <Sprout className="w-5 h-5" />
           </div>
           <div>
-            <h5 className="font-bold text-xs text-[#073D2B]">Immediate Cover Crop Seeding Window Identified</h5>
+            <h5 className="font-bold text-xs text-[#073D2B]">Cover Crop Opportunity Window</h5>
             <p className="text-[11px] text-[#527367]">
-              Post-corn harvest drilling window: <strong>September 20 – October 15</strong> with Cereal Rye (55 lbs/ac) + Hairy Vetch (18 lbs/ac).
+              {periodA?.coverCropOpportunity || 'Winter Cereal Rye or Triticale drilled immediately after harvest.'} ({periodA?.calendarWindow || 'October 25 - April 10'})
             </p>
           </div>
         </div>
         <span className="px-3 py-1 rounded-full bg-[#073D2B] text-white text-xs font-bold whitespace-nowrap">
-          Optimal Seeding Open
+          {periodA?.soilExposureRisk ? `${periodA.soilExposureRisk} Fallow Risk` : 'Optimal Seeding Open'}
         </span>
       </div>
 

@@ -18,6 +18,7 @@
         "react-dom": "^19.0.1",
         "three": "^0.187.0",
         "vite": "^8.3.0",
+        "zod": "^4.6.7",
       },
       "devDependencies": {
         "@types/express": "^4.17.21",
@@ -466,6 +467,8 @@
     "web-streams-polyfill": ["web-streams-polyfill@3.3.3", "", {}, ""],
 
     "ws": ["ws@8.23.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, ""],
+
+    "zod": ["zod@4.6.7", "", {}, "sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg=="],
 
     "@supabase/auth-js/tslib": ["tslib@2.8.1", "", {}, ""],
 

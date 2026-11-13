@@ -76,7 +76,9 @@ export const InteractiveFarmMap: React.FC<InteractiveFarmMapProps> = ({ farm }) 
           <div className="flex flex-wrap items-center justify-between gap-2 z-10">
             <div className="flex items-center gap-1.5 sm:gap-2 bg-[#073D2B]/85 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20 text-[11px] sm:text-xs">
               <Compass className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#76B93F] shrink-0" />
-              <span className="font-mono">N 42° 01' 48" | W 93° 37' 12"</span>
+              <span className="font-mono">
+                {`${Math.abs(farm.coordinates[1]).toFixed(4)}° ${farm.coordinates[1] >= 0 ? 'N' : 'S'} | ${Math.abs(farm.coordinates[0]).toFixed(4)}° ${farm.coordinates[0] >= 0 ? 'E' : 'W'}`}
+              </span>
             </div>
 
             <div className="flex items-center gap-2">

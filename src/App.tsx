@@ -129,6 +129,7 @@ const ROUTE_SEO: Record<string, { title: string; description: string; noIndex?: 
 export default function App() {
   const [currentPath, setCurrentPath] = useState<string>('/');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authChecked, setAuthChecked] = useState<boolean>(false);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [authInitialMode, setAuthInitialMode] = useState<'signin' | 'signup' | 'verify'>('signin');
   const [demoModalOpen, setDemoModalOpen] = useState<boolean>(false);
@@ -146,36 +147,54 @@ export default function App() {
       setCurrentPath(window.location.pathname);
     }
 
-    // Check localStorage & active Supabase/backend session
+    // Hydrate cached user optimistically, then validate with real Supabase/API session
     const storedUser = localStorage.getItem('fieldshift_user');
-    if (storedUser) {
+    const storedToken = localStorage.getItem('fieldshift_token');
+    if (storedUser && storedToken) {
       try {
         setCurrentUser(JSON.parse(storedUser));
-      } catch (e) {
-        console.warn('Failed to parse cached user session');
+      } catch {
+        localStorage.removeItem('fieldshift_user');
       }
     }
 
-    authService.getSession().then((sessionRes) => {
-      if (sessionRes.success && sessionRes.user) {
-        setCurrentUser(sessionRes.user);
-      }
-    });
+    authService
+      .getSession()
+      .then((sessionRes) => {
+        if (sessionRes.success && sessionRes.user) {
+          setCurrentUser(sessionRes.user);
+        } else {
+          localStorage.removeItem('fieldshift_token');
+          localStorage.removeItem('fieldshift_user');
+          setCurrentUser(null);
+        }
+      })
+      .finally(() => {
+        setAuthChecked(true);
+      });
 
-    const authSubscription = supabase?.auth.onAuthStateChange((_event, session) => {
+    const authSubscription = supabase?.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        localStorage.removeItem('fieldshift_token');
+        localStorage.removeItem('fieldshift_user');
+        setCurrentUser(null);
+        return;
+      }
       if (session?.user) {
         const email = session.user.email || '';
         const metaName = session.user.user_metadata?.full_name;
         const mappedUser: User = {
           email,
-          fullName: typeof metaName === 'string' && metaName.trim()
-            ? metaName.trim()
-            : (email.split('@')[0] || 'Farmer'),
+          fullName:
+            typeof metaName === 'string' && metaName.trim()
+              ? metaName.trim()
+              : email.split('@')[0] || 'Farmer',
           verified: !!session.user.email_confirmed_at || true,
         };
         localStorage.setItem('fieldshift_token', session.access_token);
         localStorage.setItem('fieldshift_user', JSON.stringify(mappedUser));
         setCurrentUser(mappedUser);
+        setAuthChecked(true);
       }
     });
 
@@ -231,14 +250,86 @@ export default function App() {
     ? { title: 'Farm Management Dashboard | FieldShift', description: 'FieldShift Farm Management Dashboard', noIndex: true }
     : { title: 'FieldShift | AI-Powered Climate-Smart Agriculture', description: 'Transform NASA Earth observation data into smarter farming decisions.' });
 
-  // If on Dashboard routes, render the dedicated Dashboard view
+  // If on Dashboard routes, require authenticated Supabase session
   if (currentPath.startsWith('/dashboard')) {
-    // If user is not logged in, provide a convenient default guest session or prompt
-    const effectiveUser: User = currentUser || {
-      email: 'ahmed@example.com',
-      fullName: 'Ahmed Raza',
-      verified: true,
-    };
+    if (!authChecked && !currentUser) {
+      return (
+        <div className="min-h-screen bg-[#F8F7ED] flex items-center justify-center p-6">
+          <div className="bg-white rounded-3xl border border-[#D5E5CA] p-8 max-w-md w-full text-center space-y-3 shadow-sm">
+            <div className="w-10 h-10 rounded-full border-2 border-[#073D2B] border-t-transparent animate-spin mx-auto" />
+            <p className="text-sm font-bold text-[#073D2B]">Verifying FieldShift Session...</p>
+            <p className="text-xs text-[#527367]">Checking Supabase authentication credentials.</p>
+          </div>
+        </div>
+      );
+    }
+
+    if (!currentUser) {
+      return (
+        <div className="min-h-screen bg-[#F8F7ED] text-[#102A24] flex flex-col justify-between">
+          <SEO
+            title="Sign In Required | FieldShift Dashboard"
+            description="Sign in to access your FieldShift farms, NASA observations, and crop rotation simulations."
+            path={currentPath}
+            noIndex={true}
+          />
+          <Navbar
+            currentUser={null}
+            currentPath={currentPath}
+            onNavigate={navigateTo}
+            onOpenAuth={handleOpenAuth}
+            onLogout={handleLogout}
+          />
+          <main className="flex-1 flex items-center justify-center p-4 sm:p-8">
+            <div className="bg-white rounded-3xl border border-[#D5E5CA] shadow-sm p-6 sm:p-10 max-w-lg w-full text-center space-y-5">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold uppercase tracking-wider">
+                Authentication Required
+              </div>
+              <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-[#073D2B]">
+                Sign In to Your Farm Workspace
+              </h1>
+              <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
+                Your farm properties, saved farmer priorities, NASA Earth observation sync history,
+                and Gemini AI advisor logs are protected by account authentication and PostgreSQL Row Level Security.
+              </p>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => handleOpenAuth('signin')}
+                  className="min-h-[44px] px-6 py-3 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs sm:text-sm font-bold transition-all shadow-sm"
+                >
+                  Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenAuth('signup')}
+                  className="min-h-[44px] px-6 py-3 rounded-full bg-[#EAF5DF] hover:bg-[#D8ECC8] text-[#145C3D] text-xs sm:text-sm font-bold transition-all"
+                >
+                  Create Free Account
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigateTo('/')}
+                className="text-xs font-semibold text-[#527367] hover:text-[#073D2B] underline py-2"
+              >
+                Return to FieldShift Home
+              </button>
+            </div>
+          </main>
+          <Footer onNavigate={navigateTo} />
+          <AuthModal
+            isOpen={authModalOpen}
+            initialMode={authInitialMode}
+            onClose={() => setAuthModalOpen(false)}
+            onSuccess={(user) => {
+              setCurrentUser(user);
+              setAuthModalOpen(false);
+            }}
+          />
+        </div>
+      );
+    }
 
     return (
       <>
@@ -249,10 +340,14 @@ export default function App() {
           noIndex={true}
         />
         <Dashboard
-          currentUser={effectiveUser}
+          currentUser={currentUser}
           activeSubPage={currentPath}
           onNavigate={navigateTo}
           onLogout={handleLogout}
+          onUserUpdated={(updated) => {
+            setCurrentUser(updated);
+            localStorage.setItem('fieldshift_user', JSON.stringify(updated));
+          }}
         />
       </>
     );

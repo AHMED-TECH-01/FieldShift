@@ -1,19 +1,34 @@
 import React, { useState, useEffect } from 'react';
-import { Satellite, Database, ShieldCheck, Activity, AlertCircle, Compass, Layers, CheckCircle2, BookOpen } from 'lucide-react';
+import { Satellite, Database, ShieldCheck, Activity, AlertCircle, Compass, Layers, CheckCircle2, BookOpen, RefreshCw, CloudDownload } from 'lucide-react';
 import { NasaHarmonizedDataset } from '../../types';
 import { apiClient } from '../../services/apiClient';
 
-export const NasaRoadmapExplorer: React.FC = () => {
+interface NasaRoadmapExplorerProps {
+  farmId?: string;
+  farmName?: string;
+  onSynced?: () => void;
+}
+
+export const NasaRoadmapExplorer: React.FC<NasaRoadmapExplorerProps> = ({ farmId, farmName, onSynced }) => {
   const [datasets, setDatasets] = useState<NasaHarmonizedDataset[]>([]);
   const [selectedDataset, setSelectedDataset] = useState<NasaHarmonizedDataset | null>(null);
   const [scientificMethods, setScientificMethods] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'catalog' | 'harmonization' | 'methods'>('catalog');
   const [loading, setLoading] = useState(true);
+  const [recentJobs, setRecentJobs] = useState<any[]>([]);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [syncNotice, setSyncNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
     fetchRoadmap();
     fetchMethods();
   }, []);
+
+  useEffect(() => {
+    if (farmId) {
+      fetchSyncStatus();
+    }
+  }, [farmId]);
 
   const fetchRoadmap = async () => {
     try {
@@ -37,6 +52,45 @@ export const NasaRoadmapExplorer: React.FC = () => {
       }
     } catch (e) {
       console.error('Failed to load scientific methods', e);
+    }
+  };
+
+  const fetchSyncStatus = async () => {
+    if (!farmId) return;
+    try {
+      const data = await apiClient.get('/api/datasets/status', { params: { farmId } });
+      if (Array.isArray(data.recentJobs)) {
+        setRecentJobs(data.recentJobs);
+      }
+    } catch {
+      // Ignore status load errors cleanly
+    }
+  };
+
+  const handleSyncDataset = async (datasetId: string) => {
+    if (!farmId) return;
+    const syncable = ['nasa-power', 'smap', 'gpm', 'modis', 'ecostress'];
+    if (!syncable.includes(datasetId)) return;
+    setSyncingId(datasetId);
+    setSyncNotice(null);
+    try {
+      const res = await apiClient.post(`/api/datasets/${datasetId}/sync`, { farmId, days: 30 });
+      setSyncNotice({
+        type: 'success',
+        message:
+          datasetId === 'nasa-power'
+            ? `Synced ${res.recordsSaved || 0} live NASA POWER agroclimatology records (${res.startDate} to ${res.endDate}).`
+            : `Discovered ${res.granulesFound ?? res.recordsSaved ?? 0} Earthdata CMR granule metadata entries for ${datasetId.toUpperCase()}.`,
+      });
+      await fetchSyncStatus();
+      onSynced?.();
+    } catch (err: any) {
+      setSyncNotice({
+        type: 'error',
+        message: err?.message || `Failed to sync ${datasetId}.`,
+      });
+    } finally {
+      setSyncingId(null);
     }
   };
 
@@ -207,6 +261,66 @@ export const NasaRoadmapExplorer: React.FC = () => {
                   <strong>Documented Limitations:</strong> {selectedDataset.limitations}
                 </div>
               </div>
+
+              {farmId && ['nasa-power', 'smap', 'gpm', 'modis', 'ecostress'].includes(selectedDataset.id) && (
+                <div className="p-3.5 bg-white rounded-xl border border-[#D5E5CA] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-xs text-[#2A4D3E]">
+                    <strong className="text-[#073D2B] block">
+                      {selectedDataset.id === 'nasa-power' ? 'Live Numeric API Sync' : 'Live Earthdata CMR Granule Discovery'}
+                    </strong>
+                    <span>
+                      Target parcel: {farmName || farmId}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={syncingId !== null}
+                    onClick={() => handleSyncDataset(selectedDataset.id)}
+                    className="min-h-[42px] px-4 py-2 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold inline-flex items-center justify-center gap-2 transition-all disabled:opacity-50 shrink-0"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-[#76B93F] ${syncingId === selectedDataset.id ? 'animate-spin' : ''}`} />
+                    <span>
+                      {syncingId === selectedDataset.id
+                        ? 'Syncing...'
+                        : selectedDataset.id === 'nasa-power'
+                        ? 'Sync Live NASA POWER'
+                        : `Discover ${selectedDataset.code} Granules`}
+                    </span>
+                  </button>
+                </div>
+              )}
+
+              {syncNotice && (
+                <div
+                  className={`p-3 rounded-xl text-xs border flex items-center gap-2 ${
+                    syncNotice.type === 'success'
+                      ? 'bg-[#EAF5DF] border-[#76B93F] text-[#073D2B]'
+                      : 'bg-rose-50 border-rose-200 text-rose-800'
+                  }`}
+                >
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{syncNotice.message}</span>
+                </div>
+              )}
+
+              {recentJobs.length > 0 && (
+                <div className="p-3.5 bg-white rounded-xl border border-[#E2E8DE] space-y-2">
+                  <span className="text-[10px] font-bold uppercase text-[#527367] block">
+                    Recent Persisted Ingestion Jobs ({farmName || farmId})
+                  </span>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                    {recentJobs.slice(0, 5).map((job: any) => (
+                      <div key={job.id} className="flex flex-wrap items-center justify-between gap-2 text-[11px] py-1 border-b border-[#F0F5EE] last:border-b-0">
+                        <span className="font-mono font-bold text-[#073D2B]">{job.dataset_id}</span>
+                        <span className="text-[#527367]">{job.records_saved || 0} saved &bull; {job.status}</span>
+                        <span className="text-[10px] text-[#8C9E94]">
+                          {job.completed_at ? new Date(job.completed_at).toLocaleString() : new Date(job.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

@@ -30,6 +30,7 @@ export const AiAdvisorPage: React.FC<AiAdvisorPageProps> = ({ onNavigate, onOpen
       text: string;
       source?: string;
       isFallback?: boolean;
+      requiresAuth?: boolean;
       fallbackReason?: string;
       originalPrompt?: string;
       latencyMs?: number;
@@ -37,8 +38,8 @@ export const AiAdvisorPage: React.FC<AiAdvisorPageProps> = ({ onNavigate, onOpen
   >([
     {
       sender: 'ai',
-      text: `Hello! I am your Field Shift Agronomic Advisor powered by Gemini 3.8 Flash.
-I am actively grounded in verified NASA Earth observations (SMAP 9km root-zone moisture, GPM 30-min precipitation anomalies, and MODIS 250m NDVI) along with USDA-NRCS soil physics.
+      text: `Hello! I am your FieldShift Agronomic Advisor powered by Google Gemini.
+Sign in to connect your farm parcel's persisted NASA POWER agroclimatology records, Earthdata CMR granule metadata, USDA-NRCS soil chemistry, and custom farmer priorities.
 
 How can I help you compare crop sequences, calculate biological nitrogen credits, or evaluate drought vulnerabilities today?`,
       source: 'NASA Earth Observations & Soil Physics Grounding',
@@ -48,7 +49,7 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
 
   const quickPrompts = [
     'How much nitrogen can winter hairy vetch supply to succeeding corn?',
-    'Explain how NASA SMAP moisture helps predict mid-summer pollination stress.',
+    'Explain how NASA SMAP moisture and POWER climatology inform pollination stress.',
     'What are the trade-offs of substituting corn with sorghum on dryland acreage?',
     'How does a 3-year crop sequence interrupt western corn rootworm?',
   ];
@@ -63,7 +64,7 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
     setLoading(true);
 
     try {
-      const data = await apiClient.post('/api/gemini/advisor', {
+      const data = await apiClient.post('/api/ai/advisor', {
         prompt: query,
         farmId: 'farm-1',
         priorities: { waterConservation: 4, soilOrganicMatter: 5, nitrogenFixing: 5 },
@@ -72,8 +73,8 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
         ...newMessages,
         {
           sender: 'ai',
-          text: data.reply || 'Analysis completed based on current telemetry models.',
-          source: data.source || 'gemini-3.8-flash',
+          text: data.reply || 'Analysis completed based on persisted farm telemetry.',
+          source: data.source || 'gemini-4-hydrogen',
           isFallback: !!data.isFallback,
           fallbackReason: data.fallbackReason,
           originalPrompt: query,
@@ -81,13 +82,17 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
         },
       ]);
     } catch (e: any) {
+      const isAuthErr = e?.status === 401 || e?.status === 403;
       setMessages([
         ...newMessages,
         {
           sender: 'ai',
-          text: 'Unable to connect to the advisor backend. Please ensure network connectivity.',
+          text: isAuthErr
+            ? 'Please sign in to your FieldShift account to query the grounded AI Agricultural Advisor and save conversation history.'
+            : e?.message || 'Unable to connect to the advisor backend. Please ensure network connectivity.',
           isFallback: true,
-          fallbackReason: 'Network connection failure',
+          requiresAuth: isAuthErr,
+          fallbackReason: isAuthErr ? 'Authentication required (HTTP 401)' : 'Network connection failure',
           originalPrompt: query,
         },
       ]);
@@ -113,13 +118,13 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
             <div className="min-w-0">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold uppercase tracking-wider mb-2">
                 <Sparkles className="w-3.5 h-3.5 text-[#76B93F] shrink-0" />
-                <span>Gemini 3.8 Flash Grounded Copilot</span>
+                <span>Gemini Grounded Copilot</span>
               </div>
               <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B]">
                 AI Agricultural Advisor
               </h1>
               <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
-                Objective agronomic advisory grounded in your real-time NASA satellite observations,
+                Objective agronomic advisory grounded in your persisted NASA parcel observations,
                 soil chemistry indices, and custom farmer priorities.
               </p>
             </div>
@@ -141,8 +146,8 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
               <Satellite className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <span className="text-[10px] font-bold text-[#527367] uppercase block">NASA SMAP Grounding</span>
-              <span className="text-xs font-bold text-[#073D2B] break-words">0.284 m³/m³ Root Moisture</span>
+              <span className="text-[10px] font-bold text-[#527367] uppercase block">NASA Telemetry Link</span>
+              <span className="text-xs font-bold text-[#073D2B] break-words">NASA POWER &amp; CMR Granules</span>
             </div>
           </div>
 
@@ -151,8 +156,8 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
               <Sprout className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <span className="text-[10px] font-bold text-[#527367] uppercase block">MODIS NDVI Grounding</span>
-              <span className="text-xs font-bold text-[#073D2B] break-words">0.72 Active Photosynthesis</span>
+              <span className="text-[10px] font-bold text-[#527367] uppercase block">Agronomic Taxonomy</span>
+              <span className="text-xs font-bold text-[#073D2B] break-words">Soil Physics &amp; 8 Verified Crops</span>
             </div>
           </div>
 
@@ -162,7 +167,7 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
             </div>
             <div className="min-w-0">
               <span className="text-[10px] font-bold text-[#527367] uppercase block">Agronomic Code</span>
-              <span className="text-xs font-bold text-[#073D2B] break-words">Zero Corporate Bias</span>
+              <span className="text-xs font-bold text-[#073D2B] break-words">Zero Fabricated Telemetry</span>
             </div>
           </div>
         </div>
@@ -200,31 +205,43 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
                 >
                   {m.text}
 
-                  {/* Distinct Honest Source & Retry Controls */}
+                  {/* Distinct Honest Source & Retry / Auth Controls */}
                   {m.sender === 'ai' && (
                     <div className="mt-3 pt-2.5 border-t border-[#E2E8DE] flex flex-wrap items-center justify-between gap-2 text-[11px]">
                       {m.isFallback ? (
                         <div className="flex items-center gap-1.5 text-amber-900 font-medium bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 max-w-full">
                           <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                          <span className="break-words">Agronomic Fallback Engine • Gemini Offline ({m.fallbackReason || 'Temporarily Unavailable'})</span>
+                          <span className="break-words">{m.requiresAuth ? 'Sign-In Required' : `Agronomic Fallback • ${m.fallbackReason || 'Temporarily Unavailable'}`}</span>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1.5 text-[#145C3D] font-medium bg-[#EAF5DF] px-2.5 py-1 rounded-lg border border-[#C2E0B0] max-w-full">
                           <Sparkles className="w-3.5 h-3.5 text-[#76B93F] shrink-0" />
-                          <span>Gemini 3.8 Flash • NASA Grounded {m.latencyMs ? `(${Math.round(m.latencyMs / 100) / 10}s)` : ''}</span>
+                          <span>{m.source || 'Gemini Grounded'} • NASA Telemetry {m.latencyMs ? `(${Math.round(m.latencyMs / 100) / 10}s)` : ''}</span>
                         </div>
                       )}
 
-                      {m.isFallback && m.originalPrompt && (
+                      {m.requiresAuth && onOpenAuth ? (
                         <button
                           type="button"
-                          onClick={() => handleSend(m.originalPrompt)}
-                          disabled={loading}
-                          className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                          onClick={() => onOpenAuth('signin')}
+                          className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-[11px] font-bold transition-all shadow-2xs cursor-pointer"
                         >
-                          <RotateCcw className="w-3 h-3 text-[#76B93F]" />
-                          <span>Retry with Live Gemini</span>
+                          <span>Sign In to Ask Advisor</span>
+                          <ArrowRight className="w-3 h-3 text-[#76B93F]" />
                         </button>
+                      ) : (
+                        m.isFallback &&
+                        m.originalPrompt && (
+                          <button
+                            type="button"
+                            onClick={() => handleSend(m.originalPrompt)}
+                            disabled={loading}
+                            className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                          >
+                            <RotateCcw className="w-3 h-3 text-[#76B93F]" />
+                            <span>Retry with Live Gemini</span>
+                          </button>
+                        )
                       )}
                     </div>
                   )}

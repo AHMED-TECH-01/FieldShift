@@ -1,0 +1,1324 @@
+# FIELDSHIFT — MASTER PRODUCTION INTEGRATION, SERVERLESS MIGRATION & DEPLOYMENT PROMPT
+
+## ROLE
+
+Act as a Senior Full-Stack Architect, Backend Engineer, Supabase Database Architect, DevOps Engineer, NASA Earth Observation Data Engineer, Application Security Engineer, and QA Engineer.
+
+You are working on the existing FieldShift project.
+
+**GitHub Repository:** https://github.com/AHMED-TECH-01/FieldShift  
+**Production Deployment:** https://field-shift-sable.vercel.app/  
+**Git Branch:** main
+
+Your responsibility is to audit, repair, integrate, test, and prepare the existing application for production.
+
+This is an existing application, NOT a new project.
+
+Do not rebuild it from scratch.
+
+---
+
+# 1. PRIMARY OBJECTIVE
+
+Configure FieldShift using the following architecture:
+
+| Layer | Technology |
+|---|---|
+| Frontend | React + Vite + TypeScript |
+| Frontend hosting | Vercel |
+| Backend | Node.js + Express + TypeScript |
+| Backend hosting | Vercel Serverless Functions |
+| Serverless entry | api/index.ts |
+| Database | Supabase PostgreSQL |
+| Authentication | Supabase Auth |
+| Database security | PostgreSQL RLS |
+| AI | Google Gemini API |
+| Satellite and climate data | NASA Earth Observation APIs |
+| Frontend styling | Preserve existing styling and components |
+| Build tool | Vite |
+
+**Non-negotiable:** Express must run through Vercel Serverless Functions in production.
+
+Do not deploy a permanently running Express server.
+
+Do not introduce Render, Railway, or another backend hosting service.
+
+Do not migrate the frontend to Next.js.
+
+Do not introduce a second backend.
+
+The application must work both locally and on Vercel.
+
+# 2. PHASE ZERO — COMPLETE REPOSITORY AUDIT
+
+Before modifying anything, inspect the complete repository.
+
+Read and understand:
+
+- package.json
+- package-lock.json
+- vercel.json
+- tsconfig.json
+- vite.config.ts
+- api/index.ts
+- app.ts
+- server.ts
+- All frontend source files
+- All backend routes
+- All middleware
+- All authentication services
+- All Supabase integrations
+- All database migrations
+- All Gemini integrations
+- All NASA API integrations
+- All environment variable references
+- All existing tests
+- All existing documentation
+
+Search for:
+
+- app.listen()
+- mockFarms
+- in-memory Maps and arrays
+- mock authentication
+- fake API responses
+- hardcoded credentials
+- hardcoded user accounts
+- duplicated API prefixes
+- incorrect VITE_API_URL usage
+- incorrect Supabase client initialization
+- unhandled promises
+- serverless-incompatible background jobs
+- browser-side Gemini calls
+- browser-side privileged NASA requests
+- incorrect environment variable names
+- missing API routes
+- broken frontend/backend communication
+
+Create an internal implementation checklist and architecture map.
+
+Do not stop after producing an audit report. Continue implementing the necessary repairs.
+
+Do not delete existing functionality simply because it is difficult to maintain.
+
+Before changing an existing feature, identify its dependencies and preserve its behavior.
+
+# 3. VERCEL SERVERLESS ARCHITECTURE
+
+Configure the existing Express application to work with Vercel Serverless Functions.
+
+Required structure:
+
+```text
+FieldShift/
+├── api/
+│   └── index.ts
+├── src/
+├── backend/
+│   └── existing backend modules, if applicable
+├── app.ts
+├── server.ts
+├── vercel.json
+├── package.json
+├── package-lock.json
+└── .env.example
+```
+
+Adapt the structure to the actual repository. Do not duplicate files or create unnecessary folders.
+
+## Serverless entry point
+
+Use api/index.ts as the Vercel serverless entry point.
+
+Requirements:
+
+- Export the Express application using a supported Vercel Node.js function handler.
+- Do not call app.listen() inside api/index.ts.
+- Do not create a permanent HTTP server.
+- Do not start background loops.
+- Ensure asynchronous middleware is awaited.
+- Preserve Express error handling.
+- Ensure JSON and URL-encoded request parsing work.
+- Handle CORS correctly.
+- Handle cold starts.
+- Avoid mutable global user state.
+- Avoid reliance on requests reaching the same serverless instance.
+
+Local development may continue using server.ts and app.listen().
+
+Ensure server.ts cannot accidentally start a second server in production.
+
+## API routing
+
+All backend endpoints must use:
+
+```text
+/api/*
+```
+
+Avoid duplicate prefixes such as:
+
+```text
+/api/api/auth/login
+```
+
+The Express application should own its route prefixes consistently.
+
+Ensure that:
+
+- GET requests work.
+- POST requests work.
+- PUT/PATCH requests work.
+- DELETE requests work.
+- Request bodies are parsed.
+- Query parameters work.
+- Error responses have valid JSON.
+- Unknown API routes return JSON 404 responses.
+
+## Vercel configuration
+
+Configure vercel.json for the existing Vite application.
+
+Requirements:
+
+- Framework: Vite.
+- Build command: npm run build.
+- Output directory: dist.
+- API functions must be detected correctly.
+- SPA routes must support direct navigation and browser refresh.
+- API requests must never be rewritten to index.html.
+- Avoid conflicting rewrite rules.
+- Use only the configuration necessary for the existing repository.
+
+Do not use a broad SPA rewrite that intercepts API requests.
+
+Verify the final routing behavior locally and through deployment tests.
+
+# 4. SUPABASE AUTHENTICATION
+
+Use real Supabase Auth.
+
+Remove obsolete in-memory authentication implementations.
+
+Implement or repair:
+
+1. User registration.
+2. User login.
+3. User logout.
+4. Session persistence.
+5. Session restoration after refresh.
+6. Password reset.
+7. Password update.
+8. Authentication state listeners.
+9. Protected frontend routes.
+10. Protected backend endpoints.
+11. User profile management.
+12. Authentication error handling.
+
+Use the existing authentication screens and preserve their design.
+
+## Authentication architecture
+
+Use the Supabase browser client with the publishable key.
+
+The browser client may use:
+
+```text
+VITE_SUPABASE_URL
+VITE_SUPABASE_PUBLISHABLE_KEY
+```
+
+Support VITE_SUPABASE_ANON_KEY as a legacy fallback only if the existing project requires it.
+
+Never expose:
+
+- Supabase secret keys.
+- Service-role keys.
+- Gemini API keys.
+- Private database credentials.
+
+The backend must verify user identity using validated Supabase access tokens.
+
+Do not trust a user ID supplied by the frontend.
+
+Do not implement fake login success.
+
+Do not create authentication sessions in JavaScript Maps or global variables.
+
+Ensure the existing authentication flow works with Supabase Auth.
+
+## Diagnose the current authentication error
+
+Investigate:
+
+"The authentication service encountered a temporary error. Please try again shortly."
+
+Trace the complete flow:
+
+React Login Component
+→ Auth Service
+→ Supabase Client
+→ Supabase Auth
+→ Session Restoration
+→ Protected Application Routes.
+
+Identify the exact cause before modifying the code.
+
+Check:
+
+- Incorrect Supabase URL.
+- Missing publishable/anonymous key.
+- Incorrect environment variable names.
+- Invalid credentials.
+- Incorrect request payload.
+- Broken login endpoint.
+- Incorrect response parsing.
+- Cookie or token handling.
+- CORS.
+- Session initialization race conditions.
+- Incorrect API URL.
+- Supabase Auth configuration.
+- Email confirmation requirements.
+- Incorrect redirect URLs.
+
+Fix the actual issue.
+
+Do not replace Supabase Auth with mock authentication.
+
+# 5. SUPABASE DATABASE AND PERSISTENCE
+
+Inspect the existing database schema before creating new tables.
+
+Preserve existing table names and relationships wherever possible.
+
+Implement or repair persistent storage for:
+
+- User profiles.
+- Farms.
+- Farm boundaries and coordinates.
+- Fields.
+- Soil records.
+- Soil laboratory measurements.
+- Farmer priorities.
+- Crop catalog.
+- Crop characteristics.
+- Crop rotation scenarios.
+- Rotation assessments.
+- Climate observations.
+- Satellite observations.
+- Data source metadata.
+- Data ingestion jobs.
+- AI advisor history.
+- Compliance reports, if already supported.
+- Audit records.
+
+Do not create duplicate tables when equivalent tables already exist.
+
+## Row Level Security
+
+Enable RLS on all user-owned tables.
+
+Implement ownership policies.
+
+A user must only be able to access their own private farm records unless an explicitly authorized sharing mechanism exists.
+
+Requirements:
+
+- SELECT policies.
+- INSERT policies.
+- UPDATE policies.
+- DELETE policies.
+- Correct user ownership validation.
+- Secure relationships between farms and child records.
+- Appropriate handling of public dataset metadata.
+
+Do not assume that hiding a frontend button is sufficient security.
+
+Use SQL migrations stored in the repository.
+
+Never depend on manual, undocumented database modifications.
+
+## Server-side database access
+
+Use a server-side Supabase client for privileged operations only where required.
+
+Use the service-role/secret key exclusively on the server.
+
+Prefer user-scoped access and RLS wherever possible.
+
+Ensure all database writes are awaited and errors are handled.
+
+Never rely on in-memory persistence.
+
+# 6. GEMINI AI AGRICULTURAL ADVISOR
+
+Preserve the existing AI Agricultural Advisor and its UI.
+
+Gemini requests must execute on the backend.
+
+Use:
+
+```text
+GEMINI_API_KEY
+GEMINI_TIMEOUT_MS
+```
+
+Requirements:
+
+- Keep the API key private.
+- Validate incoming requests.
+- Validate the user's farm access.
+- Implement request timeouts.
+- Handle Gemini rate limits.
+- Handle unavailable models.
+- Handle malformed responses.
+- Handle quota exhaustion.
+- Return structured JSON responses.
+- Implement graceful fallback behavior.
+- Prevent accidental disclosure of private farm information.
+- Avoid storing unnecessary sensitive prompts.
+- Persist advisor history where the existing application supports it.
+
+## Scientific grounding
+
+Gemini must not invent:
+
+- NASA observations.
+- Soil laboratory measurements.
+- Crop facts.
+- Agricultural statistics.
+- Yield estimates.
+- Rotation scores.
+- Climate forecasts.
+- Data citations.
+
+Gemini should explain structured outputs generated by the application's deterministic agricultural engine.
+
+It must distinguish:
+
+- NASA observations.
+- Farmer-entered information.
+- Soil laboratory measurements.
+- Third-party datasets.
+- Derived indicators.
+- Hypothetical scenarios.
+- Missing data.
+
+When evidence is insufficient, explicitly explain the limitation.
+
+Preserve existing Gemini functionality and prompt logic unless a change is required for correctness or security.
+
+# 7. NASA EARTH OBSERVATION INTEGRATIONS
+
+Preserve and audit every existing NASA integration.
+
+Required datasets:
+
+1. NASA POWER.
+2. SMAP.
+3. GPM IMERG.
+4. MODIS.
+5. ECOSTRESS.
+
+Inspect the current code before replacing any data service.
+
+Do not create mock satellite readings.
+
+Do not fabricate NASA observations.
+
+Do not label hypothetical data as real satellite data.
+
+## 7.1 NASA POWER
+
+Integrate the NASA POWER Daily Point API:
+
+```text
+https://power.larc.nasa.gov/api/temporal/daily/point
+```
+
+Use actual farm coordinates.
+
+Request relevant parameters, subject to the dataset's availability and returned metadata:
+
+- T2M.
+- T2M_MAX.
+- T2M_MIN.
+- PRECTOTCORR.
+- RH2M.
+- ALLSKY_SFC_SW_DWN.
+
+Requirements:
+
+- Historical daily climate data.
+- Correct date formatting.
+- Correct units.
+- Parameter metadata.
+- Missing-value handling.
+- Request timeouts.
+- Retry policy for transient failures.
+- Response validation.
+- Data provenance.
+- Duplicate-safe database writes.
+- Cached historical observations.
+- Data freshness information.
+
+Use the appropriate NASA POWER community for agricultural applications.
+
+Never treat NASA POWER as a field-level weather station.
+
+## 7.2 SMAP
+
+Preserve actual SMAP integration.
+
+Use supported NASA Earthdata products and access methods.
+
+Requirements:
+
+- Soil moisture observations.
+- Dataset/product identification.
+- Spatial resolution.
+- Observation timestamps.
+- Quality flags.
+- Missing data handling.
+- Retrieval provenance.
+
+Never claim that SMAP measures exact field-level soil pH or NPK.
+
+Never represent coarse-resolution soil moisture as precise small-field measurements.
+
+## 7.3 GPM IMERG
+
+Preserve GPM IMERG integration.
+
+Requirements:
+
+- Precipitation data.
+- Product version.
+- Early, Late or Final product distinction.
+- Observation timestamps.
+- Units.
+- Spatial resolution.
+- Quality information.
+- Source provenance.
+
+Do not mix near-real-time and research-quality products without labeling them.
+
+## 7.4 MODIS
+
+Preserve actual MODIS data integrations.
+
+Use the appropriate product for each indicator.
+
+Where supported, include:
+
+- Vegetation indices.
+- Land-surface temperature.
+- Vegetation condition.
+- Observation dates.
+- Quality flags.
+- Spatial and temporal resolution.
+
+Do not claim that all MODIS products provide identical measurement characteristics.
+
+## 7.5 ECOSTRESS
+
+Preserve actual ECOSTRESS integration.
+
+Where supported, include:
+
+- Land-surface temperature.
+- Evapotranspiration.
+- Product identifiers.
+- Observation timestamps.
+- Quality flags.
+- Spatial resolution.
+- Data limitations.
+
+Do not assume fixed revisit intervals.
+
+## NASA DATA ARCHITECTURE
+
+Use the existing data architecture where possible.
+
+Each dataset record must retain:
+
+- Provider.
+- Dataset name.
+- Product identifier.
+- Variable.
+- Value.
+- Unit.
+- Farm or field identifier.
+- Coordinates or coverage.
+- Observation timestamp.
+- Retrieval timestamp.
+- Spatial resolution.
+- Temporal resolution.
+- Quality flags.
+- Processing method.
+- Processing version.
+- Source URL.
+- Missing-data status.
+- Provenance.
+
+Separate raw observations from derived indicators.
+
+Never overwrite original NASA observations with calculated values.
+
+# 8. DATA INGESTION AND PROCESSING
+
+Implement a consistent data ingestion workflow.
+
+```text
+Farm Selection
+      ↓
+Farm Coordinates
+      ↓
+Dataset Discovery
+      ↓
+NASA API Request
+      ↓
+Response Validation
+      ↓
+Quality and Coverage Checks
+      ↓
+Unit Normalization
+      ↓
+Database Persistence
+      ↓
+Derived Indicators
+      ↓
+Crop Rotation Engine
+      ↓
+Dashboard and Reports
+```
+
+Requirements:
+
+- Reusable ingestion services.
+- Duplicate-safe upserts.
+- Database-backed ingestion job history.
+- Request timeouts.
+- Safe retry behavior.
+- Error logging.
+- Dataset-specific validation.
+- Pagination or chunking where necessary.
+- Caching.
+- Data freshness tracking.
+- Concurrency limits.
+- No unlimited API requests.
+
+Do not run long-running ingestion jobs inside a serverless request.
+
+For work that may exceed the serverless execution limit, implement a suitable external job or queue architecture using available infrastructure.
+
+If the required external service is not configured, document the limitation and provide a safe bounded synchronous implementation for smaller requests.
+
+Do not pretend that a background job completed when it has not.
+
+# 9. CROP ROTATION ENGINE
+
+Preserve the existing Crop Rotation Engine and all current functionality.
+
+Ensure it consumes validated and persisted observations.
+
+The application must support comparison of at least three rotation strategies:
+
+1. Existing Farmer Rotation.
+2. Soil Restoration Rotation.
+3. Climate-Resilient Rotation.
+
+Requirements:
+
+- Deterministic scoring.
+- Explainable criteria.
+- Explicit weights.
+- Missing-data handling.
+- Data quality awareness.
+- Configurable farmer priorities.
+- Crop characteristics.
+- Soil requirements.
+- Climate suitability.
+- Rotation sequence constraints.
+- Benefits and risks.
+- Trade-offs.
+- Confidence and uncertainty.
+- Evidence references.
+
+Never generate unsupported claims about soil restoration, profitability or crop yield.
+
+If data is insufficient, show insufficient evidence instead of inventing a score.
+
+Keep hypothetical scenarios separate from observed farm data.
+
+# 10. FRONTEND INTEGRATION
+
+Preserve the current React + Vite frontend.
+
+Do not redesign the interface.
+
+Do not remove existing pages, navigation, animations or functionality.
+
+Preserve the existing FieldShift identity:
+
+- Forest green.
+- Warm white.
+- Restrained nature-inspired colors.
+- Professional typography.
+- Clean layouts.
+- Existing liquid Earth-inspired branding.
+- Existing charts and geospatial visualizations.
+
+Maintain the existing sections and their functionality, including:
+
+- Overview.
+- Farm Properties.
+- Farmer Priorities.
+- Crop Database.
+- Crop Rotation Engine.
+- What-If Scenarios.
+- NASA Data Roadmap.
+- Interactive Farm Map.
+- Bare-Field Detector.
+- Pest & Disease Cycles.
+- Soil Intelligence.
+- Field Risk Matrix.
+- Climate Timeline.
+- AI Advisor.
+- Compliance Reports.
+- Settings.
+
+Use actual database and NASA responses instead of placeholder values wherever real data is available.
+
+Implement proper:
+
+- Loading states.
+- Empty states.
+- Error states.
+- Retry behavior.
+- Data freshness labels.
+- Source attribution.
+- Responsive behavior.
+- Accessibility.
+- Mobile navigation.
+- Chart responsiveness.
+
+Do not remove an existing section simply because its backend is incomplete.
+
+Clearly distinguish unavailable data from zero values.
+
+# 11. API ENDPOINTS
+
+Inspect existing endpoints first.
+
+Preserve existing endpoint names where practical.
+
+Repair and organize the API into logical groups.
+
+Expected capabilities include:
+
+### Health
+
+```text
+GET /api/health
+```
+
+### Authentication
+
+Use Supabase Auth for actual authentication.
+
+Preserve existing auth endpoint compatibility where necessary.
+
+```text
+POST /api/auth/register
+POST /api/auth/login
+POST /api/auth/logout
+POST /api/auth/password-reset
+GET  /api/auth/session
+```
+
+Do not duplicate authentication logic unnecessarily between Express and Supabase Auth.
+
+### Farms
+
+```text
+GET    /api/farms
+POST   /api/farms
+GET    /api/farms/:id
+PATCH  /api/farms/:id
+DELETE /api/farms/:id
+```
+
+### NASA datasets
+
+```text
+GET  /api/datasets
+GET  /api/datasets/status
+POST /api/datasets/nasa-power/sync
+GET  /api/datasets/nasa-power/observations
+POST /api/datasets/smap/sync
+GET  /api/datasets/smap/observations
+POST /api/datasets/gpm/sync
+GET  /api/datasets/gpm/observations
+POST /api/datasets/modis/sync
+GET  /api/datasets/modis/observations
+POST /api/datasets/ecostress/sync
+GET  /api/datasets/ecostress/observations
+```
+
+Only expose endpoints for integrations that are actually implemented.
+
+Do not create fake endpoints that return static success responses.
+
+### Crop rotation
+
+```text
+GET  /api/rotations
+POST /api/rotations
+GET  /api/rotations/:id
+POST /api/rotations/compare
+POST /api/rotations/assess
+```
+
+### AI Advisor
+
+```text
+POST /api/ai/advisor
+GET  /api/ai/history
+```
+
+### User profile
+
+```text
+GET   /api/profile
+PATCH /api/profile
+```
+
+Every protected endpoint must verify authentication and resource ownership.
+
+Document all actual endpoints in DEPLOYMENT.md.
+
+# 12. ENVIRONMENT VARIABLES
+
+Audit every environment variable reference in the entire repository.
+
+Support the following only where actually required.
+
+## Frontend
+
+```env
+VITE_API_URL=/api
+
+VITE_SUPABASE_URL=
+VITE_SUPABASE_PUBLISHABLE_KEY=
+VITE_SUPABASE_ANON_KEY=
+```
+
+Prefer relative `/api` requests on the shared Vercel domain.
+
+Use import.meta.env for Vite variables.
+
+Never expose privileged keys through VITE_ variables.
+
+## Backend
+
+```env
+GEMINI_API_KEY=
+GEMINI_TIMEOUT_MS=25000
+
+SUPABASE_URL=
+SUPABASE_SECRET_KEY=
+```
+
+Use process.env for backend variables.
+
+Support SUPABASE_SERVICE_ROLE_KEY only if existing code or Supabase SDK requirements need that name. Avoid maintaining two competing secret-key variables.
+
+## Optional local development
+
+```env
+APP_PORT=3000
+APP_URL=
+APP_URI=
+DISABLE_HMR=true
+```
+
+Use these only where existing application code requires them.
+
+Do not require APP_PORT in Vercel serverless execution.
+
+Do not introduce unnecessary NASA API credentials.
+
+Only configure Earthdata credentials if the actual NASA product and access method require authentication.
+
+Create or update:
+
+```text
+.env.example
+```
+
+Use placeholders only.
+
+Ensure these files are ignored by Git:
+
+```text
+.env
+.env.*
+!.env.example
+```
+
+Check existing .gitignore and preserve any useful rules.
+
+Never print secret values in logs or documentation.
+
+# 13. SECURITY AUDIT
+
+Perform a complete security audit.
+
+Check:
+
+- Supabase RLS.
+- Authentication middleware.
+- JWT validation.
+- Farm ownership.
+- Authorization.
+- Input validation.
+- Zod schemas.
+- SQL injection exposure.
+- CORS.
+- Rate limiting.
+- Gemini abuse.
+- NASA API abuse.
+- Request size limits.
+- Error leakage.
+- Secret exposure.
+- Dependency vulnerabilities.
+- Unsafe file uploads, if supported.
+- Public access to private farm data.
+
+Never trust farmId supplied by the frontend without checking ownership.
+
+Do not use the service-role key to bypass ownership checks.
+
+Do not return stack traces or secret configuration to public API clients.
+
+Add safe structured logging.
+
+Do not log passwords, tokens, private keys or sensitive user information.
+
+# 14. LOCAL DEVELOPMENT
+
+Preserve local development.
+
+The project should support a simple workflow.
+
+```bash
+npm install
+npm run dev
+```
+
+If the existing application needs separate frontend and backend commands, document them clearly.
+
+Ensure local Vite requests reach the Express backend through a correct development proxy or the existing API URL configuration.
+
+Keep server.ts as the local server entry point if appropriate.
+
+Ensure app.ts exports the Express app without starting the server.
+
+Ensure api/index.ts exports the serverless handler.
+
+Do not run app.listen() during Vercel function initialization.
+
+# 15. TESTING AND VERIFICATION
+
+Do not claim production readiness without actual verification.
+
+Run all available tests.
+
+Add tests where missing and appropriate.
+
+## Build
+
+```bash
+npm ci
+npm run build
+```
+
+Use the committed package-lock.json.
+
+Do not use --force or --legacy-peer-deps to bypass dependency conflicts.
+
+Resolve actual dependency problems.
+
+## Frontend tests
+
+Verify:
+
+- Homepage.
+- All navigation links.
+- Direct route navigation.
+- Browser refresh.
+- Responsive desktop layout.
+- Responsive mobile layout.
+- Existing animations.
+- Existing charts.
+- Existing maps.
+- Crop rotation simulator.
+- AI Advisor interface.
+
+## Backend tests
+
+Verify:
+
+- API health.
+- API 404 handling.
+- JSON parsing.
+- Authentication middleware.
+- Validation.
+- CORS.
+- Supabase database access.
+- Error handling.
+- Serverless compatibility.
+
+## Authentication tests
+
+Verify:
+
+- Registration.
+- Login.
+- Logout.
+- Session persistence.
+- Session restoration.
+- Password reset.
+- Protected routes.
+- Unauthorized API access.
+- Cross-user farm access prevention.
+
+Never use fake success responses.
+
+## NASA tests
+
+Test the actual external services where access is available.
+
+Verify:
+
+- Correct API parameters.
+- Coordinates.
+- Date ranges.
+- Returned data.
+- Units.
+- Metadata.
+- Missing values.
+- Quality flags.
+- Error behavior.
+- Database persistence.
+
+If credentials or network access are unavailable, mark the integration as NOT VERIFIED.
+
+Do not replace failed live requests with fabricated data.
+
+## Production tests
+
+After deployment, verify:
+
+```text
+GET https://field-shift-sable.vercel.app/
+GET https://field-shift-sable.vercel.app/api/health
+```
+
+Test protected APIs using real authentication.
+
+Test a direct frontend page refresh.
+
+Test a real Supabase login.
+
+Test an actual NASA data retrieval where possible.
+
+Document each result.
+
+# 16. VERCEL DEPLOYMENT
+
+Prepare the project for:
+
+- Root Directory: repository root.
+- Framework Preset: Vite.
+- Build Command: npm run build.
+- Output Directory: dist.
+- Install Command: npm install.
+
+Ensure:
+
+- Vercel detects api/index.ts.
+- Express runs through the serverless function.
+- API routing is correct.
+- SPA routing works.
+- Production environment variables are configured.
+- Preview deployments are supported.
+- No localhost URLs remain in production configuration.
+- No secret keys are exposed in the frontend build.
+
+Do not claim that environment variables have been added to Vercel unless you have actually configured them.
+
+Do not claim that a deployment succeeded unless you have verified it.
+
+# 17. DOCUMENTATION
+
+Create or update the following files:
+
+## DEPLOYMENT.md
+
+Include:
+
+- Architecture.
+- Build process.
+- Deployment steps.
+- Serverless behavior.
+- API routing.
+- Environment variables.
+- Production verification.
+- Troubleshooting.
+
+## VERCEL_SETUP.md
+
+Include:
+
+- Framework settings.
+- Root directory.
+- Build command.
+- Output directory.
+- Environment variable configuration.
+- Serverless entry point.
+- Routing configuration.
+- Deployment verification.
+
+## SUPABASE_SETUP.md
+
+Include:
+
+- Project configuration.
+- Authentication configuration.
+- Redirect URLs.
+- Database schema.
+- SQL migration execution.
+- RLS policies.
+- User profiles.
+- Farm ownership.
+- Secret-key handling.
+
+## .env.example
+
+Include all necessary environment variables with empty placeholders.
+
+Also document NASA data access and Gemini configuration.
+
+Do not put actual credentials in documentation.
+
+# 18. REQUIRED IMPLEMENTATION WORKFLOW
+
+Work incrementally.
+
+### Stage 1 — Audit
+
+Understand the entire repository and report existing architecture.
+
+### Stage 2 — Serverless
+
+Repair Express and Vercel configuration.
+
+Run the build and verify API routing.
+
+### Stage 3 — Supabase
+
+Repair authentication, persistence and RLS.
+
+Run database and authentication tests.
+
+### Stage 4 — Gemini
+
+Repair the existing AI integration.
+
+Verify private backend execution and error handling.
+
+### Stage 5 — NASA
+
+Audit and repair all existing integrations.
+
+Verify data provenance and persistence.
+
+### Stage 6 — Application integration
+
+Connect existing frontend pages to real backend data.
+
+Preserve existing UI.
+
+### Stage 7 — Testing
+
+Run build, unit tests, integration tests and regression tests.
+
+### Stage 8 — Documentation
+
+Produce all required documentation.
+
+### Stage 9 — Deployment
+
+Prepare and deploy to Vercel if authorized and available.
+
+Verify the live deployment.
+
+After each stage:
+
+1. List changes.
+2. Run relevant tests.
+3. Fix regressions.
+4. Record remaining issues.
+5. Continue to the next stage.
+
+Do not stop after producing a plan or architecture diagram.
+
+Implement the changes.
+
+# 19. STRICT DEVELOPMENT RULES
+
+1. Never rebuild the existing application from scratch.
+2. Never redesign the existing UI.
+3. Never remove working features without documented justification.
+4. Never introduce a second backend deployment.
+5. Never migrate from Vite to Next.js.
+6. Never use in-memory data as persistent storage.
+7. Never expose secrets in frontend code.
+8. Never fabricate NASA data.
+9. Never fabricate successful authentication.
+10. Never fabricate successful deployment results.
+11. Never create fake API endpoints.
+12. Never silently replace real services with mock services.
+13. Never disable RLS to make the application work.
+14. Never trust frontend ownership claims.
+15. Never bypass dependency conflicts with force flags without a technical justification.
+16. Never introduce unnecessary dependencies.
+17. Never remove existing database records or migrations.
+18. Never commit credentials.
+19. Never leave critical buttons disconnected from functionality.
+20. Never mark an untested feature as production-ready.
+
+If a required service cannot be accessed, document the exact blocker and continue with independent tasks.
+
+If an existing implementation is already correct, preserve it rather than rewriting it.
+
+# 20. FINAL DELIVERABLES
+
+At completion, provide a comprehensive implementation report.
+
+Include:
+
+## A. Repository audit
+
+- Original architecture.
+- Problems discovered.
+- Root causes.
+- Existing features preserved.
+
+## B. Modified files
+
+For every modified file:
+
+- File path.
+- What changed.
+- Why it changed.
+
+## C. New files
+
+List every new source file, migration, test and documentation file.
+
+## D. Database
+
+- Complete SQL migrations.
+- Table descriptions.
+- RLS policies.
+- Indexes.
+- Relationships.
+
+## E. Environment variables
+
+Provide a complete variable table:
+
+| Variable | Location | Required | Purpose |
+|---|---|---|---|
+
+Clearly distinguish frontend public variables from backend secrets.
+
+## F. API documentation
+
+List all implemented endpoints, methods, authentication requirements and purpose.
+
+## G. Integration results
+
+Report actual status of:
+
+- Supabase Auth.
+- Supabase PostgreSQL.
+- Gemini.
+- NASA POWER.
+- SMAP.
+- GPM IMERG.
+- MODIS.
+- ECOSTRESS.
+
+Use these statuses:
+
+- Implemented and verified.
+- Implemented but not verified.
+- Partially implemented.
+- Blocked.
+- Not implemented.
+
+## H. Test results
+
+Provide real results for:
+
+- npm ci.
+- npm run build.
+- Automated tests.
+- API tests.
+- Authentication tests.
+- NASA integration tests.
+- Responsive regression tests.
+
+Do not invent pass results.
+
+## I. Deployment instructions
+
+Provide the exact Vercel settings and required environment variables.
+
+## J. Remaining issues
+
+Clearly identify:
+
+- Unresolved errors.
+- Missing credentials.
+- External service limitations.
+- Incomplete features.
+- Manual setup requirements.
+- Features requiring additional verification.
+
+## FINAL ACCEPTANCE CRITERIA
+
+FieldShift is ready for production only when:
+
+- The existing React + Vite application builds successfully.
+- Vercel serves the frontend.
+- Express API routes execute through serverless functions.
+- Frontend routes survive direct refresh.
+- Supabase authentication works with real accounts.
+- Sessions persist correctly.
+- User-owned records are protected by RLS and backend authorization.
+- Farm data persists in PostgreSQL.
+- Gemini requests run securely on the backend.
+- Existing NASA integrations work with real sourced data.
+- NASA observations retain their provenance and limitations.
+- The crop rotation engine consumes validated data.
+- Existing UI and functionality remain intact.
+- Critical automated tests pass.
+- Documentation is complete.
+- Production deployment has been verified.
+
+**Begin by inspecting the actual GitHub repository and its current production deployment. Then implement the migration in stages. Do not ask me to recreate features or provide files that are already available in the repository. Do not stop at recommendations: make the actual code changes, test them, and provide the final implementation report.**
