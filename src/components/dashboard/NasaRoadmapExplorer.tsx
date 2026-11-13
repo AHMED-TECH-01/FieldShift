@@ -80,6 +80,8 @@ export const NasaRoadmapExplorer: React.FC<NasaRoadmapExplorerProps> = ({ farmId
         message:
           datasetId === 'nasa-power'
             ? `Synced ${res.recordsSaved || 0} live NASA POWER agroclimatology records (${res.startDate} to ${res.endDate}).`
+            : datasetId === 'modis'
+            ? `Synced ${res.numericPixelCount || 0} live MODIS 250m/1km pixel records + ${res.granulesFound ?? 0} Earthdata CMR granules.`
             : `Discovered ${res.granulesFound ?? res.recordsSaved ?? 0} Earthdata CMR granule metadata entries for ${datasetId.toUpperCase()}.`,
       });
       await fetchSyncStatus();
@@ -266,7 +268,11 @@ export const NasaRoadmapExplorer: React.FC<NasaRoadmapExplorerProps> = ({ farmId
                 <div className="p-3.5 bg-white rounded-xl border border-[#D5E5CA] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="text-xs text-[#2A4D3E]">
                     <strong className="text-[#073D2B] block">
-                      {selectedDataset.id === 'nasa-power' ? 'Live Numeric API Sync' : 'Live Earthdata CMR Granule Discovery'}
+                      {selectedDataset.id === 'nasa-power'
+                        ? 'Live Numeric API Sync'
+                        : selectedDataset.id === 'modis'
+                        ? 'Live ORNL DAAC 250m Pixel + CMR Sync'
+                        : 'Live Earthdata CMR Granule Discovery'}
                     </strong>
                     <span>
                       Target parcel: {farmName || farmId}
@@ -284,6 +290,8 @@ export const NasaRoadmapExplorer: React.FC<NasaRoadmapExplorerProps> = ({ farmId
                         ? 'Syncing...'
                         : selectedDataset.id === 'nasa-power'
                         ? 'Sync Live NASA POWER'
+                        : selectedDataset.id === 'modis'
+                        ? 'Sync Live MODIS 250m'
                         : `Discover ${selectedDataset.code} Granules`}
                     </span>
                   </button>

@@ -12,7 +12,7 @@ import {
   mapDbFarmRow,
   requireAuth,
   resolveRequestUser,
-} from './backend/supabase';
+} from './backend/supabase.js';
 import {
   advisorRequestSchema,
   createFarmSchema,
@@ -28,7 +28,7 @@ import {
   scenarioSchema,
   updateFarmSchema,
   verifyOtpSchema,
-} from './backend/validation';
+} from './backend/validation.js';
 import {
   buildBareFieldAnalysis,
   buildPestCycles,
@@ -37,19 +37,31 @@ import {
   DEFAULT_PRIORITIES,
   scientificMethods,
   supplementalIncomeOpportunities,
-} from './backend/agronomy';
+} from './backend/agronomy.js';
 import {
+  celsiusToFahrenheit,
   getFarmNasaObservationsSummary,
+  getNasaCacheStats,
+  ingestAllAvailableForFarm,
+  mapDbObservationToCanonical,
+  mmToInches,
+  mpsToMph,
   nasaHarmonizedRoadmap,
+  resolveFarmGeometry,
   SUPPORTED_SYNC_DATASETS,
   SupportedSyncDataset,
   syncEarthdataCmrForFarm,
+  syncModisForFarm,
   syncNasaPowerForFarm,
-} from './backend/nasa';
-import { getGeminiClient, runGroundedAdvisor } from './backend/gemini';
-import { logEvent, logGeminiEvent } from './backend/logger';
+} from './backend/nasa.js';
+import { CMR_PRODUCT_MAP, POWER_PARAMETERS, SupportedCmrDataset } from './backend/nasa/providers.js';
+import { NasaUpstreamError, validateDateRange } from './backend/nasa/units-and-quality.js';
+import { getNasaIntegrationCapabilities, getServerEnv } from './backend/env.js';
+import { getGeminiClient, runGroundedAdvisor } from './backend/gemini.js';
+import { logEvent, logGeminiEvent } from './backend/logger.js';
 
 dotenv.config();
+getServerEnv();
 
 export { logGeminiEvent };
 
@@ -159,15 +171,48 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     }
   }
 
+  const envSummary = getServerEnv();
+  const nasaCapabilities = getNasaIntegrationCapabilities();
+
   res.json({
     status: supabaseReachable ? 'healthy' : 'degraded',
     platform: 'FieldShift Agricultural Intelligence Platform',
-    version: '2.6.0',
+    version: '2.7.0',
     runtime: process.env.VERCEL ? 'vercel-serverless' : 'node-express',
-    supabaseConfigured: Boolean(getSupabaseAuthClient()),
+    supabaseConfigured: envSummary.supabaseConfigured,
     supabaseReachable,
     geminiConfigured: Boolean(getGeminiClient()),
+    nasaApiKeyConfigured: envSummary.nasaApiKeyConfigured,
+    earthdataTokenConfigured: envSummary.earthdataTokenConfigured,
+    nasaCapabilities,
+    nasaCacheStats: getNasaCacheStats(),
     nasaPowerEndpoint: 'https://power.larc.nasa.gov/api/temporal/daily/point',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/nasa/health', async (_req: Request, res: Response) => {
+  const envSummary = getServerEnv();
+  const capabilities = getNasaIntegrationCapabilities();
+  const missingCredentials: string[] = [];
+  if (!envSummary.earthdataTokenConfigured) {
+    missingCredentials.push('EARTHDATA_TOKEN (optional; needed only for authenticated HDF5/NetCDF4 binary pixel downloads on SMAP/GPM/ECOSTRESS)');
+  }
+  if (!envSummary.nasaApiKeyConfigured) {
+    missingCredentials.push('NASA_API_KEY (optional; not required by NASA POWER, ORNL DAAC MODIS, or Earthdata CMR)');
+  }
+
+  res.json({
+    status: 'operational',
+    providers: capabilities,
+    cacheStats: getNasaCacheStats(),
+    environment: {
+      supabaseConfigured: envSummary.supabaseConfigured,
+      geminiConfigured: envSummary.geminiConfigured,
+      nasaApiKeyConfigured: envSummary.nasaApiKeyConfigured,
+      earthdataTokenConfigured: envSummary.earthdataTokenConfigured,
+    },
+    missingOptionalCredentials: missingCredentials,
     timestamp: new Date().toISOString(),
   });
 });
@@ -195,7 +240,7 @@ app.get('/api/scientific-methods', (_req: Request, res: Response) => {
   });
 });
 
-app.get(['/api/datasets', '/api/nasa/roadmap'], async (_req: Request, res: Response) => {
+app.get(['/api/datasets', '/api/nasa/roadmap', '/api/nasa/sources'], async (_req: Request, res: Response) => {
   const pubClient = getSupabasePublicClient();
   let dbDatasets: any[] | null = null;
   if (pubClient) {
@@ -205,19 +250,24 @@ app.get(['/api/datasets', '/api/nasa/roadmap'], async (_req: Request, res: Respo
     }
   }
 
+  const capabilities = getNasaIntegrationCapabilities();
+
   res.json({
     totalMissions: nasaHarmonizedRoadmap.length,
     datasets: nasaHarmonizedRoadmap,
+    capabilities,
+    powerParameters: POWER_PARAMETERS,
+    cmrProducts: CMR_PRODUCT_MAP,
     persistedCatalog: dbDatasets || [],
     supportedSyncEndpoints: SUPPORTED_SYNC_DATASETS.map((ds) => ({
       id: ds,
       syncPath: `/api/datasets/${ds}/sync`,
       observationsPath: `/api/datasets/${ds}/observations`,
-      accessMode: ds === 'nasa-power' ? 'live_public_api' : 'cmr_granule_discovery',
+      accessMode: capabilities[ds]?.mode || (ds === 'nasa-power' || ds === 'modis' ? 'live_public_api' : 'granule_metadata_only'),
     })),
     harmonizationArchitecture: {
-      spatialResampling: 'Coarse grids (50km POWER, 10km GPM, 9km SMAP) are explicitly labeled and never claimed as sub-field measurements.',
-      temporalAlignment: 'Daily NASA POWER series and CMR granule timestamps preserved in UTC ISO-8601.',
+      spatialResampling: 'Coarse grids (50km POWER, 10km GPM, 9km SMAP, 250m MODIS) are explicitly labeled and never claimed as sub-field measurements.',
+      temporalAlignment: 'Daily/Monthly NASA POWER series, 16-day MODIS composites, and CMR granule timestamps preserved in UTC ISO-8601.',
       crsStandardization: 'Geographic WGS84 (EPSG:4326) farm coordinates queried natively.',
       dataProvenanceRule: 'Raw NASA observations are strictly segregated from soil tests, farmer logs, and deterministic strategy outputs.',
     },
@@ -912,16 +962,25 @@ app.post('/api/datasets/:dataset/sync', requireAuth, nasaSyncRateLimit, async (r
         startDate: parsed.data.startDate,
         endDate: parsed.data.endDate,
         days: parsed.data.days,
+        resolution: parsed.data.resolution,
       });
       res.json({ success: true, ...result });
       return;
     }
 
-    const result = await syncEarthdataCmrForFarm(client, user.id, farm, dataset);
+    if (dataset === 'modis') {
+      const result = await syncModisForFarm(client, user.id, farm);
+      res.json({ success: true, ...result });
+      return;
+    }
+
+    const result = await syncEarthdataCmrForFarm(client, user.id, farm, dataset as SupportedCmrDataset);
     res.json({ success: true, ...result });
   } catch (err: any) {
-    res.status(502).json({
+    const status = err instanceof NasaUpstreamError ? err.status : 502;
+    res.status(status).json({
       error: `Failed to sync ${dataset}: ${err?.message || 'Upstream NASA request failed'}`,
+      code: err instanceof NasaUpstreamError ? err.code : 'NASA_SYNC_FAILED',
     });
   }
 });
@@ -972,7 +1031,262 @@ app.get('/api/datasets/:dataset/observations', requireAuth, async (req: Authenti
     limit,
     offset,
     observations: data || [],
+    canonicalObservations: (data || []).map(mapDbObservationToCanonical),
   });
+});
+
+// Unified per-farm NASA observation query endpoint with date & dataset filtering
+app.get('/api/nasa/observations/:farmId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = req.params.farmId?.trim();
+  if (!farmId) {
+    res.status(400).json({ error: 'farmId path parameter is required.' });
+    return;
+  }
+
+  const startDate = typeof req.query.startDate === 'string' ? req.query.startDate.trim() : undefined;
+  const endDate = typeof req.query.endDate === 'string' ? req.query.endDate.trim() : undefined;
+  if (startDate || endDate) {
+    const check = validateDateRange(startDate, endDate, 730);
+    if (!check.valid) {
+      res.status(400).json({ error: check.error });
+      return;
+    }
+  }
+
+  const dataset = typeof req.query.dataset === 'string' ? req.query.dataset.trim() : undefined;
+  const parameter = typeof req.query.parameter === 'string' ? req.query.parameter.trim() : undefined;
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  let query = client
+    .from('nasa_observations')
+    .select('*', { count: 'exact' })
+    .eq('farm_id', farm.id)
+    .order('observed_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (dataset) query = query.eq('dataset_id', dataset);
+  if (parameter) query = query.eq('variable', parameter);
+  if (startDate) query = query.gte('observed_at', `${startDate}T00:00:00.000Z`);
+  if (endDate) query = query.lte('observed_at', `${endDate}T23:59:59.999Z`);
+
+  const { data, count, error } = await query;
+  if (error) {
+    res.status(500).json({ error: 'Failed to query persisted NASA observations.' });
+    return;
+  }
+
+  const geometry = resolveFarmGeometry({ coordinates: farm.coordinates });
+  res.json({
+    farmId: farm.id,
+    farmName: farm.name,
+    geometry,
+    totalCount: count || 0,
+    limit,
+    offset,
+    observations: (data || []).map(mapDbObservationToCanonical),
+  });
+});
+
+// Unified full-ingestion endpoint across NASA POWER, MODIS ORNL DAAC, SMAP, GPM & ECOSTRESS CMR
+app.post('/api/nasa/ingest/:farmId', requireAuth, nasaSyncRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = req.params.farmId?.trim();
+  if (!farmId) {
+    res.status(400).json({ error: 'farmId is required.' });
+    return;
+  }
+
+  const daysRaw = req.body?.days !== undefined ? Number(req.body.days) : 30;
+  if (!Number.isInteger(daysRaw) || daysRaw < 1 || daysRaw > 90) {
+    res.status(400).json({ error: 'days must be an integer between 1 and 90.' });
+    return;
+  }
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  const outcomes = await ingestAllAvailableForFarm(client, user.id, farm, { days: daysRaw });
+  const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
+
+  res.json({
+    success: true,
+    farmId: farm.id,
+    farmName: farm.name,
+    geometry: resolveFarmGeometry({ coordinates: farm.coordinates }),
+    outcomes,
+    summary,
+  });
+});
+
+app.get('/api/nasa/ingestion/:jobId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const jobId = req.params.jobId?.trim();
+  if (!jobId) {
+    res.status(400).json({ error: 'jobId is required.' });
+    return;
+  }
+  const client = req.supabaseUserClient!;
+  const { data, error } = await client
+    .from('ingestion_jobs')
+    .select('*')
+    .eq('id', jobId)
+    .maybeSingle();
+
+  if (error || !data) {
+    res.status(404).json({ error: 'Ingestion job not found or access denied.' });
+    return;
+  }
+  res.json({ job: data });
+});
+
+// Provider-specific NASA endpoints (POWER daily/monthly, MODIS live NDVI/EVI/LST, GPM, SMAP, ECOSTRESS)
+app.get('/api/nasa/power', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
+  const resolution = req.query.resolution === 'monthly' ? 'monthly' : 'daily';
+  const startDate = typeof req.query.startDate === 'string' ? req.query.startDate.trim() : undefined;
+  const endDate = typeof req.query.endDate === 'string' ? req.query.endDate.trim() : undefined;
+  const refresh = req.query.refresh === 'true';
+  const days = req.query.days ? Math.min(90, Math.max(1, Number(req.query.days))) : 30;
+
+  if (startDate || endDate) {
+    const check = validateDateRange(startDate, endDate, 366);
+    if (!check.valid) {
+      res.status(400).json({ error: check.error });
+      return;
+    }
+  }
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  try {
+    let syncMeta: any = null;
+    if (refresh) {
+      syncMeta = await syncNasaPowerForFarm(client, user.id, farm, { resolution, startDate, endDate, days });
+    }
+
+    const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
+    const { data: powerRows } = await client
+      .from('nasa_observations')
+      .select('*')
+      .eq('farm_id', farm.id)
+      .eq('dataset_id', 'nasa-power')
+      .eq('product_id', resolution === 'monthly' ? 'NASA_POWER_AG_MONTHLY' : 'NASA_POWER_AG_DAILY')
+      .order('observed_at', { ascending: false })
+      .limit(200);
+
+    res.json({
+      farmId: farm.id,
+      farmName: farm.name,
+      resolution,
+      geometry: resolveFarmGeometry({ coordinates: farm.coordinates }),
+      capability: getNasaIntegrationCapabilities()['nasa-power'],
+      syncMeta,
+      metrics: {
+        meanTempC: summary.meanTempC,
+        meanTempF: summary.meanTempC !== null ? celsiusToFahrenheit(summary.meanTempC) : null,
+        precipTotalMm: summary.precipTotalMm,
+        precipTotalInches: summary.precipTotalMm !== null ? mmToInches(summary.precipTotalMm) : null,
+        meanSolarRadiationMj: summary.meanSolarRadiationMj,
+        meanHumidityPct: summary.meanHumidityPct,
+        meanWindSpeedMps: summary.meanWindSpeedMps,
+        meanWindSpeedMph: summary.meanWindSpeedMps !== null ? mpsToMph(summary.meanWindSpeedMps) : null,
+        growingDegreeDaysBase10C: summary.growingDegreeDaysBase10C,
+      },
+      observations: (powerRows || []).map(mapDbObservationToCanonical),
+    });
+  } catch (err: any) {
+    const status = err instanceof NasaUpstreamError ? err.status : 502;
+    res.status(status).json({ error: err?.message || 'Failed to query NASA POWER data.' });
+  }
+});
+
+app.get('/api/nasa/:provider(modis|gpm|smap|ecostress)', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const provider = req.params.provider as SupportedCmrDataset;
+  const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
+  const refresh = req.query.refresh === 'true';
+
+  const user = req.authUser!;
+  const client = req.supabaseUserClient!;
+  const farm = await getAccessibleFarmById(farmId, user);
+  if (!farm) {
+    res.status(404).json({ error: 'Farm not found or access denied.' });
+    return;
+  }
+
+  try {
+    let syncMeta: any = null;
+    if (refresh) {
+      syncMeta = provider === 'modis'
+        ? await syncModisForFarm(client, user.id, farm)
+        : await syncEarthdataCmrForFarm(client, user.id, farm, provider);
+    }
+
+    const { data: rows, error } = await client
+      .from('nasa_observations')
+      .select('*')
+      .eq('farm_id', farm.id)
+      .eq('dataset_id', provider)
+      .order('observed_at', { ascending: false })
+      .limit(60);
+
+    if (error) {
+      res.status(500).json({ error: `Failed to retrieve ${provider.toUpperCase()} observations.` });
+      return;
+    }
+
+    const capabilities = getNasaIntegrationCapabilities();
+    const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
+
+    res.json({
+      farmId: farm.id,
+      farmName: farm.name,
+      provider,
+      geometry: resolveFarmGeometry({ coordinates: farm.coordinates }),
+      capability: capabilities[provider],
+      syncMeta,
+      numericSummary:
+        provider === 'modis'
+          ? {
+              hasModisNumericData: summary.hasModisNumericData,
+              latestNdvi: summary.latestModisNdvi,
+              latestEvi: summary.latestModisEvi,
+              latestNdviDate: summary.latestModisNdviDate,
+              latestQuality: summary.latestModisQuality,
+              latestTile: summary.latestModisTile,
+              latestLstC: summary.latestModisLstC,
+              latestLstDate: summary.latestModisLstDate,
+            }
+          : {
+              pixelValuesAvailable: false,
+              granuleSummary: summary.cmrGranulesByDataset[provider] || null,
+              reason:
+                capabilities[provider]?.notes ||
+                'Numeric raster pixel decoding requires authenticated Earthdata binary download + HDF5/NetCDF4 worker.',
+            },
+      observations: (rows || []).map(mapDbObservationToCanonical),
+    });
+  } catch (err: any) {
+    const status = err instanceof NasaUpstreamError ? err.status : 502;
+    res.status(status).json({ error: err?.message || `Failed to query ${provider.toUpperCase()} data.` });
+  }
 });
 
 // Dashboard compatibility observation & climate routes (Real persisted data — NO fake static numbers)
@@ -986,7 +1300,8 @@ app.get('/api/nasa/observations', requireAuth, async (req: AuthenticatedRequest,
     return;
   }
 
-  const summary = await getFarmNasaObservationsSummary(client, farm.id);
+  const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
+  const geometry = resolveFarmGeometry({ coordinates: farm.coordinates });
   const smap = summary.cmrGranulesByDataset.smap;
   const gpm = summary.cmrGranulesByDataset.gpm;
   const modis = summary.cmrGranulesByDataset.modis;
@@ -996,6 +1311,8 @@ app.get('/api/nasa/observations', requireAuth, async (req: AuthenticatedRequest,
     farmId: farm.id,
     farmName: farm.name,
     coordinates: farm.coordinates,
+    geometry,
+    capabilities: getNasaIntegrationCapabilities(),
     catalog: nasaHarmonizedRoadmap,
     summary,
     realTimeMetrics: {
@@ -1005,7 +1322,11 @@ app.get('/api/nasa/observations', requireAuth, async (req: AuthenticatedRequest,
             dailyRadiation: summary.meanSolarRadiationMj,
             unit: 'MJ/m²/day',
             meanTempC: summary.meanTempC,
+            meanTempF: summary.meanTempC !== null ? celsiusToFahrenheit(summary.meanTempC) : null,
             precipTotalMm: summary.precipTotalMm,
+            precipTotalInches: summary.precipTotalMm !== null ? mmToInches(summary.precipTotalMm) : null,
+            meanWindSpeedMps: summary.meanWindSpeedMps,
+            meanWindSpeedMph: summary.meanWindSpeedMps !== null ? mpsToMph(summary.meanWindSpeedMps) : null,
             growingDegreeDays: summary.growingDegreeDaysBase10C,
             daysObserved: summary.dailyTimeline.length,
             sensor: 'NASA POWER Agroclimatology (0.5°)',
@@ -1015,9 +1336,10 @@ app.get('/api/nasa/observations', requireAuth, async (req: AuthenticatedRequest,
             status: 'not_synced',
             dailyRadiation: null,
             unit: 'MJ/m²/day',
+            meanWindSpeedMps: null,
             growingDegreeDays: null,
             sensor: 'NASA POWER Agroclimatology (0.5°)',
-            notice: 'Click "Sync NASA POWER" to fetch live daily agroclimatology for this parcel.',
+            notice: 'Click "Sync NASA POWER" or "Ingest All NASA Data" to fetch live daily agroclimatology for this parcel.',
           },
       soilMoistureSMAP: {
         status: smap?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
@@ -1026,7 +1348,7 @@ app.get('/api/nasa/observations', requireAuth, async (req: AuthenticatedRequest,
         latestGranuleId: smap?.latestGranuleId || null,
         granuleTimestamp: smap?.latestTimeStart || null,
         sensor: 'SMAP L4 (9km EASE-Grid 2.0)',
-        notice: 'Numeric HDF5 moisture pixel extraction requires Earthdata Login token.',
+        notice: 'Numeric HDF5 moisture pixel extraction requires EARTHDATA_TOKEN + binary decoder.',
       },
       precipitationGPM: {
         status: summary.hasPowerData ? 'power_precip_available' : gpm?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
@@ -1036,21 +1358,39 @@ app.get('/api/nasa/observations', requireAuth, async (req: AuthenticatedRequest,
         sensor: summary.hasPowerData ? 'NASA POWER PRECTOTCORR + GPM CMR' : 'GPM IMERG Late (0.1°)',
         timestamp: summary.powerLastRetrievedAt || gpm?.retrievedAt || null,
       },
-      vegetationNDVI: {
-        status: modis?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
-        currentNDVI: null,
-        latestGranuleId: modis?.latestGranuleId || null,
-        granuleTimestamp: modis?.latestTimeStart || null,
-        sensor: 'MODIS MOD13Q1 (250m)',
-        notice: 'Numeric NDVI raster extraction requires Earthdata Login HDF-EOS reader.',
-      },
+      vegetationNDVI: summary.hasModisNumericData
+        ? {
+            status: 'synced',
+            currentNDVI: summary.latestModisNdvi,
+            currentEVI: summary.latestModisEvi,
+            lstDayC: summary.latestModisLstC,
+            lstDate: summary.latestModisLstDate,
+            observedAt: summary.latestModisNdviDate,
+            retrievedAt: summary.latestModisRetrievedAt,
+            tile: summary.latestModisTile,
+            qualityStatus: summary.latestModisQuality,
+            spatialResolution: '250 m NDVI/EVI & 1 km LST',
+            latestGranuleId: modis?.latestGranuleId || null,
+            granuleTimestamp: modis?.latestTimeStart || null,
+            sensor: 'MODIS MOD13Q1 (250m) & MOD11A2 (1km) via NASA ORNL DAAC',
+          }
+        : {
+            status: modis?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
+            currentNDVI: null,
+            currentEVI: null,
+            lstDayC: null,
+            latestGranuleId: modis?.latestGranuleId || null,
+            granuleTimestamp: modis?.latestTimeStart || null,
+            sensor: 'MODIS MOD13Q1 (250m)',
+            notice: 'Click "Sync MODIS 250m" or "Ingest All NASA Data" to retrieve live ORNL DAAC NDVI, EVI & pixel reliability.',
+          },
       evapotranspirationECOSTRESS: {
         status: ecostress?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
         waterStressIndex: null,
         latestGranuleId: ecostress?.latestGranuleId || null,
         granuleTimestamp: ecostress?.latestTimeStart || null,
         sensor: 'ECOSTRESS ISS (70m)',
-        notice: 'Numeric thermal ET GeoTIFF extraction requires Earthdata Login token.',
+        notice: 'Numeric thermal ET GeoTIFF extraction requires EARTHDATA_TOKEN + binary decoder.',
       },
     },
   });
@@ -1066,7 +1406,7 @@ app.get('/api/climate/timeline', requireAuth, async (req: AuthenticatedRequest, 
     return;
   }
 
-  const summary = await getFarmNasaObservationsSummary(client, farm.id);
+  const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
 
   res.json({
     farmId: farm.id,
@@ -1081,6 +1421,7 @@ app.get('/api/climate/timeline', requireAuth, async (req: AuthenticatedRequest, 
       tempMinC: d.t2mMin,
       humidityPct: d.rh2m,
       solarRadiationMj: d.solarMj,
+      windSpeedMps: d.windSpeedMps,
     })),
     provenance: summary.hasPowerData
       ? 'NASA Langley POWER Agroclimatology Daily Point API (0.5° grid)'
@@ -1168,6 +1509,36 @@ app.get('/api/risk/field-analysis', requireAuth, async (req: AuthenticatedReques
     });
   }
 
+  if (summary.hasModisNumericData && summary.latestModisNdvi !== null) {
+    const ndviRisk = summary.latestModisNdvi < 0.28 ? 64 : summary.latestModisNdvi < 0.45 ? 38 : 18;
+    indicators.push({
+      name: 'Canopy Vigor / Bare Soil Exposure (MODIS 250m)',
+      level: ndviRisk >= 60 ? 'HIGH' : ndviRisk >= 35 ? 'MODERATE' : 'LOW',
+      score: ndviRisk,
+      dataSource: `NASA MODIS MOD13Q1 (${summary.latestModisQuality || 'Synced'})`,
+      observation: `Observed NDVI: ${summary.latestModisNdvi}${summary.latestModisEvi !== null ? `, EVI: ${summary.latestModisEvi}` : ''} (${summary.latestModisNdviDate}).`,
+    });
+  } else {
+    indicators.push({
+      name: 'Canopy Vigor / Bare Soil Exposure (MODIS 250m)',
+      level: 'MODERATE',
+      score: null,
+      dataSource: 'NASA MODIS MOD13Q1 (Not Yet Synced)',
+      observation: 'Ingest MODIS 250m data to compute parcel canopy greenness and bare-soil exposure.',
+    });
+  }
+
+  if (summary.hasPowerData && summary.meanWindSpeedMps !== null) {
+    const windRisk = summary.meanWindSpeedMps >= 5.5 ? 62 : summary.meanWindSpeedMps >= 3.8 ? 36 : 18;
+    indicators.push({
+      name: 'Surface Wind Erosion Exposure (WS2M)',
+      level: windRisk >= 60 ? 'HIGH' : windRisk >= 35 ? 'MODERATE' : 'LOW',
+      score: windRisk,
+      dataSource: 'NASA POWER WS2M (Synced)',
+      observation: `Observed mean 2m wind speed: ${summary.meanWindSpeedMps} m/s (${mpsToMph(summary.meanWindSpeedMps)} mph).`,
+    });
+  }
+
   indicators.push({
     name: 'Organic Matter Moisture Buffer',
     level: farm.organicMatter < 2.5 ? 'HIGH' : farm.organicMatter < 3.5 ? 'MODERATE' : 'LOW',
@@ -1179,9 +1550,10 @@ app.get('/api/risk/field-analysis', requireAuth, async (req: AuthenticatedReques
   res.json({
     farmId: farm.id,
     hasLivePowerData: summary.hasPowerData,
+    hasModisNumericData: summary.hasModisNumericData,
     indicators,
     scientificNotice:
-      'NASA POWER grid cells (~50 km) do not capture field-level frost pockets or tile drainage variations.',
+      'NASA POWER grid cells (~50 km) do not capture field-level frost pockets or tile drainage variations; MODIS 250 m pixels blend adjacent field edges.',
   });
 });
 

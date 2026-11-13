@@ -13,7 +13,7 @@ async function main() {
   };
 
   // 1. Verify Vercel serverless entrypoint loads cleanly without starting Vite or app.listen
-  const apiMod = await import('../api/index');
+  const apiMod = await import('../api/index.js');
   const app = apiMod.default;
   assert.ok(app && typeof app === 'function', 'api/index.ts must export Express app');
   record('Serverless entry import (api/index.ts)', 'PASS', 'Loaded cleanly with zero Vite dependency');
@@ -238,7 +238,20 @@ async function main() {
     assert.equal(getPrioJson.priorities.waterConservation, 5);
     record('GET/PUT /api/priorities', 'PASS', 'Saved and reloaded user-scoped weights');
 
-    // 8. Live NASA POWER sync + duplicate-safe idempotent re-sync
+    // 8. Public NASA Health & Sources catalog checks
+    const nasaHealthRes = await fetch(`${baseUrl}/api/nasa/health`);
+    assert.equal(nasaHealthRes.status, 200);
+    const nasaHealthJson: any = await nasaHealthRes.json();
+    assert.equal(nasaHealthJson.providers['nasa-power'].available, true);
+    assert.equal(nasaHealthJson.providers.modis.available, true);
+
+    const nasaSourcesRes = await fetch(`${baseUrl}/api/nasa/sources`);
+    assert.equal(nasaSourcesRes.status, 200);
+    const nasaSourcesJson: any = await nasaSourcesRes.json();
+    assert.ok(nasaSourcesJson.totalMissions >= 8);
+    record('GET /api/nasa/health & /api/nasa/sources', 'PASS', `All 5 NASA providers + ${nasaSourcesJson.totalMissions}-mission catalog reported`);
+
+    // 9. Live NASA POWER sync (daily + WS2M) + duplicate-safe idempotent re-sync + monthly endpoint
     const powerSync1 = await fetch(`${baseUrl}/api/datasets/nasa-power/sync`, {
       method: 'POST',
       headers: authHeadersA,
@@ -247,6 +260,14 @@ async function main() {
     assert.equal(powerSync1.status, 200);
     const powerJson1: any = await powerSync1.json();
     assert.ok(powerJson1.recordsSaved > 0);
+    assert.ok(powerJson1.jobId, 'Ingestion job ID must be returned');
+
+    const jobCheckRes = await fetch(`${baseUrl}/api/nasa/ingestion/${encodeURIComponent(powerJson1.jobId)}`, {
+      headers: authHeadersA,
+    });
+    assert.equal(jobCheckRes.status, 200);
+    const jobCheckJson: any = await jobCheckRes.json();
+    assert.equal(jobCheckJson.job.status, 'completed');
 
     const powerSync2 = await fetch(`${baseUrl}/api/datasets/nasa-power/sync`, {
       method: 'POST',
@@ -255,16 +276,43 @@ async function main() {
     });
     assert.equal(powerSync2.status, 200);
 
-    const powerObsRes = await fetch(`${baseUrl}/api/datasets/nasa-power/observations?farmId=${encodeURIComponent(farmId)}&limit=100`, {
+    const powerObsRes = await fetch(`${baseUrl}/api/datasets/nasa-power/observations?farmId=${encodeURIComponent(farmId)}&limit=200`, {
       headers: authHeadersA,
     });
     assert.equal(powerObsRes.status, 200);
     const powerObsJson: any = await powerObsRes.json();
     assert.equal(powerObsJson.totalCount, powerJson1.recordsSaved, 'Duplicate-safe upsert must not create duplicate rows');
-    record('NASA POWER live sync + idempotency', 'PASS', `${powerJson1.recordsSaved} records saved & verified idempotent (${powerJson1.startDate}..${powerJson1.endDate})`);
 
-    // 9. Live NASA Earthdata CMR Granule Discovery (SMAP, GPM, MODIS, ECOSTRESS)
-    for (const ds of ['smap', 'gpm', 'modis', 'ecostress'] as const) {
+    const powerMonthlyRes = await fetch(
+      `${baseUrl}/api/nasa/power?farmId=${encodeURIComponent(farmId)}&resolution=monthly&startDate=2025-01-01&endDate=2025-12-31&refresh=true`,
+      { headers: authHeadersA }
+    );
+    assert.equal(powerMonthlyRes.status, 200);
+    const powerMonthlyJson: any = await powerMonthlyRes.json();
+    assert.equal(powerMonthlyJson.resolution, 'monthly');
+    assert.ok(powerMonthlyJson.observations.length > 0);
+    record('NASA POWER live daily/monthly + idempotency', 'PASS', `${powerJson1.recordsSaved} daily rows + ${powerMonthlyJson.observations.length} monthly rows (${powerJson1.startDate}..${powerJson1.endDate})`);
+
+    // 10. Live NASA MODIS 250m ORNL DAAC + Earthdata CMR & Unified Ingest
+    const modisRes = await fetch(`${baseUrl}/api/datasets/modis/sync`, {
+      method: 'POST',
+      headers: authHeadersA,
+      body: JSON.stringify({ farmId }),
+    });
+    let modisLiveAvailable = false;
+    if (modisRes.status === 200) {
+      const modisJson: any = await modisRes.json();
+      assert.ok(modisJson.numericPixelCount > 0, 'MODIS ORNL DAAC must return real 250m/1km numeric observations');
+      modisLiveAvailable = true;
+      record('NASA MODIS 250m ORNL DAAC Sync', 'PASS', `Synced ${modisJson.numericPixelCount} numeric MODIS observations`);
+    } else {
+      assert.ok(modisRes.status === 502 || modisRes.status === 504, `Unexpected MODIS error status ${modisRes.status}`);
+      const modisErr: any = await modisRes.json();
+      assert.ok(typeof modisErr.error === 'string' && modisErr.error.length > 0);
+      record('NASA MODIS 250m ORNL DAAC Sync', 'WARN', `External modis.ornl.gov temporarily unavailable (${modisRes.status}); backend returned honest error with zero fake data`);
+    }
+
+    for (const ds of ['smap', 'gpm', 'ecostress'] as const) {
       const cmrRes = await fetch(`${baseUrl}/api/datasets/${ds}/sync`, {
         method: 'POST',
         headers: authHeadersA,
@@ -284,11 +332,44 @@ async function main() {
       record(`NASA Earthdata CMR (${ds.toUpperCase()})`, 'PASS', `Found ${cmrJson.recordsReceived} granules; pixel values strictly null/metadata-only`);
     }
 
-    // 10. Dashboard aggregated telemetry, climate timeline, risk, soil, bare-field, pest-cycles
+    const unifiedIngestRes = await fetch(`${baseUrl}/api/nasa/ingest/${encodeURIComponent(farmId)}`, {
+      method: 'POST',
+      headers: authHeadersA,
+      body: JSON.stringify({ days: 7 }),
+    });
+    assert.equal(unifiedIngestRes.status, 200);
+    const unifiedJson: any = await unifiedIngestRes.json();
+    assert.equal(unifiedJson.summary.hasPowerData, true);
+    if (modisLiveAvailable) {
+      assert.equal(unifiedJson.summary.hasModisNumericData, true);
+    }
+    record(
+      'POST /api/nasa/ingest/:farmId',
+      modisLiveAvailable ? 'PASS' : 'WARN',
+      `POWER Wind=${unifiedJson.summary.meanWindSpeedMps} m/s, MODIS NDVI=${unifiedJson.summary.latestModisNdvi ?? 'unavailable (upstream timeout)'}`
+    );
+
+    // 11. Dashboard aggregated telemetry, unified /api/nasa/observations/:farmId, climate timeline, risk, soil, bare-field, pest-cycles
     const dashObs = await fetch(`${baseUrl}/api/nasa/observations?farmId=${encodeURIComponent(farmId)}`, { headers: authHeadersA });
     assert.equal(dashObs.status, 200);
     const dashObsJson: any = await dashObs.json();
     assert.equal(dashObsJson.realTimeMetrics.solarInsolationPOWER.status, 'synced');
+    if (modisLiveAvailable) {
+      assert.equal(dashObsJson.realTimeMetrics.vegetationNDVI.status, 'synced');
+      assert.equal(typeof dashObsJson.realTimeMetrics.vegetationNDVI.currentNDVI, 'number');
+
+      const farmObsFilter = await fetch(`${baseUrl}/api/nasa/observations/${encodeURIComponent(farmId)}?dataset=modis&limit=10`, {
+        headers: authHeadersA,
+      });
+      assert.equal(farmObsFilter.status, 200);
+      const farmObsFilterJson: any = await farmObsFilter.json();
+      assert.ok(farmObsFilterJson.observations.length > 0);
+
+      const modisRouteRes = await fetch(`${baseUrl}/api/nasa/modis?farmId=${encodeURIComponent(farmId)}`, { headers: authHeadersA });
+      assert.equal(modisRouteRes.status, 200);
+      const modisRouteJson: any = await modisRouteRes.json();
+      assert.equal(modisRouteJson.numericSummary.hasModisNumericData, true);
+    }
 
     const climateRes = await fetch(`${baseUrl}/api/climate/timeline?farmId=${encodeURIComponent(farmId)}`, { headers: authHeadersA });
     assert.equal(climateRes.status, 200);
@@ -300,7 +381,7 @@ async function main() {
       const r = await fetch(`${baseUrl}${path}?farmId=${encodeURIComponent(farmId)}`, { headers: authHeadersA });
       assert.equal(r.status, 200, `${path} failed`);
     }
-    record('Dashboard NASA/Soil/Risk/Analysis endpoints', 'PASS', `POWER timeline (${climateJson.timeline.length} days) & all analysis routes verified`);
+    record('Dashboard NASA/Soil/Risk/Analysis endpoints', 'PASS', `POWER timeline (${climateJson.timeline.length} days), MODIS NDVI=${dashObsJson.realTimeMetrics.vegetationNDVI.currentNDVI ?? 'unavailable'}, and all analysis routes verified`);
 
     // 11. Crop Rotation Engine + Saved Assessment Persistence
     const compareRes = await fetch(`${baseUrl}/api/rotations/compare`, {
@@ -364,6 +445,7 @@ async function main() {
         }
       }
     }
+    server.closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 
@@ -373,7 +455,11 @@ async function main() {
   console.log(`Failed: ${results.filter((r) => r.status === 'FAIL').length}`);
 }
 
-main().catch((err) => {
-  console.error('VERIFICATION FAILED:', err?.message || err);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('VERIFICATION FAILED:', err?.message || err);
+    process.exit(1);
+  });

@@ -1,10 +1,10 @@
 import { GoogleGenAI } from '@google/genai';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { FarmerPriorities, WhatIfScenario } from '../src/types';
-import { calculateStrategyEvaluations, DEFAULT_PRIORITIES } from './agronomy';
-import { logGeminiEvent } from './logger';
-import { FarmNasaSummary } from './nasa';
-import { DbFarmRecord } from './supabase';
+import type { FarmerPriorities, WhatIfScenario } from '../src/types.js';
+import { calculateStrategyEvaluations, DEFAULT_PRIORITIES } from './agronomy.js';
+import { logGeminiEvent } from './logger.js';
+import type { FarmNasaSummary } from './nasa.js';
+import type { DbFarmRecord } from './supabase.js';
 
 let geminiClient: GoogleGenAI | null = null;
 const inFlightAdvisorRequests = new Map<string, Promise<AdvisorResult>>();
@@ -93,6 +93,10 @@ export async function runGroundedAdvisor(params: {
     nasaPowerSynced: nasaSummary.hasPowerData,
     nasaPowerDays: nasaSummary.dailyTimeline.length,
     nasaPowerLatestDate: nasaSummary.powerLatestObservedAt,
+    meanWindSpeedMps: nasaSummary.meanWindSpeedMps,
+    modisNumericSynced: nasaSummary.hasModisNumericData,
+    modisLatestNdvi: nasaSummary.latestModisNdvi,
+    modisLatestNdviDate: nasaSummary.latestModisNdviDate,
     smapLatestGranule: nasaSummary.cmrGranulesByDataset?.smap?.latestGranuleId || null,
     gpmLatestGranule: nasaSummary.cmrGranulesByDataset?.gpm?.latestGranuleId || null,
     modisLatestGranule: nasaSummary.cmrGranulesByDataset?.modis?.latestGranuleId || null,
@@ -104,9 +108,10 @@ export async function runGroundedAdvisor(params: {
 
   const systemInstruction = `You are the FieldShift AI Agricultural Advisor, an agronomic decision-support assistant.
 Strict Scientific Integrity Rules:
-1. ONLY cite numeric NASA, climate, or soil values explicitly provided in the grounded context below. NEVER invent or fabricate satellite measurements (such as SMAP moisture numbers or MODIS NDVI numbers) if the context marks them as not synced or metadata-only.
+1. ONLY cite numeric NASA, climate, or soil values explicitly provided in the grounded context below. NEVER invent or fabricate satellite measurements (such as SMAP soil moisture numbers or GPM grid totals) if the context marks them as not synced or metadata-only.
 2. Clearly distinguish between:
-   - Real NASA POWER observations (when synced for the parcel's 0.5° grid),
+   - Real NASA POWER meteorological assimilation observations (0.5° grid, not a parcel weather station),
+   - Real NASA MODIS MOD13Q1 250m / MOD11A2 1km composite pixel values (noting composite dates & pixel reliability),
    - NASA Earthdata CMR satellite granule coverage metadata (where HDF5/NetCDF pixel extraction is pending Earthdata Login),
    - Farmer-reported / lab soil records,
    - Deterministic strategy scores, and
@@ -115,17 +120,20 @@ Strict Scientific Integrity Rules:
 4. Keep formatting concise, scannable, with clear markdown headings and bullet points.`;
 
   const powerBlock = nasaSummary.hasPowerData
-    ? `* NASA POWER Daily Agroclimatology (LIVE SYNCED, ${nasaSummary.dailyTimeline.length} days, latest ${nasaSummary.powerLatestObservedAt?.slice(0, 10)}): Mean Air Temp ${nasaSummary.meanTempC}°C (Range ${nasaSummary.minTempC}°C to ${nasaSummary.maxTempC}°C), Cumulative Precipitation ${nasaSummary.precipTotalMm} mm, Mean Relative Humidity ${nasaSummary.meanHumidityPct}%, Mean Solar Flux ${nasaSummary.meanSolarRadiationMj} MJ/m²/day, Accumulated GDD (base 10°C) ${nasaSummary.growingDegreeDaysBase10C}.`
-    : '* NASA POWER Daily Agroclimatology: NOT YET SYNCED for this farm in the database (do not invent temperature or precipitation readings).';
+    ? `* NASA POWER Daily Agroclimatology (LIVE SYNCED, ${nasaSummary.dailyTimeline.length} days, latest ${nasaSummary.powerLatestObservedAt?.slice(0, 10)}, retrieved ${nasaSummary.powerLastRetrievedAt?.slice(0, 10)}): Mean Air Temp ${nasaSummary.meanTempC}°C (Range ${nasaSummary.minTempC}°C to ${nasaSummary.maxTempC}°C), Cumulative Precipitation ${nasaSummary.precipTotalMm} mm, Mean Relative Humidity ${nasaSummary.meanHumidityPct}%, Mean Wind Speed ${nasaSummary.meanWindSpeedMps ?? 'N/A'} m/s, Mean Solar Flux ${nasaSummary.meanSolarRadiationMj} MJ/m²/day, Accumulated GDD (base 10°C) ${nasaSummary.growingDegreeDaysBase10C}.`
+    : '* NASA POWER Daily Agroclimatology: NOT YET SYNCED for this farm in the database (do not invent temperature, precipitation, or wind readings).';
 
-  const cmrBlock = ['smap', 'gpm', 'modis', 'ecostress']
-    .map((ds) => {
+  const modisNumericBlock = nasaSummary.hasModisNumericData
+    ? `* NASA MODIS ORNL DAAC (LIVE 250m/1km PIXEL SYNCED): MOD13Q1 NDVI=${nasaSummary.latestModisNdvi}, EVI=${nasaSummary.latestModisEvi ?? 'N/A'} (observed ${nasaSummary.latestModisNdviDate}, tile ${nasaSummary.latestModisTile || 'N/A'}, quality: ${nasaSummary.latestModisQuality || 'Good'})${nasaSummary.latestModisLstC !== null ? `; MOD11A2 Daytime LST=${nasaSummary.latestModisLstC}°C (${nasaSummary.latestModisLstDate})` : ''}.`
+    : '* NASA MODIS ORNL DAAC 250m NDVI/EVI: Not yet synced for numeric pixel values (do not invent NDVI values).';
+
+  const cmrBlock = [modisNumericBlock, ...['smap', 'gpm', 'modis', 'ecostress'].map((ds) => {
       const info = nasaSummary.cmrGranulesByDataset[ds];
       if (info?.latestGranuleId) {
-        return `* ${ds.toUpperCase()} (CMR Granule Metadata Verified): Latest granule ${info.latestGranuleId} (${info.latestTimeStart}); pixel-level numeric extraction pending authenticated Earthdata HDF5 reader.`;
+        return `* ${ds.toUpperCase()} (CMR Granule Metadata Verified): Latest granule ${info.latestGranuleId} (${info.latestTimeStart}); HDF5/NetCDF grid pixel extraction requires Earthdata Login worker.`;
       }
-      return `* ${ds.toUpperCase()}: Not yet synced via Earthdata CMR for this farm.`;
-    })
+      return `* ${ds.toUpperCase()} (CMR): Not yet queried via Earthdata CMR for this farm.`;
+    })]
     .join('\n');
 
   const strategyBlock = evalResult.strategies

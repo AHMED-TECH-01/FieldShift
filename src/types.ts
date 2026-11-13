@@ -192,3 +192,29 @@ export interface User {
   fullName: string;
   verified: boolean;
 }
+
+export interface NASAObservation {
+  id: string;
+  farmId?: string;
+  provider: string;
+  dataset: string;
+  productId?: string;
+  parameter: string;
+  value: number | null;
+  unit: string;
+  latitude?: number;
+  longitude?: number;
+  observationStart: string;
+  observationEnd?: string;
+  retrievedAt: string;
+  spatialResolution?: string;
+  temporalResolution?: string;
+  spatialMethod?: 'point_centroid_approximation' | 'polygon_boundary' | 'grid_cell_point';
+  qualityFlag?: string;
+  qualityStatus: string;
+  sourceUrl?: string;
+  processingMethod?: string;
+  uncertainty?: string;
+  status: 'observed' | 'estimated' | 'simulated' | 'unavailable';
+}
+

@@ -83,6 +83,7 @@ export const datasetSyncSchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'startDate must be YYYY-MM-DD').optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate must be YYYY-MM-DD').optional(),
   days: z.coerce.number().int().min(1).max(90).optional(),
+  resolution: z.enum(['daily', 'monthly']).optional(),
 });
 
 export const rotationCreateSchema = z.object({

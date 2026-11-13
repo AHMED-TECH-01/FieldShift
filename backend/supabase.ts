@@ -1,7 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { NextFunction, Request, Response } from 'express';
-import { Farm } from '../src/types';
-import { logEvent } from './logger';
+import type { Farm } from '../src/types.js';
+import { logEvent } from './logger.js';
 
 export interface AuthenticatedUser {
   id: string;

@@ -16,31 +16,31 @@ export const DemoModal: React.FC<DemoModalProps> = ({ isOpen, onClose, onExplore
   const steps = [
     {
       title: 'Step 1: Automated Satellite Telemetry Fetch',
-      description: 'Field Shift queries NASA SMAP, GPM, and MODIS for the exact geospatial boundaries of your parcel.',
-      metric: 'NASA SMAP: 0.284 m³/m³ (Optimal) | GPM 30-Day: 68.4mm',
+      description: 'Field Shift queries live NASA POWER agroclimatology, ORNL DAAC MODIS 250m NDVI, and Earthdata CMR granules for your parcel.',
+      metric: 'DEMONSTRATION DATA: NASA POWER Daily Metrics + MODIS 250m NDVI + Earthdata CMR Granules',
       icon: Satellite,
-      badge: 'NASA SATELLITE PASS',
+      badge: 'DEMONSTRATION DATA',
     },
     {
       title: 'Step 2: Local Soil Chemistry Cross-Referencing',
-      description: 'Measured laboratory pH (6.4) and Organic Matter (3.8%) calibrate the soil water-holding capacity equation.',
-      metric: 'Available Water Capacity: +22,000 gal/acre buffer',
+      description: 'Measured laboratory pH and Organic Matter calibrate the soil water-holding capacity equation.',
+      metric: 'DEMONSTRATION DATA: Lab soil pH & organic matter segregated from satellite pixels',
       icon: Sprout,
       badge: 'SOIL INTELLIGENCE',
     },
     {
       title: 'Step 3: Multi-Year Rotation Simulation',
       description: 'The engine tests Strategy A (Current), Strategy B (Soil Restoration), and Strategy C (Climate Resilient).',
-      metric: 'Strategy B delivers +86% resilience with 85 lbs/acre fixed nitrogen',
+      metric: 'DEMONSTRATION DATA: Multi-criteria weighting across your 12 farmer priorities',
       icon: RefreshCw,
       badge: 'ROTATION ENGINE',
     },
     {
       title: 'Step 4: AI Agricultural Advisor Synthesis',
-      description: 'Gemini 3.8 Flash synthesizes agronomic trade-offs and highlights herbicide timing and seed-bed preparation.',
-      metric: 'Custom Farmer Guidance: Low weed seed bank, high biological activity',
+      description: 'Google Gemini synthesizes agronomic trade-offs grounded in your persisted farm soil and NASA data.',
+      metric: 'DEMONSTRATION DATA: Grounded agronomic guidance with explicit uncertainty notices',
       icon: Bot,
-      badge: 'GEMINI COPILOT',
+      badge: 'GEMINI ADVISOR',
     },
   ];
 

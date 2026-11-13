@@ -12,7 +12,7 @@ FieldShift runs as a unified TypeScript monorepo deployed to **Vercel**:
 | **Local Dev Server** | `tsx server.ts` (Express + Vite middlewares) | `server.ts` |
 | **Database & Auth** | Supabase PostgreSQL (RLS) + Supabase Auth | `supabase/migrations/` |
 | **AI Engine** | Google Gemini (`@google/genai`: `gemini-4-hydrogen` / `gemini-3.1-flash-lite`) | `backend/gemini.ts` |
-| **NASA Ingestion** | NASA POWER Daily Point API + Earthdata CMR Discovery | `backend/nasa.ts` |
+| **NASA Ingestion** | NASA POWER (Daily/Monthly) + ORNL DAAC MODIS (250m/1km) + Earthdata CMR | `backend/nasa.ts`, `backend/nasa/` |
 
 ---
 
@@ -32,7 +32,8 @@ npm run dev
 npm run lint
 npm run build
 
-# 5. Run live API, RLS, NASA & Gemini verification suite
+# 5. Run unit + mocked NASA integration tests & live verification suite
+npx tsx --test tests/nasa-unit-and-integration.test.ts
 npx tsx tests/verify-production.ts
 ```
 
@@ -89,18 +90,25 @@ npx tsx tests/verify-production.ts
 | `GET` | `/api/priorities?farmId=...` | Retrieve caller's saved priority weights for farm |
 | `PUT` | `/api/priorities` | Upsert caller's 12 priority weights (`1..5`) |
 
-### NASA Data Ingestion & Farm Telemetry (Protected)
+### NASA Data Ingestion & Farm Telemetry
 | Method | Endpoint | Purpose |
 | :--- | :--- | :--- |
-| `GET` | `/api/datasets/status?farmId=...` | Summary of synced NASA POWER metrics, CMR granules & `ingestion_jobs` |
-| `POST` | `/api/datasets/nasa-power/sync` | Fetch live NASA POWER daily agroclimatology for parcel coordinates & upsert idempotently |
-| `POST` | `/api/datasets/:dataset/sync` | Query live NASA Earthdata CMR granules (`smap`, `gpm`, `modis`, `ecostress`) & store metadata (`value = null`, `is_missing = true`) |
+| `GET` | `/api/nasa/health` | Public provider capability matrix, credential flags & cache stats |
+| `GET` | `/api/nasa/sources` | Public NASA dataset catalog, parameters & official doc links |
+| `GET` | `/api/datasets/status?farmId=...` | Summary of synced NASA POWER/MODIS metrics, CMR granules & `ingestion_jobs` |
+| `POST` | `/api/nasa/ingest/:farmId` | Unified ingestion across POWER, MODIS ORNL DAAC, SMAP, GPM & ECOSTRESS CMR |
+| `GET` | `/api/nasa/ingestion/:jobId` | Retrieve single persisted `ingestion_jobs` record (RLS-protected) |
+| `GET` | `/api/nasa/observations/:farmId` | Canonical `NASAObservation[]` filtered by `dataset`, `parameter`, `startDate`, `endDate` |
+| `GET` | `/api/nasa/power` | Parcel NASA POWER daily/monthly metrics (`WS2M`, GDD, solar flux, US/SI unit conversions) |
+| `GET` | `/api/nasa/:provider(modis\|gpm\|smap\|ecostress)` | Provider-specific canonical observations, MODIS NDVI/EVI/LST summary & limitations |
+| `POST` | `/api/datasets/nasa-power/sync` | Fetch live NASA POWER daily/monthly agroclimatology & upsert idempotently |
+| `POST` | `/api/datasets/:dataset/sync` | Sync live MODIS 250m/1km (`modis`) or query Earthdata CMR granules (`smap`, `gpm`, `ecostress`) |
 | `GET` | `/api/datasets/:dataset/observations` | Paginated persisted `nasa_observations` for dataset & farm |
-| `GET` | `/api/nasa/observations?farmId=...` | Dashboard real-time metrics + explicit `"not_synced"` / `"granule_metadata_only"` status |
-| `GET` | `/api/climate/timeline?farmId=...` | Daily temperature, rainfall, humidity & solar timeline from persisted POWER rows |
+| `GET` | `/api/nasa/observations?farmId=...` | Dashboard real-time metrics + explicit spatial method & status flags |
+| `GET` | `/api/climate/timeline?farmId=...` | Daily temp, rainfall, humidity, solar & wind speed timeline from persisted POWER rows |
 | `GET` | `/api/soil/profiles?farmId=...` | Farmer/lab soil test metrics segregated from satellite telemetry |
-| `GET` | `/api/risk/field-analysis?farmId=...` | Heat, rainfall deficit/runoff, and organic matter risk indicators |
-| `GET` | `/api/analysis/bare-field?farmId=...` | Seasonal bare-soil exposure analysis grounded in crop & POWER data |
+| `GET` | `/api/risk/field-analysis?farmId=...` | Heat, rainfall deficit/runoff, MODIS canopy vigor, wind & organic matter risk indicators |
+| `GET` | `/api/analysis/bare-field?farmId=...` | Seasonal bare-soil exposure analysis grounded in crop & POWER/MODIS data |
 | `GET` | `/api/analysis/pest-cycles?farmId=...` | Crop-family pest cycle interruption evaluation |
 
 ### Crop Rotation Engine & AI Advisor (Protected)
@@ -118,6 +126,6 @@ npx tsx tests/verify-production.ts
 
 ## 5. Known Limitations & Operational Notes
 
-1. **NASA Sub-Field / Binary Pixel Extraction**: NASA POWER delivers `0.5°` (~50 km) assimilated daily agroclimatology without auth. SMAP (`SPL4SMGP`), GPM (`GPM_3IMERGDL`), MODIS (`MOD13Q1`), and ECOSTRESS (`ECO_L3T_JET`) perform live Earthdata CMR granule discovery and record `granuleId` provenance with `value: null, is_missing: true`; raster HDF5/NetCDF4 pixel extraction requires future authenticated Earthdata Login file download + binary decoding worker outside Vercel serverless limits.
+1. **NASA Sub-Field / Binary Pixel Extraction**: NASA POWER delivers `0.5°` (~50 km) assimilated daily/monthly agroclimatology (`WS2M`, temp, rainfall, solar, humidity) without auth, and NASA ORNL DAAC MODIS returns live numeric 250m `MOD13Q1` (`NDVI`, `EVI`, pixel reliability cloud-masked) + 1km `MOD11A2` (`LST_Day_1km`) without auth. SMAP (`SPL4SMGP`), GPM (`GPM_3IMERGDL`), and ECOSTRESS (`ECO_L3T_JET`) perform live Earthdata CMR granule discovery and record `granuleId` provenance with `value: null, is_missing: true`; raster HDF5/NetCDF4 pixel extraction requires future authenticated Earthdata Login (`EARTHDATA_TOKEN`) file download + binary decoding worker outside Vercel serverless limits.
 2. **Serverless Execution Limits**: Single NASA POWER sync requests are bounded to `days <= 90` (`datasetSyncSchema`) so sync operations complete safely well inside Vercel's serverless timeout.
 3. **Vercel Environment Sync**: Production deployments require environment variables to be saved in the Vercel Dashboard before running `vercel --prod`.

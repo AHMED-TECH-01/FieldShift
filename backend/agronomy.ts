@@ -1,13 +1,13 @@
-import {
+import type {
   BareFieldPeriod,
   CropCharacteristics,
   FarmerPriorities,
   PestCycleEvaluation,
   SupplementalIncome,
   WhatIfScenario,
-} from '../src/types';
-import { FarmNasaSummary } from './nasa';
-import { DbFarmRecord } from './supabase';
+} from '../src/types.js';
+import type { FarmNasaSummary } from './nasa.js';
+import type { DbFarmRecord } from './supabase.js';
 
 export const DEFAULT_PRIORITIES: FarmerPriorities = {
   waterConservation: 4,
@@ -517,6 +517,21 @@ export function calculateStrategyEvaluations(
       scoreA -= 3;
       scoreC += 2;
     }
+    if (nasaSummary.meanWindSpeedMps !== null && nasaSummary.meanWindSpeedMps > 5.5) {
+      // High wind speeds raise evaporation and bare-soil wind erosion exposure
+      scoreA -= 2;
+      scoreB += 2;
+      scoreC += 2;
+    }
+  }
+
+  // Factor live 250m MODIS MOD13Q1 vegetation vigor when synced
+  if (nasaSummary?.hasModisNumericData && nasaSummary.latestModisNdvi !== null) {
+    if (nasaSummary.latestModisNdvi < 0.25) {
+      // Low vegetation cover supports soil armor / cover-crop restoration urgency
+      scoreA -= 2;
+      scoreB += 3;
+    }
   }
 
   // Hypothetical What-If Scenario adjustments (clearly kept separate from observed data)
@@ -535,7 +550,7 @@ export function calculateStrategyEvaluations(
   scoreC = Math.max(50, Math.min(98, Math.round(scoreC)));
 
   const powerEvidenceLine = nasaSummary?.hasPowerData
-    ? `NASA POWER (${nasaSummary.dailyTimeline.length} synced days ending ${nasaSummary.powerLatestObservedAt?.slice(0, 10)}): Mean ${nasaSummary.meanTempC ?? 'N/A'}°C, Total Precip ${nasaSummary.precipTotalMm ?? 'N/A'} mm, Solar ${nasaSummary.meanSolarRadiationMj ?? 'N/A'} MJ/m²/day`
+    ? `NASA POWER (${nasaSummary.dailyTimeline.length} synced days ending ${nasaSummary.powerLatestObservedAt?.slice(0, 10)}): Mean ${nasaSummary.meanTempC ?? 'N/A'}°C, Precip ${nasaSummary.precipTotalMm ?? 'N/A'} mm, Wind ${nasaSummary.meanWindSpeedMps ?? 'N/A'} m/s, Solar ${nasaSummary.meanSolarRadiationMj ?? 'N/A'} MJ/m²/day`
     : 'NASA POWER daily climate series not yet synced for this farm (sync required for local climate weighting)';
 
   const smapGranule = nasaSummary?.cmrGranulesByDataset?.smap?.latestGranuleId;
@@ -545,15 +560,15 @@ export function calculateStrategyEvaluations(
 
   const missingDataList: string[] = [];
   if (!nasaSummary?.hasPowerData) {
-    missingDataList.push('NASA POWER daily temperature/precipitation observations have not been synced for this parcel.');
+    missingDataList.push('NASA POWER daily temperature/precipitation/wind observations have not been synced for this parcel.');
   }
   if (!smapGranule) {
     missingDataList.push('SMAP L4 root-zone soil moisture pixel extraction requires Earthdata Login HDF5 processing (not yet synced).');
   } else {
     missingDataList.push(`SMAP granule (${smapGranule}) indexed via CMR; numeric m³/m³ pixel extraction awaits Earthdata HDF5 reader.`);
   }
-  if (!modisGranule) {
-    missingDataList.push('MODIS MOD13Q1 NDVI raster pixel extraction awaits Earthdata HDF-EOS reader.');
+  if (!nasaSummary?.hasModisNumericData) {
+    missingDataList.push('MODIS MOD13Q1 250m NDVI/EVI composite has not been synced for this parcel yet.');
   }
   missingDataList.push('Sub-surface tile drainage maps and county elevator specialty grain bids.');
 
@@ -561,6 +576,12 @@ export function calculateStrategyEvaluations(
     `Soil series ${farm.soilType} with ${farm.organicMatter}% organic matter and ${farm.drainage} drainage`,
     `Measured pH ${farm.soilPH}; reported lab N: ${farm.nitrogen}, P: ${farm.phosphorus}, K: ${farm.potassium} (tested ${farm.lastSoilTest})`,
   ];
+
+  const modisEvidenceLine = nasaSummary?.hasModisNumericData
+    ? `MODIS MOD13Q1 250m (${nasaSummary.latestModisNdviDate}): NDVI ${nasaSummary.latestModisNdvi}, EVI ${nasaSummary.latestModisEvi ?? 'N/A'} (${nasaSummary.latestModisQuality || 'Verified'})${nasaSummary.latestModisLstC !== null ? ` | MOD11A2 LST ${nasaSummary.latestModisLstC}°C` : ''}`
+    : modisGranule
+    ? `MODIS MOD13Q1 CMR granule indexed (${modisGranule}); run MODIS sync for 250m NDVI/EVI pixel values`
+    : 'MODIS 250m optical NDVI not yet synced for this farm';
 
   const strategies = [
     {
@@ -594,12 +615,10 @@ export function calculateStrategyEvaluations(
         whySuggested: 'Required baseline representing a standard commercial biennial sequence to quantify agronomic and environmental deltas.',
         nasaObservationsUsed: [
           powerEvidenceLine,
-          modisGranule
-            ? `MODIS MOD13Q1 granule indexed (${modisGranule}); optical NDVI pixel extraction pending Earthdata HDF-EOS access`
-            : 'MODIS 250m optical NDVI threshold benchmark (<0.20 winter fallow reference)',
+          modisEvidenceLine,
           gpmGranule
             ? `GPM IMERG granule indexed (${gpmGranule}); daily gridded rain rates available via Earthdata NetCDF4`
-            : 'NASA GPM 0.1° precipitation intensity benchmark',
+            : 'NASA GPM 0.1° precipitation coverage not yet indexed',
         ],
         soilInformationUsed: soilContext,
         cropCharacteristicsInfluenced: [
@@ -797,12 +816,17 @@ export function calculateStrategyEvaluations(
       powerLatestObservedAt: nasaSummary?.powerLatestObservedAt ?? null,
       precipTotalMm: nasaSummary?.precipTotalMm ?? null,
       meanTempC: nasaSummary?.meanTempC ?? null,
+      meanWindSpeedMps: nasaSummary?.meanWindSpeedMps ?? null,
+      hasModisNumericData: Boolean(nasaSummary?.hasModisNumericData),
+      latestModisNdvi: nasaSummary?.latestModisNdvi ?? null,
+      latestModisNdviDate: nasaSummary?.latestModisNdviDate ?? null,
       isHypotheticalScenario: Boolean(scenario),
     },
   };
 }
 
 export function buildBareFieldAnalysis(farm: DbFarmRecord, nasaSummary?: FarmNasaSummary | null): BareFieldPeriod[] {
+  const observedNdvi = nasaSummary?.hasModisNumericData ? nasaSummary.latestModisNdvi : null;
   return [
     {
       strategyCode: 'A',
@@ -811,9 +835,10 @@ export function buildBareFieldAnalysis(farm: DbFarmRecord, nasaSummary?: FarmNas
       soilExposureRisk: 'High',
       potentialErosionTonsPerAcre: 3.8,
       coverCropOpportunity: `Winter Cereal Rye or Triticale drilled immediately after ${farm.currentCrop} harvest`,
-      ndviThresholdObserved: 0.18,
-      caveat:
-        'Benchmark winter NDVI (<0.20) indicates high bare-soil exposure risk. Satellite NDVI cannot distinguish dead crop residue from bare soil without field inspection.',
+      ndviThresholdObserved: observedNdvi ?? 0.18,
+      caveat: observedNdvi !== null
+        ? `Live MODIS MOD13Q1 250m NDVI (${nasaSummary?.latestModisNdviDate}) measured ${observedNdvi}. Optical NDVI alone cannot distinguish dead crop residue from bare mineral soil without field scouting.`
+        : 'Benchmark winter NDVI threshold (<0.20) shown because MODIS has not been synced for this parcel yet. Sync MODIS for 250m parcel readings.',
     },
     {
       strategyCode: 'B',

@@ -25,15 +25,15 @@ export const ExplainabilityExplorer: React.FC<ExplainabilityExplorerProps> = ({ 
   const strat = strategies.find((s) => s.code === selectedCode) || strategies[0];
   const exp = strat?.explainability || {
     strategyCode: selectedCode,
-    whySuggested: 'Recommended based on retrieved farm soil characteristics and regional climate baselines.',
-    nasaObservationsUsed: ['NASA SMAP 0.284 m³/m³ soil moisture', 'NASA GPM 68.4mm precipitation'],
-    soilInformationUsed: ['Clarion-Nicollet Loam profile', 'Soil Organic Matter 3.8%'],
+    whySuggested: 'Recommended based on persisted farm soil characteristics and regional climate baselines.',
+    nasaObservationsUsed: ['Sync NASA observations to view parcel-grounded telemetry'],
+    soilInformationUsed: ['Persisted farm soil profile and lab test metrics'],
     cropCharacteristicsInfluenced: ['Water requirements and root architecture'],
     farmerPrioritiesInfluenced: ['Calibrated based on your 12 priority settings'],
     expectedPotentialBenefits: ['Optimized rotational yield and soil biological health'],
     environmentalAndAgriculturalRisks: ['Seasonal weather fluctuations and weed management'],
     missingInformation: ['Subsurface drainage tile telemetry'],
-    uncertaintyAndLimitations: ['Coarse satellite spatial resolution (9km)'],
+    uncertaintyAndLimitations: ['Coarse satellite spatial resolution (0.5° POWER / 9 km SMAP / 250 m MODIS)'],
     localExpertValidationChecklist: ['Verify with local County Extension Educator'],
   };
 

@@ -91,17 +91,17 @@ It helps users:
 
 FieldShift incorporates NASA Earth observation datasets to support environmental analysis.
 
-| NASA Dataset | Agricultural Application |
-|---|---|
-| NASA POWER | Temperature, solar radiation, and meteorological indicators |
-| NASA GPM | Precipitation and rainfall analysis |
-| NASA SMAP | Surface soil moisture observations |
-| NASA MODIS | Vegetation and land-surface monitoring |
-| Landsat | Land-cover and vegetation observations |
+| NASA Dataset | Agricultural Application | Access Mode |
+|---|---|---|
+| **NASA POWER** | Daily & monthly `T2M`, `T2M_MAX`, `T2M_MIN`, `PRECTOTCORR`, `RH2M`, `ALLSKY_SFC_SW_DWN`, and `WS2M` wind speed | Live Public API (no key required) |
+| **NASA MODIS (`MOD13Q1` / `MOD11A2`)** | Live 250m 16-day `NDVI` & `EVI` with pixel reliability cloud masking + 1km `LST_Day_1km` | Live Public ORNL DAAC Subsets REST API + Earthdata CMR |
+| **NASA GPM (`GPM_3IMERGDL`)** | Precipitation swath granule coverage metadata (with POWER `PRECTOTCORR` precipitation fallback) | Live Earthdata CMR Granule Discovery (NetCDF4 raster needs `EARTHDATA_TOKEN` + binary worker) |
+| **NASA SMAP (`SPL4SMGP`)** | Soil moisture swath granule coverage metadata (9km EASE-Grid 2.0) | Live Earthdata CMR Granule Discovery (HDF5 raster needs `EARTHDATA_TOKEN` + binary worker) |
+| **NASA ECOSTRESS (`ECO_L3T_JET`)** | Variable ISS overpass canopy thermal ET metadata (70m) | Live Earthdata CMR Granule Discovery (GeoTIFF/HDF5 needs `EARTHDATA_TOKEN` + binary worker) |
 
 These datasets help provide environmental context for agricultural decision-making.
 
-**Important:** Satellite-derived observations are not equivalent to direct field measurements. Their spatial resolution, observation depth, availability, and uncertainty must be considered when interpreting results.
+**Important:** Satellite-derived observations are not equivalent to direct field measurements. Their spatial resolution, quality flags (cloud/snow masks), point-centroid vs. polygon approximations, availability, and uncertainty must be considered when interpreting results. Missing or cloudy pixels are never fabricated.
 
 ### 6. Historical Climate & Moisture Timeline
 - Analyze historical rainfall patterns.
@@ -240,18 +240,16 @@ FieldShift is built using modern web technologies and AI-powered services.
 
 | Technology | Purpose |
 |---|---|
-| React / Next.js | Frontend application, depending on project configuration |
-| JavaScript / TypeScript | Application development |
-| Tailwind CSS | User interface styling |
-| Three.js | Interactive 3D visualizations, where used |
-| NASA POWER | Meteorological and environmental data |
-| NASA GPM | Precipitation observations |
-| NASA SMAP | Soil moisture observations |
-| NASA MODIS / Landsat | Satellite-based land and vegetation observations |
-| Google Gemini AI | AI-powered agricultural explanations |
-| Vercel | Deployment, if configured |
+| React 19 + Vite 8 | Frontend Single-Page Application (`src/`) |
+| TypeScript + Express 4 | Backend API (`app.ts` / `api/index.ts` Vercel serverless) |
+| Supabase PostgreSQL + Auth | Relational persistence, strict Row Level Security, and Auth |
+| Tailwind CSS v4 | Responsive mobile-first styling |
+| Three.js / Leaflet | Interactive geospatial & 3D visualizations |
+| NASA POWER + ORNL DAAC MODIS + Earthdata CMR | Real agroclimatology, 250m NDVI/EVI/LST, and granule provenance |
+| Google Gemini (`@google/genai`) | Grounded agronomic explanations (`gemini-4-hydrogen` / fallback) |
+| Vercel | Production edge SPA + serverless Express hosting |
 
-See the actual project configuration and environment documentation for the confirmed dependencies and services.
+See `DEPLOYMENT.md` and `ENVIRONMENT_VARIABLES.md` for confirmed dependencies, migrations, and environment setup.
 
 ---
 
@@ -307,9 +305,17 @@ npm run dev
 
 If the backend runs independently, start it using its own development script.
 
-### 5. Build for Production
+### 5. Run Tests & Build for Production
 
 ```bash
+# Unit & mocked NASA provider integration suite
+npx tsx --test tests/nasa-unit-and-integration.test.ts
+
+# Live Supabase + NASA + Gemini verification suite
+npx tsx tests/verify-production.ts
+
+# Typecheck & Vite production bundle
+npm run lint
 npm run build
 ```
 Generates optimized frontend assets in `/dist`.
@@ -345,15 +351,16 @@ FieldShift is structured for zero-cost deployment on Vercel:
 
 4. **Set Environment Variables in Vercel**:
    In **Project Settings &rarr; Environment Variables**, add:
-   - `GEMINI_API_KEY`: Your Google AI Studio Gemini API key (`AIzaSy...`)
+   - `VITE_SUPABASE_URL` & `VITE_SUPABASE_PUBLISHABLE_KEY`: Your Supabase project URL and publishable key
+   - `SUPABASE_URL` & `SUPABASE_SECRET_KEY`: Server-side Supabase credentials
+   - `GEMINI_API_KEY`: Your Google AI Studio Gemini API key
    - `NODE_ENV`: `production`
-   - *(Optional)* `VITE_SUPABASE_URL`: Your Supabase Project URL
-   - *(Optional)* `VITE_SUPABASE_ANON_KEY`: Your Supabase anonymous public key
+   - *(Optional)* `EARTHDATA_TOKEN` & `NASA_API_KEY`: Optional NASA credentials (see `ENVIRONMENT_VARIABLES.md`)
 
 5. **Deploy & Verify**:
    - Click **Deploy**.
-   - Visit `https://<your-project>.vercel.app/api/health` to confirm the serverless backend is live.
-   - Navigate to the frontend dashboard and interact with the AI Agricultural Advisor and Interactive Farm Map.
+   - Visit `https://<your-project>.vercel.app/api/health` and `/api/nasa/health` to confirm the serverless backend and NASA provider capabilities are live.
+   - Navigate to the frontend dashboard and click **Ingest All NASA Data** on your parcel.
 
 ---
 
@@ -361,17 +368,24 @@ FieldShift is structured for zero-cost deployment on Vercel:
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/health` | `GET` | System health check and Gemini configuration status |
-| `/api/crops` | `GET` | 16-parameter agronomic characteristics for 8+ verified crops |
-| `/api/farms` | `GET`, `POST` | Retrieve active parcels and register new farm parcel telemetry |
-| `/api/rotations/recalculate` | `POST` | Dynamic 3-strategy evaluation matrix based on farmer priorities |
-| `/api/advisor` (or `/api/gemini/advisor`) | `POST` | Gemini 3.8 Flash agronomic copilot grounded in NASA observations |
-| `/api/analysis/bare-field` | `GET` | 12-month MODIS NDVI vegetative armor and soil loss timeline |
+| `/api/health` | `GET` | System health check, Supabase reachability, Gemini & NASA readiness |
+| `/api/nasa/health` | `GET` | Provider-by-provider NASA availability, credentials, and cache metrics |
+| `/api/nasa/sources` | `GET` | Harmonized NASA dataset catalog, parameters, and official docs URLs |
+| `/api/nasa/power` | `GET` | Parcel NASA POWER daily/monthly metrics (`WS2M`, GDD, solar flux, unit conversions) |
+| `/api/nasa/:provider` | `GET` | Provider observations (`modis`, `gpm`, `smap`, `ecostress`) with quality/capability metadata |
+| `/api/nasa/observations/:farmId` | `GET` | Canonical paginated `NASAObservation[]` filtered by dataset, parameter, and dates |
+| `/api/nasa/ingest/:farmId` | `POST` | Unified ingestion across POWER, MODIS ORNL DAAC, SMAP, GPM & ECOSTRESS CMR |
+| `/api/nasa/ingestion/:jobId` | `GET` | Retrieve persisted `ingestion_jobs` run record (RLS-protected) |
+| `/api/datasets/:dataset/sync` | `POST` | Dataset-specific live sync (`nasa-power`, `modis`, `smap`, `gpm`, `ecostress`) |
+| `/api/crops` | `GET` | 16-parameter agronomic characteristics for 8 verified crops |
+| `/api/farms` | `GET`, `POST` | Retrieve accessible parcels and register new private farm telemetry |
+| `/api/rotations/recalculate` | `POST` | Dynamic 3-strategy evaluation matrix based on priorities & NASA metrics |
+| `/api/ai/advisor` | `POST` | Grounded Gemini AI agronomic copilot (`gemini-4-hydrogen`) + history persistence |
+| `/api/analysis/bare-field` | `GET` | Seasonal bare-soil exposure analysis grounded in crop & NASA telemetry |
 | `/api/analysis/pest-cycles` | `GET` | Host-crop botanical family break and pest cycle diagnostics |
-| `/api/analysis/supplemental-income` | `GET` | USDA CSP stewardship, carbon credits, and forage seed contracts |
-| `/api/auth/login` | `POST` | Session authentication and token dispatch |
-| `/api/auth/register` | `POST` | User registration with 6-digit OTP verification code dispatch |
-| `/api/auth/verify-otp` | `POST` | Validate 6-digit email confirmation code |
+| `/api/auth/login` | `POST` | Supabase Auth session authentication |
+| `/api/auth/register` | `POST` | User registration with email OTP confirmation |
+| `/api/auth/verify-otp` | `POST` | Validate email confirmation code |
 
 ## 🔐 Security & Reliability
 

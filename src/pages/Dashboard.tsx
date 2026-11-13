@@ -153,6 +153,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [nasaError, setNasaError] = useState<string | null>(null);
   const [syncingPower, setSyncingPower] = useState<boolean>(false);
   const [syncingCmr, setSyncingCmr] = useState<boolean>(false);
+  const [syncingAll, setSyncingAll] = useState<boolean>(false);
   const [syncBanner, setSyncBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const [climateTimeline, setClimateTimeline] = useState<any[]>([]);
@@ -354,9 +355,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
       }, 0);
       setSyncBanner({
         type: 'success',
-        message: `Indexed ${totalGranules} NASA Earthdata CMR granules across SMAP, GPM, MODIS & ECOSTRESS.`,
+        message: `Synced MODIS 250m numeric pixels and indexed ${totalGranules} NASA Earthdata CMR granules across SMAP, GPM, MODIS & ECOSTRESS.`,
       });
       await fetchNasaAndFarmAnalytics(selectedFarmId);
+      await recalculateStrategies(priorities, activeScenario);
     } catch (err: any) {
       setSyncBanner({
         type: 'error',
@@ -364,6 +366,34 @@ export const Dashboard: React.FC<DashboardProps> = ({
       });
     } finally {
       setSyncingCmr(false);
+    }
+  };
+
+  const handleIngestAllNasa = async () => {
+    setSyncingAll(true);
+    setSyncBanner(null);
+    try {
+      const res = await apiClient.post(`/api/nasa/ingest/${selectedFarmId}`, { days: 30 });
+      const outcomes = res?.outcomes || {};
+      const powerSaved = outcomes['nasa-power']?.recordsSaved || 0;
+      const modisPixels = outcomes.modis?.numericPixelCount || 0;
+      const cmrTotal = ['smap', 'gpm', 'modis', 'ecostress'].reduce(
+        (sum, k) => sum + Number(outcomes[k]?.granulesFound || 0),
+        0
+      );
+      setSyncBanner({
+        type: 'success',
+        message: `Ingested ${powerSaved} NASA POWER rows, ${modisPixels} MODIS 250m/1km pixel records, and ${cmrTotal} Earthdata CMR granule metadata entries.`,
+      });
+      await fetchNasaAndFarmAnalytics(selectedFarmId);
+      await recalculateStrategies(priorities, activeScenario);
+    } catch (err: any) {
+      setSyncBanner({
+        type: 'error',
+        message: err?.message || 'Failed to ingest NASA Earth observation feeds.',
+      });
+    } finally {
+      setSyncingAll(false);
     }
   };
 
@@ -1040,34 +1070,52 @@ export const Dashboard: React.FC<DashboardProps> = ({
               {/* Live NASA Telemetry Sync Action Bar */}
               <div className="bg-white p-4 sm:p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#145C3D] flex items-center gap-1.5">
-                    <Satellite className="w-3.5 h-3.5 text-[#76B93F]" />
-                    Parcel Earth Observation Link &bull; {activeFarm.coordinates[1].toFixed(2)}°N, {activeFarm.coordinates[0].toFixed(2)}°
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#145C3D] flex items-center gap-1.5">
+                      <Satellite className="w-3.5 h-3.5 text-[#76B93F]" />
+                      Parcel Earth Observation Link &bull; {activeFarm.coordinates[1].toFixed(2)}°N, {activeFarm.coordinates[0].toFixed(2)}°
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-[#FAFDF8] border border-[#D5E5CA] text-[10px] font-semibold text-[#527367]">
+                      {nasaTelemetry?.geometry?.spatialMethod === 'polygon_boundary'
+                        ? 'GeoJSON Boundary'
+                        : 'Point Centroid Approximation'}
+                    </span>
+                  </div>
                   <p className="text-xs text-[#527367] mt-0.5">
-                    {power?.status === 'synced'
-                      ? `Live NASA POWER window synced (${power.daysObserved} days observed, updated ${new Date(power.timestamp).toLocaleDateString()}).`
-                      : 'Sync live NASA POWER daily agroclimatology and Earthdata CMR granule metadata for this parcel.'}
+                    {power?.status === 'synced' || modis?.status === 'synced'
+                      ? `${power?.status === 'synced' ? `POWER ${power.daysObserved}d synced` : 'POWER not synced'} • ${
+                          modis?.status === 'synced' ? `MODIS 250m NDVI (${modis.observedAt})` : 'MODIS not synced'
+                        }.`
+                      : 'Ingest live NASA POWER agroclimatology, MODIS 250m vegetation indices, and Earthdata CMR granule metadata.'}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <button
                     type="button"
-                    disabled={syncingPower || syncingCmr}
-                    onClick={handleSyncNasaPower}
+                    disabled={syncingPower || syncingCmr || syncingAll}
+                    onClick={handleIngestAllNasa}
                     className="min-h-[42px] px-4 py-2 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold inline-flex items-center gap-1.5 transition-all disabled:opacity-50 shadow-xs"
                   >
-                    <CloudDownload className={`w-3.5 h-3.5 text-[#76B93F] ${syncingPower ? 'animate-pulse' : ''}`} />
-                    <span>{syncingPower ? 'Syncing POWER...' : 'Sync NASA POWER'}</span>
+                    <CloudDownload className={`w-3.5 h-3.5 text-[#76B93F] ${syncingAll ? 'animate-pulse' : ''}`} />
+                    <span>{syncingAll ? 'Ingesting All...' : 'Ingest All NASA Data'}</span>
                   </button>
                   <button
                     type="button"
-                    disabled={syncingPower || syncingCmr}
-                    onClick={handleDiscoverCmrGranules}
-                    className="min-h-[42px] px-4 py-2 rounded-full bg-[#EAF5DF] hover:bg-[#D8ECC8] text-[#145C3D] text-xs font-bold inline-flex items-center gap-1.5 transition-all disabled:opacity-50"
+                    disabled={syncingPower || syncingCmr || syncingAll}
+                    onClick={handleSyncNasaPower}
+                    className="min-h-[42px] px-3.5 py-2 rounded-full bg-[#EAF5DF] hover:bg-[#D8ECC8] text-[#145C3D] text-xs font-bold inline-flex items-center gap-1.5 transition-all disabled:opacity-50"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${syncingCmr ? 'animate-spin' : ''}`} />
-                    <span>{syncingCmr ? 'Querying CMR...' : 'Index CMR Granules'}</span>
+                    <RefreshCw className={`w-3.5 h-3.5 ${syncingPower ? 'animate-spin' : ''}`} />
+                    <span>{syncingPower ? 'Syncing POWER...' : 'Sync POWER'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={syncingPower || syncingCmr || syncingAll}
+                    onClick={handleDiscoverCmrGranules}
+                    className="min-h-[42px] px-3.5 py-2 rounded-full bg-white border border-[#D5E5CA] hover:bg-[#FAFDF8] text-[#073D2B] text-xs font-bold inline-flex items-center gap-1.5 transition-all disabled:opacity-50"
+                  >
+                    <Satellite className={`w-3.5 h-3.5 text-sky-700 ${syncingCmr ? 'animate-spin' : ''}`} />
+                    <span>{syncingCmr ? 'Querying MODIS/CMR...' : 'Sync MODIS & CMR'}</span>
                   </button>
                 </div>
               </div>
@@ -1135,8 +1183,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </div>
                   <p className="text-[11px] text-[#2A4D3E]">
                     {power?.status === 'synced'
-                      ? `Mean Solar Flux • GDD(10°C): ${power.growingDegreeDays ?? '—'} • ${power.meanTempC ?? '—'}°C`
-                      : 'Click "Sync NASA POWER" above to retrieve daily insolation & temp'}
+                      ? `GDD(10°C): ${power.growingDegreeDays ?? '—'} • ${power.meanTempC ?? '—'}°C • Wind: ${power.meanWindSpeedMps ?? '—'} m/s`
+                      : 'Click "Ingest All NASA Data" above to retrieve daily insolation, temp & wind'}
                   </p>
                 </div>
 
@@ -1196,7 +1244,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </p>
                 </div>
 
-                {/* Card 4: NASA MODIS CMR */}
+                {/* Card 4: NASA MODIS 250m Live NDVI / EVI / LST */}
                 <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
                   <div className="flex items-center justify-between text-xs text-[#527367]">
                     <span className="flex items-center gap-1">
@@ -1204,20 +1252,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       NASA MODIS
                     </span>
                     <span className="text-[10px] font-mono text-emerald-700 font-bold">
-                      {modis?.latestGranuleId ? '250m CMR' : 'NOT SYNCED'}
+                      {modis?.status === 'synced'
+                        ? 'LIVE 250m'
+                        : modis?.latestGranuleId
+                        ? '250m CMR'
+                        : 'NOT SYNCED'}
                     </span>
                   </div>
                   <div className="font-display text-xl sm:text-2xl font-bold text-[#073D2B]">
                     {nasaLoading
                       ? 'Loading...'
+                      : modis?.status === 'synced' && modis?.currentNDVI !== null && modis?.currentNDVI !== undefined
+                      ? `${modis.currentNDVI} NDVI`
                       : modis?.latestGranuleId
-                      ? 'Granule Indexed'
-                      : 'Not Synced'}
+                      ? 'Granule Only'
+                      : 'Unavailable'}
                   </div>
                   <p className="text-[11px] text-[#2A4D3E] break-words">
-                    {modis?.latestGranuleId
-                      ? `MOD13Q1: ${modis.granuleTimestamp ? new Date(modis.granuleTimestamp).toLocaleDateString() : 'Indexed'} • HDF-EOS raster needs Earthdata auth`
-                      : 'Index CMR granules to verify MODIS 250m vegetation tile coverage'}
+                    {modis?.status === 'synced'
+                      ? `EVI: ${modis.currentEVI ?? '—'}${modis.lstDayC !== null && modis.lstDayC !== undefined ? ` • LST: ${modis.lstDayC}°C` : ''} • ${modis.observedAt}`
+                      : modis?.latestGranuleId
+                      ? `Granule indexed (${modis.granuleTimestamp ? new Date(modis.granuleTimestamp).toLocaleDateString() : 'CMR'}) • Run Sync MODIS for pixel NDVI`
+                      : 'Ingest MODIS 250m to retrieve live ORNL DAAC NDVI, EVI & quality flag'}
                   </p>
                 </div>
 
@@ -2297,7 +2353,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <div className="w-8 h-8 rounded-full bg-[#073D2B] text-[#76B93F] flex items-center justify-center flex-shrink-0">
                         <Bot className="w-4 h-4 animate-spin" />
                       </div>
-                      <span>Synthesizing NASA telemetry with Gemini 3.8 Flash...</span>
+                      <span>Synthesizing NASA telemetry with Gemini Advisor...</span>
                     </div>
                   )}
                 </div>
