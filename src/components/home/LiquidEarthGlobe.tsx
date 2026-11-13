@@ -3,7 +3,7 @@ import { FieldShiftEarth } from '../three/FieldShiftEarth';
 
 export const LiquidEarthGlobe: React.FC = () => {
   return (
-    <div className="relative w-full max-w-full h-[300px] sm:h-[400px] md:h-[480px] lg:h-[520px] flex items-center justify-center overflow-hidden">
+    <div className="relative w-full max-w-[272px] sm:max-w-[380px] md:max-w-[460px] lg:max-w-[500px] aspect-square mx-auto flex items-center justify-center">
       <FieldShiftEarth
         size="xl"
         speed={1.0}

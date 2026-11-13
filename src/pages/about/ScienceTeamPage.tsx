@@ -60,8 +60,8 @@ export const ScienceTeamPage: React.FC<ScienceTeamPageProps> = ({ onNavigate, on
   ];
 
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10 sm:space-y-12">
         
         {/* Breadcrumb Header */}
         <div>
@@ -73,34 +73,35 @@ export const ScienceTeamPage: React.FC<ScienceTeamPageProps> = ({ onNavigate, on
             onNavigate={onNavigate}
           />
           <div className="mt-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold uppercase tracking-wider mb-2">
-                <GraduationCap className="w-3.5 h-3.5" />
-                Interdisciplinary Research Council
+                <GraduationCap className="w-3.5 h-3.5 shrink-0" />
+                <span>Interdisciplinary Research Council</span>
               </div>
-              <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B]">
+              <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B]">
                 The Field Shift Science Team
               </h1>
-              <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+              <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
                 We bridge the gap between orbital astrophysics and muddy-boot field reality. Meet the scientists,
                 certified crop advisors, and engineers powering our agricultural intelligence platform.
               </p>
             </div>
             <button
+              type="button"
               onClick={() => onNavigate('/resources/scientific-ethics')}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto"
+              className="w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto shrink-0"
             >
               <span>Scientific Ethics & Disclaimer</span>
-              <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+              <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
             </button>
           </div>
         </div>
 
         {/* Core Guiding Principle Banner */}
-        <div className="bg-white rounded-3xl p-8 border border-[#D5E5CA] shadow-sm grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-          <div className="space-y-4">
+        <div className="bg-white rounded-3xl p-5 sm:p-8 border border-[#D5E5CA] shadow-sm grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8 items-center">
+          <div className="space-y-4 min-w-0">
             <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">Our Research Creed</span>
-            <h2 className="font-display text-2xl font-bold text-[#073D2B]">
+            <h2 className="font-display text-fluid-h2 font-bold text-[#073D2B]">
               Supporting Farmer Judgment, Never Overriding It
             </h2>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
@@ -110,10 +111,10 @@ export const ScienceTeamPage: React.FC<ScienceTeamPageProps> = ({ onNavigate, on
             </p>
           </div>
 
-          <div className="p-6 rounded-2xl bg-[#073D2B] text-white space-y-3">
+          <div className="p-5 sm:p-6 rounded-2xl bg-[#073D2B] text-white space-y-3 min-w-0">
             <h4 className="font-bold text-sm text-[#9BD85A] flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4" />
-              Open Science Commitment
+              <ShieldCheck className="w-4 h-4 shrink-0" />
+              <span>Open Science Commitment</span>
             </h4>
             <p className="text-xs text-white/80 leading-relaxed">
               All Field Shift remote sensing layers reference documented NASA DAAC archives (GES DISC, LP DAAC,
@@ -125,7 +126,7 @@ export const ScienceTeamPage: React.FC<ScienceTeamPageProps> = ({ onNavigate, on
         {/* Team Members Grid */}
         <div className="space-y-6">
           <div className="text-center max-w-2xl mx-auto">
-            <h3 className="font-display text-2xl sm:text-3xl font-bold text-[#073D2B]">
+            <h3 className="font-display text-fluid-h2 font-bold text-[#073D2B]">
               Scientific Advisory Council
             </h3>
             <p className="text-xs sm:text-sm text-[#527367] mt-1">
@@ -133,18 +134,18 @@ export const ScienceTeamPage: React.FC<ScienceTeamPageProps> = ({ onNavigate, on
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
             {teamMembers.map((member, idx) => (
               <div
                 key={idx}
-                className="bg-white p-6 sm:p-7 rounded-3xl border border-[#D5E5CA] hover:border-[#76B93F] transition-all shadow-2xs space-y-4 flex flex-col justify-between"
+                className="bg-white p-5 sm:p-7 rounded-3xl border border-[#D5E5CA] hover:border-[#76B93F] transition-all shadow-2xs space-y-4 flex flex-col justify-between min-w-0"
               >
                 <div>
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-12 h-12 rounded-2xl bg-[#EAF5DF] text-[#145C3D] font-display font-bold text-base flex items-center justify-center">
+                  <div className="flex items-center gap-3 mb-4 min-w-0">
+                    <div className="w-12 h-12 rounded-2xl bg-[#EAF5DF] text-[#145C3D] font-display font-bold text-base flex items-center justify-center shrink-0">
                       {member.initials}
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <h4 className="font-bold text-base text-[#073D2B] leading-tight">{member.name}</h4>
                       <p className="text-xs text-[#76B93F] font-semibold mt-0.5">{member.role}</p>
                     </div>
@@ -162,16 +163,16 @@ export const ScienceTeamPage: React.FC<ScienceTeamPageProps> = ({ onNavigate, on
         </div>
 
         {/* University & Extension Collaborations */}
-        <div className="p-8 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-4">
-          <div className="flex items-center gap-2 text-[#073D2B] font-bold text-lg">
-            <BookOpen className="w-5 h-5 text-[#76B93F]" />
+        <div className="p-5 sm:p-8 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-4">
+          <div className="flex items-center gap-2 text-[#073D2B] font-bold text-base sm:text-lg">
+            <BookOpen className="w-5 h-5 text-[#76B93F] shrink-0" />
             <h3>Institutional & Extension Collaborations</h3>
           </div>
           <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
             Field Shift engages with leading agricultural extension universities and conservation networks to ground-truth
             our crop sequence algorithms against verified multi-year trial plots in Iowa, Illinois, Minnesota, and Indiana.
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2 text-xs text-[#2A4D3E] font-semibold">
+          <div className="grid grid-cols-1 min-[380px]:grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 pt-2 text-xs text-[#2A4D3E] font-semibold">
             <div className="p-3 bg-[#FAFDF8] rounded-xl border border-[#E2E8DE] text-center">
               USDA-ARS Hydrology Lab
             </div>

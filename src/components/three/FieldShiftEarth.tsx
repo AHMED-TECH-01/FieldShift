@@ -32,15 +32,15 @@ export const FieldShiftEarth: React.FC<FieldShiftEarthProps> = ({
     }
     switch (size) {
       case 'sm':
-        return { width: 220, height: 220, styleClass: 'w-[180px] h-[180px] sm:w-[220px] sm:h-[220px] max-w-full' };
+        return { width: 220, height: 220, styleClass: 'w-full max-w-[180px] sm:max-w-[220px] aspect-square' };
       case 'md':
-        return { width: 340, height: 340, styleClass: 'w-[240px] h-[240px] sm:w-[300px] sm:h-[300px] md:w-[340px] md:h-[340px] max-w-full' };
+        return { width: 340, height: 340, styleClass: 'w-full max-w-[240px] sm:max-w-[300px] md:max-w-[340px] aspect-square' };
       case 'lg':
-        return { width: 440, height: 440, styleClass: 'w-[280px] h-[280px] sm:w-[360px] sm:h-[360px] md:w-[440px] md:h-[440px] max-w-full' };
+        return { width: 440, height: 440, styleClass: 'w-full max-w-[272px] sm:max-w-[360px] md:max-w-[440px] aspect-square' };
       case 'xl':
-        return { width: 520, height: 520, styleClass: 'w-full max-w-[290px] h-[290px] sm:max-w-[380px] sm:h-[380px] md:max-w-[480px] md:h-[480px] lg:max-w-[520px] lg:h-[520px]' };
+        return { width: 520, height: 520, styleClass: 'w-full max-w-[272px] sm:max-w-[380px] md:max-w-[460px] lg:max-w-[500px] aspect-square' };
       default:
-        return { width: 340, height: 340, styleClass: 'w-[260px] h-[260px] sm:w-[340px] sm:h-[340px] max-w-full' };
+        return { width: 340, height: 340, styleClass: 'w-full max-w-[260px] sm:max-w-[340px] aspect-square' };
     }
   };
 
@@ -114,8 +114,8 @@ export const FieldShiftEarth: React.FC<FieldShiftEarthProps> = ({
       {/* Three.js canvas container */}
       <div
         ref={containerRef}
-        className="w-full h-full cursor-grab active:cursor-grabbing relative z-10"
-        title="Interactive Field Shift Liquid Earth — Click and drag to inspect"
+        className="w-full h-full touch-pan-y md:cursor-grab md:active:cursor-grabbing relative z-10"
+        title="Interactive Field Shift Liquid Earth — Move pointer to inspect"
       />
     </div>
   );

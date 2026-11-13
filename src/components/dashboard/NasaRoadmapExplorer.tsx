@@ -41,16 +41,16 @@ export const NasaRoadmapExplorer: React.FC = () => {
   };
 
   return (
-    <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
+    <div className="bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
       
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E2E8DE] pb-5">
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold uppercase tracking-wider mb-2">
-            <Satellite className="w-3.5 h-3.5" />
-            Requirements F & G: NASA Data Integration & Scientific Fusion Pipeline
+            <Satellite className="w-3.5 h-3.5 shrink-0" />
+            <span>Requirements F & G: NASA Data Pipeline</span>
           </div>
-          <h3 className="font-display text-2xl font-bold text-[#073D2B]">
+          <h3 className="font-display text-fluid-h2 font-bold text-[#073D2B]">
             Multi-Mission Earth Science Architecture
           </h3>
           <p className="text-xs text-[#527367] mt-1 max-w-2xl">
@@ -59,26 +59,29 @@ export const NasaRoadmapExplorer: React.FC = () => {
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex items-center bg-[#E7EFE6] p-1 rounded-full self-start md:self-auto">
+        <div className="flex flex-wrap items-center gap-1 bg-[#E7EFE6] p-1 rounded-2xl sm:rounded-full self-start md:self-auto">
           <button
+            type="button"
             onClick={() => setActiveTab('catalog')}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+            className={`min-h-[40px] px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
               activeTab === 'catalog' ? 'bg-white text-[#073D2B] shadow-xs' : 'text-[#527367]'
             }`}
           >
             8 NASA Datasets
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab('harmonization')}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+            className={`min-h-[40px] px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
               activeTab === 'harmonization' ? 'bg-white text-[#073D2B] shadow-xs' : 'text-[#527367]'
             }`}
           >
             Harmonization
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab('methods')}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+            className={`min-h-[40px] px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
               activeTab === 'methods' ? 'bg-white text-[#073D2B] shadow-xs' : 'text-[#527367]'
             }`}
           >
@@ -88,24 +91,24 @@ export const NasaRoadmapExplorer: React.FC = () => {
       </div>
 
       {/* Satellite Earth Observation Visual Telemetry Banner */}
-      <div className="relative w-full h-48 sm:h-56 rounded-2xl overflow-hidden border border-[#D5E5CA] shadow-sm bg-[#073D2B]">
+      <div className="relative w-full min-h-[192px] sm:min-h-[224px] rounded-2xl overflow-hidden border border-[#D5E5CA] shadow-sm bg-[#073D2B] flex items-end">
         <img
           src="/images/satellite-telemetry.jpg"
           alt="NASA Earth observation satellite in orbit scanning agricultural land with multi-spectral sensor grid and telemetry overlays"
           width="1200"
           height="675"
           loading="lazy"
-          className="w-full h-full object-cover opacity-85"
+          className="absolute inset-0 w-full h-full object-cover opacity-85"
         />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#073D2B]/90 via-[#073D2B]/60 to-transparent" />
-        <div className="absolute bottom-4 left-4 sm:left-6 max-w-lg text-white">
+        <div className="absolute inset-0 bg-gradient-to-r from-[#073D2B]/95 via-[#073D2B]/75 to-[#073D2B]/35" />
+        <div className="relative z-10 p-4 sm:p-6 max-w-lg text-white">
           <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#76B93F] text-[#073D2B] text-[10px] font-bold mb-1.5 uppercase tracking-wider">
             NASA Planetary Fleet Telemetry
           </div>
-          <h4 className="font-display text-lg sm:text-xl font-bold">
+          <h4 className="font-display text-base sm:text-xl font-bold leading-snug">
             Multi-Spectral Agricultural Observation from Low Earth Orbit
           </h4>
-          <p className="text-[11px] sm:text-xs text-white/80 mt-1 line-clamp-2">
+          <p className="text-[11px] sm:text-xs text-white/85 mt-1 leading-relaxed">
             Ingesting active &amp; passive microwave radiometry (SMAP L4), radar rainfall scans (GPM IMERG), and multispectral canopy reflectance (MODIS/Landsat) down to field parcel scales.
           </p>
         </div>
@@ -155,13 +158,13 @@ export const NasaRoadmapExplorer: React.FC = () => {
 
           {/* Right: Detailed Dataset Inspector */}
           {selectedDataset && (
-            <div className="lg:col-span-7 bg-[#FAFDF8] rounded-3xl p-6 border border-[#D5E5CA] space-y-4">
-              <div className="flex items-center justify-between border-b border-[#E2E8DE] pb-3">
-                <div>
+            <div className="lg:col-span-7 bg-[#FAFDF8] rounded-3xl p-4 sm:p-6 border border-[#D5E5CA] space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[#E2E8DE] pb-3">
+                <div className="min-w-0">
                   <span className="px-2.5 py-0.5 rounded bg-[#073D2B] text-white text-[10px] font-mono font-bold">
                     {selectedDataset.code}
                   </span>
-                  <h4 className="font-bold text-lg text-[#073D2B] mt-1">{selectedDataset.name}</h4>
+                  <h4 className="font-bold text-base sm:text-lg text-[#073D2B] mt-1">{selectedDataset.name}</h4>
                   <p className="text-xs text-[#527367]">{selectedDataset.source}</p>
                 </div>
                 <span className="text-[10px] bg-white border border-[#E2E8DE] px-2 py-1 rounded text-[#145C3D] font-mono font-bold">
@@ -169,7 +172,7 @@ export const NasaRoadmapExplorer: React.FC = () => {
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                 <div className="p-3 bg-white rounded-xl border border-[#E2E8DE]">
                   <span className="text-[#527367] block text-[10px]">Spatial Resolution</span>
                   <span className="font-bold text-[#073D2B]">{selectedDataset.spatialResolution}</span>
@@ -260,16 +263,16 @@ export const NasaRoadmapExplorer: React.FC = () => {
       {/* TAB 3: SCIENTIFIC METHODS & FORMULAS */}
       {activeTab === 'methods' && (
         <div className="space-y-4">
-          <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-2xl text-xs text-emerald-900 flex items-center justify-between">
+          <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-2xl text-xs text-emerald-900 flex flex-wrap items-center justify-between gap-2">
             <span><strong>Scientific Integrity Statement:</strong> Statistical association never proves causation. All formulas utilize standard SI units.</span>
             <span className="font-bold text-emerald-800">Peer-Reviewed Models</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {scientificMethods.map((m: any, idx: number) => (
-              <div key={idx} className="p-5 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA] space-y-2">
+              <div key={idx} className="p-4 sm:p-5 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA] space-y-2 min-w-0">
                 <h5 className="font-bold text-xs text-[#073D2B]">{m.title}</h5>
-                <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE] font-mono text-[11px] text-[#145C3D]">
+                <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE] font-mono text-[11px] text-[#145C3D] overflow-x-auto break-words">
                   {m.formula}
                 </div>
                 <div className="text-[11px] text-[#527367]">

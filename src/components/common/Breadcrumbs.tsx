@@ -20,13 +20,14 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
   return (
     <nav
       aria-label="Breadcrumb navigation"
-      className={`flex items-center flex-wrap gap-1.5 text-xs text-[#527367] ${className}`}
+      className={`flex items-center flex-wrap gap-1 text-xs text-[#527367] ${className}`}
     >
       <button
+        type="button"
         onClick={() => onNavigate('/')}
-        className="inline-flex items-center gap-1 hover:text-[#073D2B] transition-colors focus:outline-hidden focus:ring-2 focus:ring-[#76B93F] rounded-xs px-1 py-0.5"
+        className="inline-flex items-center gap-1 hover:text-[#073D2B] transition-colors focus:outline-hidden focus:ring-2 focus:ring-[#76B93F] rounded-sm px-1.5 py-1.5 min-h-[36px]"
       >
-        <Home className="w-3.5 h-3.5 text-[#76B93F]" />
+        <Home className="w-3.5 h-3.5 text-[#76B93F] shrink-0" />
         <span>Home</span>
       </button>
 
@@ -37,15 +38,16 @@ export const Breadcrumbs: React.FC<BreadcrumbsProps> = ({
             <ChevronRight className="w-3.5 h-3.5 text-[#8C9E94] flex-shrink-0" />
             {isLast || !item.path ? (
               <span
-                className="font-semibold text-[#073D2B] px-1 py-0.5 truncate max-w-[240px] sm:max-w-none"
+                className="font-semibold text-[#073D2B] px-1.5 py-1.5 max-w-[200px] sm:max-w-none truncate"
                 aria-current={isLast ? 'page' : undefined}
               >
                 {item.label}
               </span>
             ) : (
               <button
+                type="button"
                 onClick={() => onNavigate(item.path!)}
-                className="hover:text-[#073D2B] hover:underline transition-colors focus:outline-hidden focus:ring-2 focus:ring-[#76B93F] rounded-xs px-1 py-0.5"
+                className="hover:text-[#073D2B] hover:underline transition-colors focus:outline-hidden focus:ring-2 focus:ring-[#76B93F] rounded-sm px-1.5 py-1.5 min-h-[36px] text-left"
               >
                 {item.label}
               </button>

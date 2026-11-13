@@ -11,8 +11,8 @@ interface LegalPageProps {
    ========================================================================== */
 export const PrivacyPolicyPage: React.FC<LegalPageProps> = ({ onNavigate }) => {
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6 sm:space-y-8">
         
         <div>
           <Breadcrumbs
@@ -26,17 +26,17 @@ export const PrivacyPolicyPage: React.FC<LegalPageProps> = ({ onNavigate }) => {
             <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
               Data Protection & Producer Sovereignty
             </span>
-            <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+            <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
               Field Shift Privacy Policy
             </h1>
             <p className="text-xs text-[#527367] mt-2">Effective Date: January 1, 2026 | Version 2.4</p>
           </div>
         </div>
 
-        <div className="bg-white rounded-3xl p-8 sm:p-10 border border-[#D5E5CA] shadow-sm space-y-6 text-xs sm:text-sm text-[#2A4D3E] leading-relaxed">
+        <div className="bg-white rounded-3xl p-5 sm:p-8 md:p-10 border border-[#D5E5CA] shadow-sm space-y-6 text-xs sm:text-sm text-[#2A4D3E] leading-relaxed">
           
           <section className="space-y-2">
-            <h2 className="font-display text-xl font-bold text-[#073D2B]">1. Our Agricultural Privacy Pledge</h2>
+            <h2 className="font-display text-lg sm:text-xl font-bold text-[#073D2B]">1. Our Agricultural Privacy Pledge</h2>
             <p>
               Field Shift Technologies (“Field Shift,” “we,” “our,” or “us”) operates with a fundamental commitment to
               farmer data sovereignty. We recognize that agricultural field boundaries, soil chemistry reports, and crop
@@ -114,8 +114,8 @@ export const PrivacyPolicyPage: React.FC<LegalPageProps> = ({ onNavigate }) => {
    ========================================================================== */
 export const TermsOfServicePage: React.FC<LegalPageProps> = ({ onNavigate }) => {
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6 sm:space-y-8">
         
         <div>
           <Breadcrumbs
@@ -129,17 +129,17 @@ export const TermsOfServicePage: React.FC<LegalPageProps> = ({ onNavigate }) => 
             <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
               Platform Agreement
             </span>
-            <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+            <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
               Field Shift Terms of Service
             </h1>
             <p className="text-xs text-[#527367] mt-2">Effective Date: January 1, 2026 | Version 2.4</p>
           </div>
         </div>
 
-        <div className="bg-white rounded-3xl p-8 sm:p-10 border border-[#D5E5CA] shadow-sm space-y-6 text-xs sm:text-sm text-[#2A4D3E] leading-relaxed">
+        <div className="bg-white rounded-3xl p-5 sm:p-8 md:p-10 border border-[#D5E5CA] shadow-sm space-y-6 text-xs sm:text-sm text-[#2A4D3E] leading-relaxed">
           
           <section className="space-y-2">
-            <h2 className="font-display text-xl font-bold text-[#073D2B]">1. Acceptance of Terms</h2>
+            <h2 className="font-display text-lg sm:text-xl font-bold text-[#073D2B]">1. Acceptance of Terms</h2>
             <p>
               By accessing, browsing, registering for, or using the Field Shift agricultural intelligence platform,
               web applications, APIs, or associated services (collectively, the “Platform”), you agree to be bound

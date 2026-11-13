@@ -68,8 +68,8 @@ export const FieldRiskPage: React.FC<FieldRiskPageProps> = ({ onNavigate, onOpen
   const current = hazardDetails[selectedHazard];
 
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         {/* Breadcrumb Header */}
         <div>
@@ -81,24 +81,25 @@ export const FieldRiskPage: React.FC<FieldRiskPageProps> = ({ onNavigate, onOpen
             onNavigate={onNavigate}
           />
           <div className="mt-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
                 Geospatial Vulnerability Assessment
               </span>
-              <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+              <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
                 Field Risk & Multi-Hazard Diagnostic
               </h1>
-              <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+              <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
                 Anticipate environmental risks before they impact harvest margins using NASA SRTM topography,
                 GPM IMERG storm intensity, and NASA POWER agroclimatology.
               </p>
             </div>
             <button
+              type="button"
               onClick={() => onNavigate('/dashboard/field-risk')}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto"
+              className="w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto shrink-0"
             >
               <span>View Field Risk in Dashboard</span>
-              <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+              <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
             </button>
           </div>
         </div>
@@ -114,69 +115,70 @@ export const FieldRiskPage: React.FC<FieldRiskPageProps> = ({ onNavigate, onOpen
             const Icon = item.icon;
             const isSelected = selectedHazard === item.id;
             return (
-              <div
+              <button
+                type="button"
                 key={item.id}
                 onClick={() => setSelectedHazard(item.id as any)}
-                className={`p-5 rounded-3xl cursor-pointer border transition-all ${
+                className={`text-left w-full p-4 sm:p-5 rounded-3xl cursor-pointer border transition-all min-w-0 ${
                   isSelected
                     ? 'bg-white border-[#76B93F] ring-2 ring-[#76B93F]/30 shadow-md'
                     : 'bg-white/80 border-[#D5E5CA] hover:border-[#76B93F]/50 shadow-2xs'
                 }`}
               >
-                <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 rounded-2xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center">
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <div className="w-10 h-10 rounded-2xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center shrink-0">
                     <Icon className="w-5 h-5" />
                   </div>
-                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${item.color} bg-white`}>
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${item.color} bg-white shrink-0`}>
                     {item.score}
                   </span>
                 </div>
                 <h3 className="font-bold text-sm text-[#073D2B]">{item.label}</h3>
-                <p className="text-[11px] text-[#527367] mt-0.5">Click to view NASA diagnostic</p>
-              </div>
+                <p className="text-[11px] text-[#527367] mt-0.5">Tap to view NASA diagnostic</p>
+              </button>
             );
           })}
         </div>
 
         {/* Active Hazard Detailed Deep-Dive */}
-        <div className="p-8 rounded-3xl bg-white border border-[#D5E5CA] shadow-sm space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E2E8DE] pb-4">
-            <div>
+        <div className="p-5 sm:p-8 rounded-3xl bg-white border border-[#D5E5CA] shadow-sm space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 border-b border-[#E2E8DE] pb-4">
+            <div className="min-w-0">
               <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
                 Active Hazard Diagnostic
               </span>
-              <h2 className="font-display text-2xl font-bold text-[#073D2B] mt-1">
+              <h2 className="font-display text-fluid-h2 font-bold text-[#073D2B] mt-1">
                 {current.title}
               </h2>
             </div>
-            <div className={`px-4 py-1.5 rounded-full text-xs font-bold border ${current.statusColor}`}>
+            <div className={`self-start sm:self-auto px-4 py-1.5 rounded-full text-xs font-bold border ${current.statusColor} shrink-0`}>
               Model Index: {current.riskScore}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
+            <div className="space-y-4 min-w-0">
               <h3 className="font-bold text-base text-[#073D2B]">Detection Architecture</h3>
               <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
                 {current.description}
               </p>
               <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#E2E8DE] space-y-2 text-xs text-[#2A4D3E]">
                 <div className="font-bold text-[#073D2B]">Primary NASA Observation Stream:</div>
-                <p className="font-mono text-xs text-[#145C3D]">{current.sensor}</p>
+                <p className="font-mono text-xs text-[#145C3D] break-words">{current.sensor}</p>
                 <p className="text-[#527367]">
                   Processed continuously against your digital field boundary coordinates.
                 </p>
               </div>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-4 min-w-0">
               <h3 className="font-bold text-base text-[#073D2B]">Recommended Agronomic Mitigation</h3>
               <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
                 {current.mitigation}
               </p>
               <div className="p-4 rounded-2xl bg-[#EAF5DF] border border-[#CDE5BA] space-y-2 text-xs text-[#145C3D]">
                 <div className="font-bold flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-[#76B93F]" />
+                  <CheckCircle2 className="w-4 h-4 text-[#76B93F] shrink-0" />
                   <span>Integrated Crop Sequence Solution</span>
                 </div>
                 <p>
@@ -189,7 +191,7 @@ export const FieldRiskPage: React.FC<FieldRiskPageProps> = ({ onNavigate, onOpen
         </div>
 
         {/* Scientific Humility & Disclaimer */}
-        <div className="p-6 rounded-3xl bg-amber-50/70 border border-amber-200 space-y-3">
+        <div className="p-4 sm:p-6 rounded-3xl bg-amber-50/70 border border-amber-200 space-y-3">
           <div className="flex items-center gap-2 text-amber-900 font-bold text-sm">
             <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
             <h3>Spatial Resolution & Scientific Disclosure</h3>

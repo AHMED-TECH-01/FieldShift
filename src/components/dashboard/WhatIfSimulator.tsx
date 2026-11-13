@@ -75,16 +75,16 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
+    <div className="bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
       
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E2E8DE] pb-5">
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 text-blue-900 text-xs font-bold uppercase tracking-wider mb-2">
-            <Sparkles className="w-3.5 h-3.5" />
-            Requirement H: What-If Agronomic & Climate Scenario Simulator
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+            <span>Requirement H: What-If Scenario Simulator</span>
           </div>
-          <h3 className="font-display text-2xl font-bold text-[#073D2B]">
+          <h3 className="font-display text-fluid-h2 font-bold text-[#073D2B]">
             Interactive Climate Stress & Management Analysis
           </h3>
           <p className="text-xs text-[#527367] mt-1 max-w-2xl">
@@ -94,7 +94,7 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
         </div>
 
         {/* Clear Simulation Notice */}
-        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3 max-w-xs text-[11px] text-amber-900 flex items-start gap-2">
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3 lg:max-w-xs text-[11px] text-amber-900 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
           <span>
             <strong>Hypothetical Simulation:</strong> These values represent simulated test conditions, NOT actual real-time NASA observations or seasonal forecasts.
@@ -108,21 +108,21 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
         <button
           type="button"
           onClick={() => handlePresetScenario('drought')}
-          className="px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-[11px] sm:text-xs font-semibold text-[#145C3D] text-left"
+          className="min-h-[40px] px-3.5 py-2 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D] text-left"
         >
           2012-Style Severe Summer Drought (-35% Rain, +3.5°C)
         </button>
         <button
           type="button"
           onClick={() => handlePresetScenario('excessive_rain')}
-          className="px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-[11px] sm:text-xs font-semibold text-[#145C3D] text-left"
+          className="min-h-[40px] px-3.5 py-2 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D] text-left"
         >
           Late Wet Spring (+30% Rain, Delayed Planting)
         </button>
         <button
           type="button"
           onClick={() => handlePresetScenario('early_frost')}
-          className="px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-[11px] sm:text-xs font-semibold text-[#145C3D] text-left"
+          className="min-h-[40px] px-3.5 py-2 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D] text-left"
         >
           Early Autumn Freeze (-2.0°C Mean)
         </button>
@@ -249,12 +249,12 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
               {irrigationRestricted ? 'Restricted' : 'Full Available'}
             </span>
           </div>
-          <label className="flex items-center gap-2 cursor-pointer pt-1">
+          <label className="flex items-center gap-2.5 min-h-[44px] cursor-pointer pt-1">
             <input
               type="checkbox"
               checked={irrigationRestricted}
               onChange={(e) => setIrrigationRestricted(e.target.checked)}
-              className="w-4 h-4 text-[#073D2B] focus:ring-[#76B93F] rounded"
+              className="w-5 h-5 text-[#073D2B] focus:ring-[#76B93F] rounded shrink-0"
             />
             <span className="text-xs text-[#527367]">Simulate dryland-only operation (no supplemental pivot)</span>
           </label>
@@ -263,7 +263,7 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
       </div>
 
       {/* Action Footer */}
-      <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
+      <div className="pt-2 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3">
         <button
           type="button"
           onClick={() => {
@@ -274,7 +274,7 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
             setPlantingOffset(0);
             onReset();
           }}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-[#D5E5CA] hover:bg-[#F0F5EE] text-xs font-bold text-[#527367]"
+          className="min-h-[44px] inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full border border-[#D5E5CA] hover:bg-[#F0F5EE] text-xs font-bold text-[#527367]"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>Reset to Current NASA Baseline</span>
@@ -284,7 +284,7 @@ export const WhatIfSimulator: React.FC<WhatIfSimulatorProps> = ({
           type="button"
           disabled={recalculating}
           onClick={handleApply}
-          className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-all"
+          className="min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-all"
         >
           <span>Run Scenario Recalculation</span>
           <ArrowRight className="w-4 h-4 text-[#76B93F]" />

@@ -25,16 +25,16 @@ export const InteractiveFarmMap: React.FC<InteractiveFarmMapProps> = ({ farm }) 
   };
 
   return (
-    <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
+    <div className="bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
       
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E2E8DE] pb-5">
-        <div>
+        <div className="min-w-0">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold uppercase tracking-wider mb-2">
-            <Layers className="w-3.5 h-3.5" />
-            Requirement K: Interactive Geospatial Map & Sensor Overlays
+            <Layers className="w-3.5 h-3.5 shrink-0" />
+            <span>Requirement K: Interactive Geospatial Map</span>
           </div>
-          <h3 className="font-display text-2xl font-bold text-[#073D2B]">
+          <h3 className="font-display text-fluid-h2 font-bold text-[#073D2B]">
             Field Boundary & Satellite Layer Fusion
           </h3>
           <p className="text-xs text-[#527367] mt-1 max-w-2xl">
@@ -44,18 +44,20 @@ export const InteractiveFarmMap: React.FC<InteractiveFarmMapProps> = ({ farm }) 
         </div>
 
         {/* View Mode Switcher */}
-        <div className="flex items-center bg-[#E7EFE6] p-1 rounded-full self-start md:self-auto">
+        <div className="flex flex-wrap items-center gap-1 bg-[#E7EFE6] p-1 rounded-2xl sm:rounded-full self-start md:self-auto">
           <button
+            type="button"
             onClick={() => setViewMode('standard')}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+            className={`min-h-[40px] px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
               viewMode === 'standard' ? 'bg-white text-[#073D2B] shadow-xs' : 'text-[#527367]'
             }`}
           >
             Multi-Layer Map
           </button>
           <button
+            type="button"
             onClick={() => setViewMode('before_after')}
-            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+            className={`min-h-[40px] px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
               viewMode === 'before_after' ? 'bg-white text-[#073D2B] shadow-xs' : 'text-[#527367]'
             }`}
           >
@@ -65,15 +67,15 @@ export const InteractiveFarmMap: React.FC<InteractiveFarmMapProps> = ({ farm }) 
       </div>
 
       {/* Main Map Viewer Canvas */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6">
         
         {/* Map Visualization Area */}
-        <div className="lg:col-span-9 relative bg-[#1B362A] rounded-3xl overflow-hidden min-h-[460px] border border-[#CDE5BA] shadow-inner flex flex-col justify-between p-6 text-white">
+        <div className="lg:col-span-9 relative bg-[#1B362A] rounded-3xl overflow-hidden min-h-[340px] sm:min-h-[460px] border border-[#CDE5BA] shadow-inner flex flex-col justify-between p-3.5 sm:p-6 text-white">
           
           {/* Top Map HUD Controls */}
-          <div className="flex items-center justify-between z-10">
-            <div className="flex items-center gap-2 bg-[#073D2B]/85 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20 text-xs">
-              <Compass className="w-4 h-4 text-[#76B93F]" />
+          <div className="flex flex-wrap items-center justify-between gap-2 z-10">
+            <div className="flex items-center gap-1.5 sm:gap-2 bg-[#073D2B]/85 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20 text-[11px] sm:text-xs">
+              <Compass className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#76B93F] shrink-0" />
               <span className="font-mono">N 42° 01' 48" | W 93° 37' 12"</span>
             </div>
 
@@ -85,10 +87,10 @@ export const InteractiveFarmMap: React.FC<InteractiveFarmMapProps> = ({ farm }) 
           </div>
 
           {/* Map Layer Rendering Graphic */}
-          <div className="my-auto py-8 sm:py-12 flex flex-col items-center justify-center relative select-none w-full">
+          <div className="my-auto py-6 sm:py-12 flex flex-col items-center justify-center relative select-none w-full">
             
             {/* Simulated Agricultural Field Polygon - Fully fluid on small screens */}
-            <div className="relative w-full max-w-[320px] sm:max-w-md h-60 sm:h-72 border-2 border-[#76B93F] bg-emerald-950/40 rounded-2xl p-3 sm:p-4 flex flex-col justify-between shadow-2xl overflow-hidden mx-auto">
+            <div className="relative w-full max-w-md min-h-[210px] sm:min-h-[270px] border-2 border-[#76B93F] bg-emerald-950/40 rounded-2xl p-3 sm:p-4 flex flex-col justify-between shadow-2xl overflow-hidden mx-auto">
               
               {/* Active Overlays Simulated Canvas */}
               {activeLayers.modisNdvi && (
@@ -125,31 +127,37 @@ export const InteractiveFarmMap: React.FC<InteractiveFarmMapProps> = ({ farm }) 
               )}
 
               {/* In-field markers */}
-              <div className="flex items-center justify-between text-[11px] font-mono text-[#9BD85A] z-10">
-                <span className="flex items-center gap-1">
-                  <MapPin className="w-3.5 h-3.5" />
-                  {farm.name}
+              <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] font-mono text-[#9BD85A] z-10">
+                <span className="flex items-center gap-1 min-w-0">
+                  <MapPin className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{farm.name}</span>
                 </span>
-                <span>{farm.acreage} ACRES</span>
+                <span className="shrink-0">{farm.acreage} ACRES</span>
               </div>
 
-              <div className="text-center z-10 py-6">
+              <div className="text-center z-10 py-4 sm:py-6">
                 {viewMode === 'before_after' ? (
-                  <div className="flex justify-between text-xs font-bold px-4">
-                    <span className="text-rose-300">Baseline Monoculture (135 Bare Days)</span>
-                    <span className="text-emerald-300">Strategy B (Living Cover)</span>
+                  <div className="flex flex-col sm:flex-row justify-between gap-2 text-xs font-bold px-2 sm:px-4">
+                    <span className="text-rose-200 bg-[#073D2B]/70 px-2 py-1 rounded">
+                      Baseline (135 Bare Days)
+                    </span>
+                    <span className="text-emerald-200 bg-[#073D2B]/70 px-2 py-1 rounded">
+                      Strategy B (Living Cover)
+                    </span>
                   </div>
                 ) : (
                   <div>
                     <span className="text-xs font-mono uppercase text-white/80 block">Active Ingestion</span>
-                    <span className="font-display text-lg font-bold text-white">Clarion-Nicollet Loam Zone</span>
+                    <span className="font-display text-base sm:text-lg font-bold text-white">
+                      {farm.soilType} Zone
+                    </span>
                   </div>
                 )}
               </div>
 
-              <div className="flex items-center justify-between text-[10px] font-mono text-white/70 z-10 border-t border-white/20 pt-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-white/70 z-10 border-t border-white/20 pt-2">
                 <span>SLOPE: 2.3% CONTOUR</span>
-                <span>DRAINAGE: MODERATE</span>
+                <span>DRAINAGE: {farm.drainage.toUpperCase()}</span>
               </div>
             </div>
 
@@ -158,8 +166,8 @@ export const InteractiveFarmMap: React.FC<InteractiveFarmMapProps> = ({ farm }) 
           {/* Bottom Resolution Disclosures */}
           <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] bg-[#073D2B]/90 backdrop-blur-md p-3 rounded-2xl border border-white/15 z-10">
             <span className="text-[#9BD85A] font-semibold flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              NASA SMAP (9km) & MODIS (250m) Registered to UTM Zone 15N
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              <span>NASA SMAP (9km) & MODIS (250m) Registered to UTM Zone 15N</span>
             </span>
             <span className="text-white/70 text-[10px]">
               EPSG:3857 Reprojected
@@ -177,56 +185,56 @@ export const InteractiveFarmMap: React.FC<InteractiveFarmMapProps> = ({ farm }) 
             </h4>
 
             <div className="space-y-2 text-xs">
-              <label className="flex items-center justify-between cursor-pointer p-2 rounded-xl bg-white border border-[#E2E8DE]">
-                <div className="flex items-center gap-2">
+              <label className="flex items-center justify-between cursor-pointer min-h-[44px] px-3 py-2 rounded-xl bg-white border border-[#E2E8DE]">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <input
                     type="checkbox"
                     checked={activeLayers.boundary}
                     onChange={() => toggleLayer('boundary')}
-                    className="rounded text-[#073D2B] focus:ring-[#76B93F]"
+                    className="w-4 h-4 rounded text-[#073D2B] focus:ring-[#76B93F]"
                   />
                   <span className="font-semibold text-[#073D2B]">Farm Boundary</span>
                 </div>
-                <span className="text-[10px] text-slate-400 font-mono">CADASTRE</span>
+                <span className="text-[10px] text-slate-500 font-mono shrink-0">CADASTRE</span>
               </label>
 
-              <label className="flex items-center justify-between cursor-pointer p-2 rounded-xl bg-white border border-[#E2E8DE]">
-                <div className="flex items-center gap-2">
+              <label className="flex items-center justify-between cursor-pointer min-h-[44px] px-3 py-2 rounded-xl bg-white border border-[#E2E8DE]">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <input
                     type="checkbox"
                     checked={activeLayers.smapMoisture}
                     onChange={() => toggleLayer('smapMoisture')}
-                    className="rounded text-[#073D2B] focus:ring-[#76B93F]"
+                    className="w-4 h-4 rounded text-[#073D2B] focus:ring-[#76B93F]"
                   />
                   <span className="font-semibold text-[#073D2B]">SMAP Soil Moisture</span>
                 </div>
-                <span className="text-[10px] font-mono text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded font-bold">9 KM</span>
+                <span className="text-[10px] font-mono text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded font-bold shrink-0">9 KM</span>
               </label>
 
-              <label className="flex items-center justify-between cursor-pointer p-2 rounded-xl bg-white border border-[#E2E8DE]">
-                <div className="flex items-center gap-2">
+              <label className="flex items-center justify-between cursor-pointer min-h-[44px] px-3 py-2 rounded-xl bg-white border border-[#E2E8DE]">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <input
                     type="checkbox"
                     checked={activeLayers.modisNdvi}
                     onChange={() => toggleLayer('modisNdvi')}
-                    className="rounded text-[#073D2B] focus:ring-[#76B93F]"
+                    className="w-4 h-4 rounded text-[#073D2B] focus:ring-[#76B93F]"
                   />
                   <span className="font-semibold text-[#073D2B]">MODIS NDVI Vigor</span>
                 </div>
-                <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-bold">250 M</span>
+                <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-bold shrink-0">250 M</span>
               </label>
 
-              <label className="flex items-center justify-between cursor-pointer p-2 rounded-xl bg-white border border-[#E2E8DE]">
-                <div className="flex items-center gap-2">
+              <label className="flex items-center justify-between cursor-pointer min-h-[44px] px-3 py-2 rounded-xl bg-white border border-[#E2E8DE]">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <input
                     type="checkbox"
                     checked={activeLayers.srtmSlope}
                     onChange={() => toggleLayer('srtmSlope')}
-                    className="rounded text-[#073D2B] focus:ring-[#76B93F]"
+                    className="w-4 h-4 rounded text-[#073D2B] focus:ring-[#76B93F]"
                   />
                   <span className="font-semibold text-[#073D2B]">SRTM Slope Hazard</span>
                 </div>
-                <span className="text-[10px] font-mono text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-bold">30 M</span>
+                <span className="text-[10px] font-mono text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-bold shrink-0">30 M</span>
               </label>
             </div>
           </div>

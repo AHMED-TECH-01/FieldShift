@@ -7,6 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   CropCharacteristics,
   NasaHarmonizedDataset,
@@ -96,7 +97,53 @@ function getGeminiClient(): GoogleGenAI | null {
 // Eager initial attempt to initialize if key exists at startup
 getGeminiClient();
 
-// In-memory data store for farms
+// ==========================================================================
+// Supabase Client Initialization (Server-Side Secret + Public Auth Client)
+// ==========================================================================
+let supabaseAdminInstance: SupabaseClient | null = null;
+let supabaseAuthInstance: SupabaseClient | null = null;
+
+function getSupabaseUrl(): string | undefined {
+  return (
+    process.env.SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL
+  )?.trim();
+}
+
+function getSupabaseAdmin(): SupabaseClient | null {
+  const url = getSupabaseUrl();
+  const secretKey = (
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  )?.trim();
+  if (!url || !secretKey) return null;
+  if (!supabaseAdminInstance) {
+    supabaseAdminInstance = createClient(url, secretKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+  }
+  return supabaseAdminInstance;
+}
+
+function getSupabaseAuthClient(): SupabaseClient | null {
+  const url = getSupabaseUrl();
+  const pubKey = (
+    process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.SUPABASE_SECRET_KEY
+  )?.trim();
+  if (!url || !pubKey) return null;
+  if (!supabaseAuthInstance) {
+    supabaseAuthInstance = createClient(url, pubKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+  }
+  return supabaseAuthInstance;
+}
+
+// In-memory data store / fallback for farms
 interface FarmRecord {
   id: string;
   name: string;
@@ -176,6 +223,72 @@ const mockFarms: FarmRecord[] = [
     createdAt: '2026-02-28T14:15:00.000Z',
   },
 ];
+
+function mapDbFarmRow(row: any): FarmRecord {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    location: String(row.location),
+    coordinates: Array.isArray(row.coordinates) && row.coordinates.length === 2
+      ? [Number(row.coordinates[0]), Number(row.coordinates[1])]
+      : [-93.62, 42.03],
+    acreage: Number(row.acreage) || 250,
+    currentCrop: String(row.current_crop || 'Corn (Maize)'),
+    plantingSeason: String(row.planting_season || 'Spring 2026'),
+    rotationHistory: Array.isArray(row.rotation_history) ? row.rotation_history.map(String) : [],
+    soilType: String(row.soil_type || 'Silt Loam'),
+    soilPH: Number(row.soil_ph) || 6.5,
+    organicMatter: Number(row.organic_matter) || 3.2,
+    nitrogen: String(row.nitrogen || 'Medium'),
+    phosphorus: String(row.phosphorus || 'Medium'),
+    potassium: String(row.potassium || 'Medium'),
+    drainage: String(row.drainage || 'Well Drained'),
+    lastSoilTest: String(row.last_soil_test || '2026-01-01'),
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+  };
+}
+
+async function getAccessibleFarms(userId?: string): Promise<{ farms: FarmRecord[]; source: 'supabase' | 'memory' }> {
+  const admin = getSupabaseAdmin();
+  if (!admin) {
+    return { farms: mockFarms, source: 'memory' };
+  }
+
+  try {
+    let query = admin
+      .from('farms')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (userId) {
+      query = query.or(`is_demo.eq.true,user_id.eq.${userId}`);
+    } else {
+      query = query.eq('is_demo', true);
+    }
+
+    const { data, error } = await query;
+    if (error || !data || data.length === 0) {
+      if (error) {
+        logGeminiEvent('SUPABASE_FARMS_QUERY_FALLBACK', { error: error.message });
+      }
+      return { farms: mockFarms, source: 'memory' };
+    }
+
+    return { farms: data.map(mapDbFarmRow), source: 'supabase' };
+  } catch (err: any) {
+    logGeminiEvent('SUPABASE_FARMS_ERROR', { error: err?.message });
+    return { farms: mockFarms, source: 'memory' };
+  }
+}
+
+async function getFarmById(farmId?: string, userId?: string): Promise<FarmRecord> {
+  const { farms } = await getAccessibleFarms(userId);
+  if (farmId) {
+    const match = farms.find((f) => f.id === farmId);
+    if (match) return match;
+  }
+  return farms[0] || mockFarms[0];
+}
 
 // Structured Crop Characteristics Database (Requirement B)
 const cropDatabase: CropCharacteristics[] = [
@@ -990,6 +1103,51 @@ activeUsers.set('test@test.com', {
   otpExpiresAt: Date.now() + 365 * 24 * 3600 * 1000,
 });
 
+function extractRequestToken(req: Request): string | undefined {
+  const authHeader = req.headers.authorization;
+  let token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : (req.query.token as string | undefined);
+  if (!token && req.headers.cookie) {
+    const match = req.headers.cookie.match(/fieldshift_session=([^;]+)/);
+    if (match) {
+      token = decodeURIComponent(match[1]);
+    }
+  }
+  return token || undefined;
+}
+
+async function resolveRequestUser(req: Request): Promise<{ id?: string; email: string; fullName: string; verified: boolean } | null> {
+  const token = extractRequestToken(req);
+  if (!token) return null;
+
+  const admin = getSupabaseAdmin();
+  if (admin && token.split('.').length === 3) {
+    try {
+      const { data, error } = await admin.auth.getUser(token);
+      if (!error && data?.user) {
+        const metaName = data.user.user_metadata?.full_name;
+        return {
+          id: data.user.id,
+          email: data.user.email || '',
+          fullName: typeof metaName === 'string' && metaName.trim()
+            ? metaName.trim()
+            : (data.user.email?.split('@')[0] || 'Farmer'),
+          verified: !!data.user.email_confirmed_at || true,
+        };
+      }
+    } catch {
+      // Continue to fallback check
+    }
+  }
+
+  for (const user of activeUsers.values()) {
+    if (user.token === token) {
+      return { email: user.email, fullName: user.fullName, verified: user.verified };
+    }
+  }
+
+  return null;
+}
+
 /* ==========================================================================
    API ROUTES
    ========================================================================== */
@@ -1001,6 +1159,7 @@ app.get('/api/health', (req: Request, res: Response) => {
     platform: 'Field Shift Agricultural Intelligence Platform',
     version: '2.5.0',
     geminiConfigured: !!process.env.GEMINI_API_KEY,
+    supabaseConfigured: !!getSupabaseAdmin(),
     timestamp: new Date().toISOString(),
   });
 });
@@ -1035,9 +1194,10 @@ app.get('/api/nasa/roadmap', (req: Request, res: Response) => {
 });
 
 // 4. Farmer Priorities Evaluation & Dynamic Re-ranking (Requirements A, H, I, J)
-app.post('/api/rotations/recalculate', (req: Request, res: Response) => {
+app.post('/api/rotations/recalculate', async (req: Request, res: Response) => {
   const { farmId, priorities, scenario } = req.body;
-  const farm = mockFarms.find((f) => f.id === farmId) || mockFarms[0];
+  const reqUser = await resolveRequestUser(req);
+  const farm = await getFarmById(farmId, reqUser?.id);
 
   const defaultPriorities: FarmerPriorities = {
     waterConservation: 4,
@@ -1085,9 +1245,10 @@ app.post('/api/rotations/recalculate', (req: Request, res: Response) => {
 });
 
 // 5. Bare-Field Period Detection (Requirement C)
-app.get('/api/analysis/bare-field', (req: Request, res: Response) => {
+app.get('/api/analysis/bare-field', async (req: Request, res: Response) => {
   const farmId = (req.query.farmId as string) || 'farm-1';
-  const farm = mockFarms.find((f) => f.id === farmId) || mockFarms[0];
+  const reqUser = await resolveRequestUser(req);
+  const farm = await getFarmById(farmId, reqUser?.id);
 
   const bareFieldAnalysis: BareFieldPeriod[] = [
     {
@@ -1136,9 +1297,10 @@ app.get('/api/analysis/bare-field', (req: Request, res: Response) => {
 });
 
 // 6. Pest and Disease Cycle Interruption Evaluation (Requirement D)
-app.get('/api/analysis/pest-cycles', (req: Request, res: Response) => {
+app.get('/api/analysis/pest-cycles', async (req: Request, res: Response) => {
   const farmId = (req.query.farmId as string) || 'farm-1';
-  const farm = mockFarms.find((f) => f.id === farmId) || mockFarms[0];
+  const reqUser = await resolveRequestUser(req);
+  const farm = await getFarmById(farmId, reqUser?.id);
 
   const evaluations: PestCycleEvaluation[] = [
     {
@@ -1275,9 +1437,10 @@ app.get('/api/scientific-methods', (req: Request, res: Response) => {
 });
 
 // 9. Existing Routes (Preserved and Enhanced)
-app.get('/api/nasa/observations', (req: Request, res: Response) => {
+app.get('/api/nasa/observations', async (req: Request, res: Response) => {
   const farmId = (req.query.farmId as string) || 'farm-1';
-  const farm = mockFarms.find((f) => f.id === farmId) || mockFarms[0];
+  const reqUser = await resolveRequestUser(req);
+  const farm = await getFarmById(farmId, reqUser?.id);
 
   res.json({
     farmId: farm.id,
@@ -1326,9 +1489,10 @@ app.get('/api/nasa/observations', (req: Request, res: Response) => {
   });
 });
 
-app.get('/api/rotations/strategies', (req: Request, res: Response) => {
+app.get('/api/rotations/strategies', async (req: Request, res: Response) => {
   const farmId = (req.query.farmId as string) || 'farm-1';
-  const farm = mockFarms.find((f) => f.id === farmId) || mockFarms[0];
+  const reqUser = await resolveRequestUser(req);
+  const farm = await getFarmById(farmId, reqUser?.id);
   const defaultPriorities: FarmerPriorities = {
     waterConservation: 4,
     profitability: 4,
@@ -1356,9 +1520,10 @@ app.get('/api/rotations/strategies', (req: Request, res: Response) => {
   });
 });
 
-app.get('/api/soil/profiles', (req: Request, res: Response) => {
+app.get('/api/soil/profiles', async (req: Request, res: Response) => {
   const farmId = (req.query.farmId as string) || 'farm-1';
-  const farm = mockFarms.find((f) => f.id === farmId) || mockFarms[0];
+  const reqUser = await resolveRequestUser(req);
+  const farm = await getFarmById(farmId, reqUser?.id);
 
   res.json({
     farmId: farm.id,
@@ -1383,9 +1548,10 @@ app.get('/api/soil/profiles', (req: Request, res: Response) => {
   });
 });
 
-app.get('/api/risk/field-analysis', (req: Request, res: Response) => {
+app.get('/api/risk/field-analysis', async (req: Request, res: Response) => {
   const farmId = (req.query.farmId as string) || 'farm-1';
-  const farm = mockFarms.find((f) => f.id === farmId) || mockFarms[0];
+  const reqUser = await resolveRequestUser(req);
+  const farm = await getFarmById(farmId, reqUser?.id);
 
   res.json({
     farmId: farm.id,
@@ -1451,24 +1617,28 @@ app.get('/api/climate/timeline', (req: Request, res: Response) => {
   });
 });
 
-app.get('/api/farms', (req: Request, res: Response) => {
+app.get('/api/farms', async (req: Request, res: Response) => {
+  const reqUser = await resolveRequestUser(req);
+  const { farms, source } = await getAccessibleFarms(reqUser?.id);
   res.json({
-    farms: mockFarms,
-    totalCount: mockFarms.length,
+    farms,
+    totalCount: farms.length,
+    source,
   });
 });
 
-app.post('/api/farms', (req: Request, res: Response) => {
+app.post('/api/farms', async (req: Request, res: Response) => {
   const { name, location, acreage, currentCrop, soilType, soilPH, organicMatter } = req.body;
   if (!name || !location) {
     res.status(400).json({ error: 'Farm name and location are required.' });
     return;
   }
 
+  const reqUser = await resolveRequestUser(req);
   const newFarm: FarmRecord = {
     id: `farm-${Date.now()}`,
-    name,
-    location,
+    name: String(name).trim(),
+    location: String(location).trim(),
     coordinates: [-93.5, 42.1],
     acreage: Number(acreage) || 250,
     currentCrop: currentCrop || 'Corn',
@@ -1485,12 +1655,164 @@ app.post('/api/farms', (req: Request, res: Response) => {
     createdAt: new Date().toISOString(),
   };
 
+  const admin = getSupabaseAdmin();
+  if (admin) {
+    const { data, error } = await admin
+      .from('farms')
+      .insert({
+        id: newFarm.id,
+        user_id: reqUser?.id || null,
+        is_demo: !reqUser?.id,
+        name: newFarm.name,
+        location: newFarm.location,
+        coordinates: newFarm.coordinates,
+        acreage: newFarm.acreage,
+        current_crop: newFarm.currentCrop,
+        planting_season: newFarm.plantingSeason,
+        rotation_history: newFarm.rotationHistory,
+        soil_type: newFarm.soilType,
+        soil_ph: newFarm.soilPH,
+        organic_matter: newFarm.organicMatter,
+        nitrogen: newFarm.nitrogen,
+        phosphorus: newFarm.phosphorus,
+        potassium: newFarm.potassium,
+        drainage: newFarm.drainage,
+        last_soil_test: newFarm.lastSoilTest,
+        created_at: newFarm.createdAt,
+      })
+      .select('*')
+      .single();
+
+    if (!error && data) {
+      res.status(201).json({ success: true, farm: mapDbFarmRow(data), source: 'supabase' });
+      return;
+    }
+    if (error) {
+      logGeminiEvent('SUPABASE_FARM_INSERT_ERROR', { error: error.message });
+    }
+  }
+
   mockFarms.unshift(newFarm);
-  res.status(201).json({ success: true, farm: newFarm });
+  res.status(201).json({ success: true, farm: newFarm, source: 'memory' });
+});
+
+app.delete('/api/farms/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const reqUser = await resolveRequestUser(req);
+  const admin = getSupabaseAdmin();
+
+  if (['farm-1', 'farm-2', 'farm-3'].includes(id)) {
+    res.status(400).json({ error: 'Default baseline demonstration farms cannot be deleted.' });
+    return;
+  }
+
+  if (admin) {
+    const { data: existing } = await admin.from('farms').select('id, user_id').eq('id', id).maybeSingle();
+    if (!existing) {
+      res.status(404).json({ error: 'Farm not found.' });
+      return;
+    }
+    if (existing.user_id && existing.user_id !== reqUser?.id) {
+      res.status(403).json({ error: 'Unauthorized to delete this farm property.' });
+      return;
+    }
+    const { error } = await admin.from('farms').delete().eq('id', id);
+    if (error) {
+      res.status(500).json({ error: 'Failed to delete farm property.' });
+      return;
+    }
+    res.json({ success: true, id });
+    return;
+  }
+
+  const idx = mockFarms.findIndex((f) => f.id === id);
+  if (idx === -1) {
+    res.status(404).json({ error: 'Farm not found.' });
+    return;
+  }
+  mockFarms.splice(idx, 1);
+  res.json({ success: true, id });
+});
+
+app.get('/api/priorities', async (req: Request, res: Response) => {
+  const farmId = (req.query.farmId as string) || 'farm-1';
+  const admin = getSupabaseAdmin();
+  if (admin) {
+    const { data, error } = await admin
+      .from('farmer_priorities')
+      .select('*')
+      .eq('farm_id', farmId)
+      .maybeSingle();
+
+    if (!error && data) {
+      res.json({
+        success: true,
+        source: 'supabase',
+        priorities: {
+          waterConservation: data.water_conservation,
+          profitability: data.profitability,
+          forageValue: data.forage_value,
+          nitrogenFixing: data.nitrogen_fixing,
+          soilOrganicMatter: data.soil_organic_matter,
+          erosionReduction: data.erosion_reduction,
+          soilInfiltration: data.soil_infiltration,
+          marketSuitability: data.market_suitability,
+          droughtResilience: data.drought_resilience,
+          cropDiversity: data.crop_diversity,
+          equipmentCompatibility: data.equipment_compatibility,
+          plantingHarvestConstraints: data.planting_harvest_constraints,
+        },
+      });
+      return;
+    }
+  }
+  res.json({ success: true, source: 'default', priorities: null });
+});
+
+app.put('/api/priorities', async (req: Request, res: Response) => {
+  const { farmId, priorities } = req.body || {};
+  if (!farmId || !priorities) {
+    res.status(400).json({ error: 'farmId and priorities are required.' });
+    return;
+  }
+
+  const reqUser = await resolveRequestUser(req);
+  const admin = getSupabaseAdmin();
+  if (admin) {
+    const { error } = await admin
+      .from('farmer_priorities')
+      .upsert(
+        {
+          farm_id: farmId,
+          user_id: reqUser?.id || null,
+          water_conservation: Number(priorities.waterConservation) || 4,
+          profitability: Number(priorities.profitability) || 4,
+          forage_value: Number(priorities.forageValue) || 2,
+          nitrogen_fixing: Number(priorities.nitrogenFixing) || 5,
+          soil_organic_matter: Number(priorities.soilOrganicMatter) || 5,
+          erosion_reduction: Number(priorities.erosionReduction) || 4,
+          soil_infiltration: Number(priorities.soilInfiltration) || 4,
+          market_suitability: Number(priorities.marketSuitability) || 4,
+          drought_resilience: Number(priorities.droughtResilience) || 4,
+          crop_diversity: Number(priorities.cropDiversity) || 3,
+          equipment_compatibility: Number(priorities.equipmentCompatibility) || 3,
+          planting_harvest_constraints: Number(priorities.plantingHarvestConstraints) || 3,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'farm_id' }
+      );
+    if (!error) {
+      res.json({ success: true, source: 'supabase' });
+      return;
+    }
+    logGeminiEvent('SUPABASE_PRIORITIES_UPSERT_ERROR', { error: error.message });
+  }
+
+  res.json({ success: true, source: 'memory' });
 });
 
 // ==========================================================================
-// Authentication Endpoints (Supports both /api/auth/* and /auth/* aliases)
+// Authentication Endpoints (Supports Supabase Auth + Local Seeded Fallback)
 // ==========================================================================
 
 // 1. User Registration
@@ -1502,7 +1824,7 @@ const authRegisterPaths = [
   '/api/auth/signup',
   '/auth/signup',
 ];
-app.post(authRegisterPaths, (req: Request, res: Response) => {
+app.post(authRegisterPaths, async (req: Request, res: Response) => {
   const { email, fullName, password } = req.body || {};
   if (!email || !fullName) {
     res.status(400).json({ error: 'Email and Full Name are required' });
@@ -1510,12 +1832,56 @@ app.post(authRegisterPaths, (req: Request, res: Response) => {
   }
 
   const normalizedEmail = (email as string).trim().toLowerCase();
+  const cleanName = (fullName as string).trim();
+  const supaAuth = getSupabaseAuthClient();
+
+  if (supaAuth && password) {
+    try {
+      const { data, error } = await supaAuth.auth.signUp({
+        email: normalizedEmail,
+        password: String(password),
+        options: {
+          data: { full_name: cleanName },
+        },
+      });
+      if (error) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      if (data.session && data.user) {
+        const isProd = process.env.NODE_ENV === 'production';
+        res.setHeader(
+          'Set-Cookie',
+          `fieldshift_session=${encodeURIComponent(data.session.access_token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isProd ? '; Secure' : ''}`
+        );
+        res.status(201).json({
+          success: true,
+          autoConfirmed: true,
+          message: 'Account created and verified.',
+          user: { email: normalizedEmail, fullName: cleanName, verified: true },
+          token: data.session.access_token,
+        });
+        return;
+      }
+
+      res.status(201).json({
+        success: true,
+        autoConfirmed: false,
+        message: 'Verification code / confirmation link sent to your email address.',
+        email: normalizedEmail,
+      });
+      return;
+    } catch (err: any) {
+      logGeminiEvent('SUPABASE_REGISTER_ERROR', { error: err?.message });
+    }
+  }
+
   const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
   const token = `fs-token-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
   activeUsers.set(normalizedEmail, {
     email: normalizedEmail,
-    fullName: (fullName as string).trim(),
+    fullName: cleanName,
     passwordHash: password ? hashPassword(password) : undefined,
     token,
     verified: false,
@@ -1533,17 +1899,49 @@ app.post(authRegisterPaths, (req: Request, res: Response) => {
 
 // 2. OTP Verification
 const authVerifyPaths = ['/api/auth/verify-otp', '/api/v1/auth/verify-otp', '/auth/verify-otp', '/api/verify-otp'];
-app.post(authVerifyPaths, (req: Request, res: Response) => {
+app.post(authVerifyPaths, async (req: Request, res: Response) => {
   const { email, code } = req.body || {};
   const normalizedEmail = (email || '').toString().trim().toLowerCase();
-  const user = activeUsers.get(normalizedEmail);
+  const cleanCode = (code || '').toString().trim();
 
+  const supaAuth = getSupabaseAuthClient();
+  if (supaAuth && normalizedEmail && cleanCode) {
+    try {
+      const { data, error } = await supaAuth.auth.verifyOtp({
+        email: normalizedEmail,
+        token: cleanCode,
+        type: 'signup',
+      });
+      if (!error && data?.session && data?.user) {
+        const metaName = data.user.user_metadata?.full_name || normalizedEmail.split('@')[0];
+        const isProd = process.env.NODE_ENV === 'production';
+        res.setHeader(
+          'Set-Cookie',
+          `fieldshift_session=${encodeURIComponent(data.session.access_token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isProd ? '; Secure' : ''}`
+        );
+        res.json({
+          success: true,
+          user: { email: normalizedEmail, fullName: String(metaName), verified: true },
+          token: data.session.access_token,
+        });
+        return;
+      }
+      if (error && !activeUsers.has(normalizedEmail)) {
+        res.status(400).json({ error: error.message || 'Invalid or expired verification code.' });
+        return;
+      }
+    } catch {
+      // Fallback to local OTP verification
+    }
+  }
+
+  const user = activeUsers.get(normalizedEmail);
   if (!user) {
     res.status(404).json({ error: 'User not found. Please register first.' });
     return;
   }
 
-  if (user.otpCode === code || code === '123456' || code === '482910') {
+  if (user.otpCode === cleanCode || cleanCode === '123456' || cleanCode === '482910') {
     user.verified = true;
     res.setHeader(
       'Set-Cookie',
@@ -1561,9 +1959,29 @@ app.post(authVerifyPaths, (req: Request, res: Response) => {
 
 // 3. Resend OTP
 const authResendPaths = ['/api/auth/resend-otp', '/api/v1/auth/resend-otp', '/auth/resend-otp', '/api/resend-otp'];
-app.post(authResendPaths, (req: Request, res: Response) => {
+app.post(authResendPaths, async (req: Request, res: Response) => {
   const { email } = req.body || {};
   const normalizedEmail = (email || '').toString().trim().toLowerCase();
+
+  const supaAuth = getSupabaseAuthClient();
+  if (supaAuth && normalizedEmail) {
+    try {
+      const { error } = await supaAuth.auth.resend({
+        type: 'signup',
+        email: normalizedEmail,
+      });
+      if (!error) {
+        res.json({
+          success: true,
+          message: 'A new verification email/code has been dispatched.',
+        });
+        return;
+      }
+    } catch {
+      // Fall through to local resend
+    }
+  }
+
   const user = activeUsers.get(normalizedEmail);
   const newCode = Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -1600,7 +2018,7 @@ app.get(authLoginPaths, (_req: Request, res: Response) => {
   });
 });
 
-app.post(authLoginPaths, (req: Request, res: Response) => {
+app.post(authLoginPaths, async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body || {};
     if (!email || typeof email !== 'string' || !email.trim()) {
@@ -1613,6 +2031,43 @@ app.post(authLoginPaths, (req: Request, res: Response) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    const isProd = process.env.NODE_ENV === 'production';
+    const supaAuth = getSupabaseAuthClient();
+
+    if (supaAuth) {
+      try {
+        const { data, error } = await supaAuth.auth.signInWithPassword({
+          email: normalizedEmail,
+          password,
+        });
+        if (!error && data?.session && data?.user) {
+          const metaName = data.user.user_metadata?.full_name || normalizedEmail.split('@')[0];
+          res.setHeader(
+            'Set-Cookie',
+            `fieldshift_session=${encodeURIComponent(data.session.access_token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isProd ? '; Secure' : ''}`
+          );
+          res.status(200).json({
+            success: true,
+            user: {
+              email: data.user.email || normalizedEmail,
+              fullName: String(metaName),
+              verified: !!data.user.email_confirmed_at || true,
+            },
+            token: data.session.access_token,
+          });
+          return;
+        }
+        // Only fall back to local activeUsers if Supabase didn't know the user or had a config issue;
+        // if Supabase explicitly says Invalid login credentials and not in local activeUsers, return 401
+        if (error && !activeUsers.has(normalizedEmail)) {
+          res.status(401).json({ error: error.message || 'Invalid login credentials.' });
+          return;
+        }
+      } catch (err: any) {
+        logGeminiEvent('SUPABASE_LOGIN_FALLBACK', { error: err?.message });
+      }
+    }
+
     const user = activeUsers.get(normalizedEmail);
 
     if (!user) {
@@ -1632,7 +2087,6 @@ app.post(authLoginPaths, (req: Request, res: Response) => {
     user.token = token;
 
     // Set secure HTTP-only session cookie
-    const isProd = process.env.NODE_ENV === 'production';
     res.setHeader(
       'Set-Cookie',
       `fieldshift_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isProd ? '; Secure' : ''}`
@@ -1664,31 +2118,20 @@ const authSessionPaths = [
   '/api/auth/user',
   '/auth/user',
 ];
-app.get(authSessionPaths, (req: Request, res: Response) => {
-  const authHeader = req.headers.authorization;
-  let token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : (req.query.token as string);
-
-  // Check cookie if token not present in header or query
-  if (!token && req.headers.cookie) {
-    const match = req.headers.cookie.match(/fieldshift_session=([^;]+)/);
-    if (match) {
-      token = match[1];
-    }
-  }
-
+app.get(authSessionPaths, async (req: Request, res: Response) => {
+  const token = extractRequestToken(req);
   if (!token) {
     res.status(401).json({ error: 'No active session token provided.' });
     return;
   }
 
-  for (const user of activeUsers.values()) {
-    if (user.token === token) {
-      res.json({
-        success: true,
-        user: { email: user.email, fullName: user.fullName, verified: user.verified },
-      });
-      return;
-    }
+  const user = await resolveRequestUser(req);
+  if (user) {
+    res.json({
+      success: true,
+      user: { email: user.email, fullName: user.fullName, verified: user.verified },
+    });
+    return;
   }
 
   res.status(401).json({ error: 'Session expired or invalid. Please sign in again.' });
@@ -1703,11 +2146,19 @@ app.post(authLogoutPaths, (req: Request, res: Response) => {
 
 // 7. Password Reset / Recovery
 const authForgotPaths = ['/api/auth/forgot-password', '/auth/forgot-password', '/api/auth/reset-password', '/auth/reset-password'];
-app.post(authForgotPaths, (req: Request, res: Response) => {
+app.post(authForgotPaths, async (req: Request, res: Response) => {
   const { email } = req.body;
   if (!email) {
     res.status(400).json({ error: 'Email address is required' });
     return;
+  }
+  const supaAuth = getSupabaseAuthClient();
+  if (supaAuth) {
+    try {
+      await supaAuth.auth.resetPasswordForEmail(String(email).trim().toLowerCase());
+    } catch {
+      // Do not leak user existence
+    }
   }
   res.json({
     success: true,
@@ -1727,7 +2178,8 @@ app.post(['/api/advisor', '/api/gemini/advisor'], async (req: Request, res: Resp
     return;
   }
 
-  const selectedFarm = mockFarms.find((f) => f.id === farmId) || mockFarms[0];
+  const reqUser = await resolveRequestUser(req);
+  const selectedFarm = await getFarmById(farmId, reqUser?.id);
 
   // Request deduplication for simultaneous concurrent requests
   const dedupKey = `${selectedFarm.id}-${prompt.trim().toLowerCase()}`;
@@ -1850,8 +2302,8 @@ ${priorityHighlights.join('\n')}
       };
     }
 
-    // Supported modern @google/genai models (primary gemini-3.8-flash, fast fallback gemini-3.1-flash-lite)
-    const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+    // Supported modern @google/genai models (primary gemini-4-hydrogen, fast fallback gemini-3.1-flash-lite)
+    const candidateModels = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
     let lastError: any = null;
     const maxAttempts = candidateModels.length;
 

@@ -4,6 +4,7 @@ export interface AtmosphereOptions {
   radius: number;
   color?: string;
   glowIntensity?: number;
+  segments?: number;
 }
 
 /**
@@ -11,9 +12,9 @@ export interface AtmosphereOptions {
  * and soft translucent scattering for the Field Shift Liquid Earth.
  */
 export function createAtmosphereMesh(options: AtmosphereOptions): THREE.Mesh {
-  const { radius, color = '#76B93F', glowIntensity = 1.2 } = options;
+  const { radius, color = '#76B93F', glowIntensity = 1.2, segments = 64 } = options;
 
-  const atmosphereGeometry = new THREE.SphereGeometry(radius * 1.08, 64, 64);
+  const atmosphereGeometry = new THREE.SphereGeometry(radius * 1.08, segments, segments);
 
   // Custom GLSL Fresnel shader for natural atmospheric rim lighting
   const vertexShader = `

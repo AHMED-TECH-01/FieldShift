@@ -30,18 +30,26 @@ export function initEarthScene(config: EarthSceneConfig): {
   const width = container.clientWidth || 360;
   const height = container.clientHeight || 360;
 
-  // 1. WebGL Renderer Setup with Mobile DPR Capping
+  // 1. WebGL Renderer Setup with Mobile & Low-Power Capping
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  const isLowPower =
+    isMobile ||
+    (typeof navigator !== 'undefined' &&
+      typeof navigator.hardwareConcurrency === 'number' &&
+      navigator.hardwareConcurrency <= 4);
   const maxDpr = isMobile ? 1.5 : quality === 'high' ? 2 : 1.5;
   const renderer = new THREE.WebGLRenderer({
     antialias: quality !== 'low' && !isMobile,
     alpha: true,
-    powerPreference: 'high-performance',
+    powerPreference: isLowPower ? 'default' : 'high-performance',
   });
   renderer.setSize(width, height);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxDpr));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.25;
+  renderer.domElement.style.touchAction = 'pan-y';
+  renderer.domElement.style.display = 'block';
+  renderer.domElement.style.maxWidth = '100%';
 
   container.innerHTML = '';
   container.appendChild(renderer.domElement);
@@ -89,7 +97,7 @@ export function initEarthScene(config: EarthSceneConfig): {
   // Radius calibrated so orbital trajectory (min 2.22, max 2.45) provides
   // generous, guaranteed clearance from Earth (1.62) and atmosphere (1.75).
   const earthRadius = 1.62;
-  const segments = quality === 'high' ? 64 : 48;
+  const segments = isLowPower || quality === 'low' ? 32 : quality === 'high' ? 64 : 48;
   const coreGeo = new THREE.SphereGeometry(earthRadius, segments, segments);
 
   // Rich physical liquid glass material with emerald depth
@@ -99,7 +107,7 @@ export function initEarthScene(config: EarthSceneConfig): {
     emissiveIntensity: 0.45,
     roughness: 0.16,
     metalness: 0.12,
-    transmission: 0.42,
+    transmission: isLowPower ? 0.25 : 0.42,
     ior: 1.34,
     transparent: true,
     opacity: 0.94,
@@ -109,7 +117,7 @@ export function initEarthScene(config: EarthSceneConfig): {
   earthRootGroup.add(coreMesh);
 
   // 4b. Continents & Terrestrial Relief Dots
-  const dotCount = quality === 'high' ? 1600 : 900;
+  const dotCount = isLowPower || quality === 'low' ? 650 : quality === 'high' ? 1600 : 900;
   const dotPositions = new Float32Array(dotCount * 3);
   const dotColors = new Float32Array(dotCount * 3);
 
@@ -156,6 +164,7 @@ export function initEarthScene(config: EarthSceneConfig): {
       radius: earthRadius,
       color: '#76B93F',
       glowIntensity: 1.15,
+      segments: isLowPower || quality === 'low' ? 32 : 64,
     });
     scene.add(atmosphereMesh);
   }
@@ -174,7 +183,7 @@ export function initEarthScene(config: EarthSceneConfig): {
 
   // 4e. Leaf-Inspired Organic Floating Micro-Particles
   const particles = createLeafParticles({
-    count: quality === 'high' ? 85 : 45,
+    count: isLowPower || quality === 'low' ? 32 : quality === 'high' ? 85 : 45,
     radiusMin: 1.9,
     radiusMax: 2.6,
   });
@@ -194,33 +203,29 @@ export function initEarthScene(config: EarthSceneConfig): {
     scene.add(satellite.group);
   }
 
-  // 5. Interactive Mouse & Touch Parallax Tracking
+  // 5. Interactive Mouse Parallax Tracking (does not intercept mobile touch scrolling)
   let targetRotationX = 0;
   let targetRotationY = 0;
 
-  const onPointerMove = (e: MouseEvent | TouchEvent) => {
-    if (!interactive) return;
-    const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0]?.clientY : e.clientY;
-    if (clientX === undefined || clientY === undefined) return;
-
+  const onPointerMove = (e: PointerEvent) => {
+    if (!interactive || e.pointerType === 'touch') return;
     const rect = container.getBoundingClientRect();
-    const x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
+    if (!rect.width || !rect.height) return;
+    const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
     targetRotationY = x * 0.25;
     targetRotationX = y * 0.25;
   };
 
   if (interactive) {
-    container.addEventListener('mousemove', onPointerMove, { passive: true });
-    container.addEventListener('touchmove', onPointerMove, { passive: true });
+    container.addEventListener('pointermove', onPointerMove, { passive: true });
   }
 
   // 6. Responsive Resize Handler (Guarantees zero clipping across all screen sizes)
   const resize = () => {
     if (!container) return;
-    const w = container.clientWidth || 360;
-    const h = container.clientHeight || 360;
+    const w = container.clientWidth || 280;
+    const h = container.clientHeight || w || 280;
     const aspect = w / h;
     camera.aspect = aspect;
 
@@ -232,6 +237,8 @@ export function initEarthScene(config: EarthSceneConfig): {
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
   };
+
+  window.addEventListener('resize', resize, { passive: true });
 
   // 7. Visibility Change & IntersectionObserver (Pause rendering when tab inactive or offscreen)
   let isTabActive = !document.hidden;
@@ -313,10 +320,10 @@ export function initEarthScene(config: EarthSceneConfig): {
       observer.disconnect();
     }
     document.removeEventListener('visibilitychange', onVisibilityChange);
+    window.removeEventListener('resize', resize);
 
     if (interactive) {
-      container.removeEventListener('mousemove', onPointerMove);
-      container.removeEventListener('touchmove', onPointerMove);
+      container.removeEventListener('pointermove', onPointerMove);
     }
 
     renderer.dispose();

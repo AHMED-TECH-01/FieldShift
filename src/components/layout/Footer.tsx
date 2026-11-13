@@ -115,7 +115,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, className = '' }) =>
               <div className="pt-1">
                 <button
                   onClick={() => onNavigate('/nasa-data')}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-[#76B93F] hover:text-[#9BD85A] hover:underline transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#76B93F] rounded-xs"
+                  className="inline-flex items-center gap-1.5 min-h-[44px] py-2 text-xs font-bold text-[#76B93F] hover:text-[#9BD85A] hover:underline transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#76B93F] rounded-xs"
                 >
                   <span>Explore NASA Data</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -125,16 +125,16 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, className = '' }) =>
           </div>
 
           {/* ================= 2. PLATFORM COLUMN ================= */}
-          <div className="lg:col-span-3 space-y-4">
+          <div className="lg:col-span-3 space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-widest text-[#76B93F]">
               {FOOTER_NAV_CONFIG.platform.title}
             </h4>
-            <ul className="space-y-2.5 text-xs sm:text-sm text-white/80" role="list">
+            <ul className="space-y-0.5 text-xs sm:text-sm text-white/80" role="list">
               {FOOTER_NAV_CONFIG.platform.links.map((link) => (
                 <li key={link.path}>
                   <button
                     onClick={() => onNavigate(link.path)}
-                    className="text-left py-1 hover:text-[#76B93F] hover:translate-x-1 transition-all duration-150 focus:outline-hidden focus:ring-1 focus:ring-[#76B93F] rounded-xs inline-block"
+                    className="text-left py-2 min-h-[44px] inline-flex items-center hover:text-[#76B93F] hover:translate-x-1 transition-all duration-150 focus:outline-hidden focus:ring-1 focus:ring-[#76B93F] rounded-xs"
                   >
                     {link.label}
                   </button>
@@ -144,16 +144,16 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, className = '' }) =>
           </div>
 
           {/* ================= 3. SOLUTIONS COLUMN ================= */}
-          <div className="lg:col-span-3 space-y-4">
+          <div className="lg:col-span-3 space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-widest text-[#76B93F]">
               {FOOTER_NAV_CONFIG.solutions.title}
             </h4>
-            <ul className="space-y-2.5 text-xs sm:text-sm text-white/80" role="list">
+            <ul className="space-y-0.5 text-xs sm:text-sm text-white/80" role="list">
               {FOOTER_NAV_CONFIG.solutions.links.map((link) => (
                 <li key={link.path}>
                   <button
                     onClick={() => onNavigate(link.path)}
-                    className="text-left py-1 hover:text-[#76B93F] hover:translate-x-1 transition-all duration-150 focus:outline-hidden focus:ring-1 focus:ring-[#76B93F] rounded-xs inline-block"
+                    className="text-left py-2 min-h-[44px] inline-flex items-center hover:text-[#76B93F] hover:translate-x-1 transition-all duration-150 focus:outline-hidden focus:ring-1 focus:ring-[#76B93F] rounded-xs"
                   >
                     {link.label}
                   </button>
@@ -163,16 +163,16 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, className = '' }) =>
           </div>
 
           {/* ================= 4. RESOURCES COLUMN ================= */}
-          <div className="lg:col-span-2 space-y-4">
+          <div className="lg:col-span-2 space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-widest text-[#76B93F]">
               {FOOTER_NAV_CONFIG.resources.title}
             </h4>
-            <ul className="space-y-2.5 text-xs sm:text-sm text-white/80" role="list">
+            <ul className="space-y-0.5 text-xs sm:text-sm text-white/80" role="list">
               {FOOTER_NAV_CONFIG.resources.links.map((link) => (
                 <li key={link.path}>
                   <button
                     onClick={() => onNavigate(link.path)}
-                    className="text-left py-1 hover:text-[#76B93F] hover:translate-x-1 transition-all duration-150 focus:outline-hidden focus:ring-1 focus:ring-[#76B93F] rounded-xs inline-block"
+                    className="text-left py-2 min-h-[44px] inline-flex items-center hover:text-[#76B93F] hover:translate-x-1 transition-all duration-150 focus:outline-hidden focus:ring-1 focus:ring-[#76B93F] rounded-xs"
                   >
                     {link.label}
                   </button>
@@ -193,12 +193,12 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, className = '' }) =>
             </span>
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6">
             {FOOTER_NAV_CONFIG.legal.map((item) => (
               <button
                 key={item.path}
                 onClick={() => onNavigate(item.path)}
-                className="text-white/70 hover:text-[#76B93F] hover:underline transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#76B93F] rounded-xs py-1"
+                className="text-white/70 hover:text-[#76B93F] hover:underline transition-colors focus:outline-hidden focus:ring-1 focus:ring-[#76B93F] rounded-xs py-2 min-h-[44px] inline-flex items-center"
               >
                 {item.label}
               </button>

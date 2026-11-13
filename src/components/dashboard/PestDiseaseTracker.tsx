@@ -31,16 +31,16 @@ export const PestDiseaseTracker: React.FC<PestDiseaseTrackerProps> = ({ farmId }
   };
 
   return (
-    <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
+    <div className="bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
       
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E2E8DE] pb-5">
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-900 text-xs font-bold uppercase tracking-wider mb-2">
-            <Bug className="w-3.5 h-3.5" />
-            Requirement D: Pest & Disease Cycle Interruption Engine
+            <Bug className="w-3.5 h-3.5 shrink-0" />
+            <span>Requirement D: Pest & Disease Cycle Engine</span>
           </div>
-          <h3 className="font-display text-2xl font-bold text-[#073D2B]">
+          <h3 className="font-display text-fluid-h2 font-bold text-[#073D2B]">
             Crop Family Host Disruption & Pathogen Suppression
           </h3>
           <p className="text-xs text-[#527367] mt-1 max-w-2xl">
@@ -50,7 +50,7 @@ export const PestDiseaseTracker: React.FC<PestDiseaseTrackerProps> = ({ farmId }
         </div>
 
         {/* Satellite Disclaimer */}
-        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3 max-w-xs text-[11px] text-rose-900 flex items-start gap-2">
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3 lg:max-w-xs text-[11px] text-rose-900 flex items-start gap-2">
           <AlertOctagon className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
           <span>
             <strong>Mandatory Scientific Notice:</strong> Satellite observations alone CANNOT confirm insect or disease presence.
@@ -71,23 +71,22 @@ export const PestDiseaseTracker: React.FC<PestDiseaseTrackerProps> = ({ farmId }
       </div>
 
       {/* Comparative Evaluation Across Strategies */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
         {evaluations.map((evalItem) => {
           const isA = evalItem.strategyCode === 'A';
           const isB = evalItem.strategyCode === 'B';
-          const isC = evalItem.strategyCode === 'C';
 
           return (
             <div
               key={evalItem.strategyCode}
-              className={`p-6 rounded-3xl border space-y-4 flex flex-col justify-between ${
+              className={`p-4 sm:p-6 rounded-3xl border space-y-4 flex flex-col justify-between ${
                 isB
                   ? 'bg-[#FAFDF8] border-[#76B93F] ring-2 ring-[#76B93F]/20 shadow-xs'
                   : 'bg-white border-[#E2E8DE]'
               }`}
             >
               <div>
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                   <span
                     className={`px-2.5 py-1 rounded text-xs font-bold ${
                       isA
@@ -113,7 +112,7 @@ export const PestDiseaseTracker: React.FC<PestDiseaseTrackerProps> = ({ farmId }
                 </h4>
 
                 <div className="mt-4 pt-3 border-t border-[#E2E8DE] space-y-2 text-xs">
-                  <div className="flex justify-between items-center">
+                  <div className="flex flex-wrap justify-between items-center gap-1">
                     <span className="text-[#527367]">Western Corn Rootworm:</span>
                     <span
                       className={`font-bold px-2 py-0.5 rounded text-[11px] ${
@@ -126,7 +125,7 @@ export const PestDiseaseTracker: React.FC<PestDiseaseTrackerProps> = ({ farmId }
                     </span>
                   </div>
 
-                  <div className="flex justify-between items-center">
+                  <div className="flex flex-wrap justify-between items-center gap-1">
                     <span className="text-[#527367]">Soybean Cyst Nematode:</span>
                     <span
                       className={`font-bold px-2 py-0.5 rounded text-[11px] ${
@@ -141,7 +140,7 @@ export const PestDiseaseTracker: React.FC<PestDiseaseTrackerProps> = ({ farmId }
                     </span>
                   </div>
 
-                  <div className="flex justify-between items-center">
+                  <div className="flex flex-wrap justify-between items-center gap-1">
                     <span className="text-[#527367]">Fusarium Soil Inoculum:</span>
                     <span
                       className={`font-bold px-2 py-0.5 rounded text-[11px] ${
@@ -165,10 +164,10 @@ export const PestDiseaseTracker: React.FC<PestDiseaseTrackerProps> = ({ farmId }
       </div>
 
       {/* Visual Agroecological Intercropping Showcase */}
-      <div className="rounded-2xl border border-[#D5E5CA] bg-[#FAFDF8] p-5 space-y-3 overflow-hidden">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+      <div className="rounded-2xl border border-[#D5E5CA] bg-[#FAFDF8] p-3.5 sm:p-5 space-y-3 overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-[#76B93F]" />
+            <ShieldCheck className="w-4 h-4 text-[#76B93F] shrink-0" />
             <span className="text-xs font-bold text-[#073D2B]">Botanical Family Host Cycle Interruption in Action</span>
           </div>
           <span className="text-[10px] font-bold text-[#145C3D] bg-[#EAF5DF] px-2 py-0.5 rounded self-start sm:self-auto">

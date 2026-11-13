@@ -27,29 +27,29 @@ interface PublicPageProps {
    ========================================================================== */
 export const AboutPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAuth }) => {
   return (
-    <div className="py-12 md:py-20 bg-[#F8F7ED] min-h-screen">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+    <div className="py-8 sm:py-12 md:py-20 bg-[#F8F7ED] min-h-screen">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10 sm:space-y-12">
         
         {/* Hero */}
         <div className="text-center max-w-3xl mx-auto space-y-4">
           <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold uppercase tracking-wider">
-            <Award className="w-3.5 h-3.5" />
-            NASA Earth Science Applied Agriculture
+            <Award className="w-3.5 h-3.5 shrink-0" />
+            <span>NASA Earth Science Applied Agriculture</span>
           </div>
-          <h1 className="font-display text-4xl sm:text-5xl font-extrabold text-[#073D2B] tracking-tight">
+          <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] tracking-tight">
             Science-Backed Crop Intelligence for Lasting Land Resilience
           </h1>
-          <p className="text-base sm:text-lg text-[#527367] leading-relaxed">
+          <p className="text-fluid-lead text-[#527367] leading-relaxed">
             Field Shift was born from a fundamental belief: farmers should have the same advanced
             remote sensing technologies used by climate scientists to protect their soil, water, and economic future.
           </p>
         </div>
 
         {/* Mission Card */}
-        <div className="bg-white rounded-3xl p-8 sm:p-10 border border-[#D5E5CA] shadow-sm grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-          <div className="space-y-4">
+        <div className="bg-white rounded-3xl p-5 sm:p-8 md:p-10 border border-[#D5E5CA] shadow-sm grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8 items-center">
+          <div className="space-y-4 min-w-0">
             <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">Our Core Philosophy</span>
-            <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#073D2B]">
+            <h2 className="font-display text-fluid-h2 font-bold text-[#073D2B]">
               Supporting Farmer Judgment, Never Replacing It
             </h2>
             <p className="text-sm text-[#2A4D3E] leading-relaxed">
@@ -59,16 +59,17 @@ export const AboutPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAuth })
             </p>
             <div className="pt-2">
               <button
+                type="button"
                 onClick={() => onOpenAuth('signup')}
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md"
+                className="w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md"
               >
                 <span>Join the Field Shift Movement</span>
-                <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+                <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
               </button>
             </div>
           </div>
 
-          <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-[#073D2B] to-[#145C3D] p-6 text-white space-y-4">
+          <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-[#073D2B] to-[#145C3D] p-5 sm:p-6 text-white space-y-4 min-w-0">
             <div className="flex items-center gap-2 text-[#9BD85A] text-xs font-bold uppercase">
               <ShieldCheck className="w-4 h-4" />
               Agronomic Integrity Code
@@ -185,26 +186,26 @@ export const FeaturesPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAuth
   ];
 
   return (
-    <div className="py-12 md:py-20 bg-white min-h-screen">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+    <div className="py-8 sm:py-12 md:py-20 bg-white min-h-screen">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10 sm:space-y-12">
         <div className="text-center max-w-3xl mx-auto space-y-3">
           <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">Complete Platform Architecture</span>
-          <h1 className="font-display text-4xl sm:text-5xl font-extrabold text-[#073D2B]">
+          <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B]">
             Engineered for Modern Agriculture
           </h1>
-          <p className="text-base text-[#527367]">
+          <p className="text-fluid-lead text-[#527367]">
             Five interconnected technological pillars working together to maximize farm profitability, soil health, and climate durability.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
           {featureList.map((f, i) => {
             const Icon = f.icon;
             return (
-              <div key={i} className="p-6 rounded-3xl bg-[#FAFDF8] border border-[#D5E5CA] hover:border-[#76B93F] transition-all shadow-2xs space-y-4 flex flex-col justify-between">
+              <div key={i} className="p-5 sm:p-6 rounded-3xl bg-[#FAFDF8] border border-[#D5E5CA] hover:border-[#76B93F] transition-all shadow-2xs space-y-4 flex flex-col justify-between min-w-0">
                 <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className={`w-12 h-12 rounded-2xl ${f.color} flex items-center justify-center`}>
+                  <div className="flex items-center justify-between gap-2 mb-4">
+                    <div className={`w-12 h-12 rounded-2xl ${f.color} flex items-center justify-center shrink-0`}>
                       <Icon className="w-6 h-6" />
                     </div>
                     <span className="text-[10px] font-bold tracking-widest text-[#527367] bg-white px-2 py-1 rounded-md border border-[#E2E8DE]">
@@ -228,14 +229,15 @@ export const FeaturesPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAuth
           })}
         </div>
 
-        <div className="p-8 rounded-3xl bg-[#073D2B] text-white flex flex-col sm:flex-row items-center justify-between gap-6">
-          <div>
-            <h3 className="font-display text-2xl font-bold">Ready to analyze your farm?</h3>
-            <p className="text-xs text-white/80 mt-1">Get instant access to NASA observations and crop rotation comparisons.</p>
+        <div className="p-5 sm:p-8 rounded-3xl bg-[#073D2B] text-white flex flex-col sm:flex-row sm:items-center justify-between gap-5 sm:gap-6">
+          <div className="min-w-0">
+            <h3 className="font-display text-fluid-h2 font-bold">Ready to analyze your farm?</h3>
+            <p className="text-xs sm:text-sm text-white/80 mt-1">Get instant access to NASA observations and crop rotation comparisons.</p>
           </div>
           <button
+            type="button"
             onClick={() => onOpenAuth('signup')}
-            className="px-6 py-3 rounded-full bg-[#76B93F] hover:bg-[#9BD85A] text-[#073D2B] font-bold text-sm shadow-md transition-all whitespace-nowrap"
+            className="w-full sm:w-auto min-h-[44px] px-6 py-3 rounded-full bg-[#76B93F] hover:bg-[#9BD85A] text-[#073D2B] font-bold text-sm shadow-md transition-all text-center shrink-0"
           >
             Create Free Account
           </button>
@@ -250,36 +252,36 @@ export const FeaturesPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAuth
    ========================================================================== */
 export const NasaDataPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAuth }) => {
   return (
-    <div className="py-12 md:py-20 bg-[#F8F7ED] min-h-screen">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-12 md:py-20 bg-[#F8F7ED] min-h-screen">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         <div className="text-center max-w-3xl mx-auto space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white border border-[#CDE5BA] text-xs font-bold text-[#073D2B]">
-            <span className="w-2 h-2 rounded-full bg-[#0B3D91]" />
-            NASA Earth Science Division Missions
+            <span className="w-2 h-2 rounded-full bg-[#0B3D91] shrink-0" />
+            <span>NASA Earth Science Division Missions</span>
           </div>
-          <h1 className="font-display text-4xl sm:text-5xl font-extrabold text-[#073D2B]">
+          <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B]">
             NASA Earth Science Applied to Agriculture
           </h1>
-          <p className="text-sm sm:text-base text-[#527367]">
+          <p className="text-fluid-lead text-[#527367]">
             Understanding the orbital satellites, atmospheric models, and ground radars that power the Field Shift intelligence platform.
           </p>
         </div>
 
-        <div className="space-y-6">
-          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-2xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Satellite className="w-5 h-5 text-sky-600" />
-                <h3 className="font-bold text-lg text-[#073D2B]">SMAP — Soil Moisture Active Passive</h3>
+        <div className="space-y-5 sm:space-y-6">
+          <div className="bg-white rounded-3xl p-5 sm:p-8 border border-[#D5E5CA] shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Satellite className="w-5 h-5 text-sky-600 shrink-0" />
+                <h3 className="font-bold text-base sm:text-lg text-[#073D2B]">SMAP — Soil Moisture Active Passive</h3>
               </div>
-              <span className="text-xs bg-sky-50 text-sky-800 px-3 py-1 rounded-full font-semibold">L-Band Microwave</span>
+              <span className="self-start sm:self-auto text-xs bg-sky-50 text-sky-800 px-3 py-1 rounded-full font-semibold shrink-0">L-Band Microwave</span>
             </div>
             <p className="text-xs text-[#2A4D3E] leading-relaxed">
               NASA’s SMAP spacecraft utilizes an L-band microwave radiometer to detect changes in the dielectric constant of topsoil,
               which varies dramatically with water content. By coupling these surface measurements with the NASA Catchment Land Surface Model,
               SMAP produces the L4 root-zone product (0–100 cm depth) essential for calculating crop drought stress.
             </p>
-            <div className="p-3 bg-[#FAFDF8] rounded-xl border border-[#E2E8DE] text-[11px] text-[#527367] grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="p-3 bg-[#FAFDF8] rounded-xl border border-[#E2E8DE] text-[11px] text-[#527367] grid grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-4 gap-2">
               <div><strong className="text-[#073D2B]">Resolution:</strong> 9 km grid</div>
               <div><strong className="text-[#073D2B]">Revisit:</strong> 2–3 days</div>
               <div><strong className="text-[#073D2B]">Depth:</strong> 0-5cm & 0-100cm</div>
@@ -287,19 +289,19 @@ export const NasaDataPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAuth
             </div>
           </div>
 
-          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-2xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Satellite className="w-5 h-5 text-emerald-600" />
-                <h3 className="font-bold text-lg text-[#073D2B]">GPM IMERG — Global Precipitation Measurement</h3>
+          <div className="bg-white rounded-3xl p-5 sm:p-8 border border-[#D5E5CA] shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Satellite className="w-5 h-5 text-emerald-600 shrink-0" />
+                <h3 className="font-bold text-base sm:text-lg text-[#073D2B]">GPM IMERG — Global Precipitation Measurement</h3>
               </div>
-              <span className="text-xs bg-emerald-50 text-emerald-800 px-3 py-1 rounded-full font-semibold">Dual Radar + Constellation</span>
+              <span className="self-start sm:self-auto text-xs bg-emerald-50 text-emerald-800 px-3 py-1 rounded-full font-semibold shrink-0">Dual Radar + Constellation</span>
             </div>
             <p className="text-xs text-[#2A4D3E] leading-relaxed">
               IMERG (Integrated Multi-satellite Retrievals for GPM) unifies precipitation data from a constellation of 10+ international satellites.
               It tracks extreme rainfall events, continuous rain deficits, and localized storm cells, providing historical anomalies essential for erosion prevention.
             </p>
-            <div className="p-3 bg-[#FAFDF8] rounded-xl border border-[#E2E8DE] text-[11px] text-[#527367] grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="p-3 bg-[#FAFDF8] rounded-xl border border-[#E2E8DE] text-[11px] text-[#527367] grid grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-4 gap-2">
               <div><strong className="text-[#073D2B]">Resolution:</strong> 0.1° (~10 km)</div>
               <div><strong className="text-[#073D2B]">Frequency:</strong> Every 30 minutes</div>
               <div><strong className="text-[#073D2B]">Calibration:</strong> GPCC Surface Gauges</div>
@@ -307,19 +309,19 @@ export const NasaDataPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAuth
             </div>
           </div>
 
-          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-2xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Satellite className="w-5 h-5 text-amber-600" />
-                <h3 className="font-bold text-lg text-[#073D2B]">MODIS MOD13Q1 — Terra & Aqua Reflectance</h3>
+          <div className="bg-white rounded-3xl p-5 sm:p-8 border border-[#D5E5CA] shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Satellite className="w-5 h-5 text-amber-600 shrink-0" />
+                <h3 className="font-bold text-base sm:text-lg text-[#073D2B]">MODIS MOD13Q1 — Terra & Aqua Reflectance</h3>
               </div>
-              <span className="text-xs bg-amber-50 text-amber-800 px-3 py-1 rounded-full font-semibold">250m Multispectral</span>
+              <span className="self-start sm:self-auto text-xs bg-amber-50 text-amber-800 px-3 py-1 rounded-full font-semibold shrink-0">250m Multispectral</span>
             </div>
             <p className="text-xs text-[#2A4D3E] leading-relaxed">
               Provides continuity of global vegetation index measurements (NDVI and Enhanced Vegetation Index - EVI).
               Used by Field Shift to verify vegetative canopy cover during winter months, proving whether cover crops have successfully established.
             </p>
-            <div className="p-3 bg-[#FAFDF8] rounded-xl border border-[#E2E8DE] text-[11px] text-[#527367] grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="p-3 bg-[#FAFDF8] rounded-xl border border-[#E2E8DE] text-[11px] text-[#527367] grid grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-4 gap-2">
               <div><strong className="text-[#073D2B]">Resolution:</strong> 250 meters</div>
               <div><strong className="text-[#073D2B]">Cadence:</strong> 16-day composited</div>
               <div><strong className="text-[#073D2B]">Spectrum:</strong> Red & Near-Infrared</div>
@@ -328,13 +330,14 @@ export const NasaDataPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAuth
           </div>
         </div>
 
-        <div className="text-center pt-4">
+        <div className="text-center pt-2">
           <button
+            type="button"
             onClick={() => onNavigate('/dashboard/earth-observation')}
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md"
+            className="w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md"
           >
             <span>Launch Live NASA Telemetry Dashboard</span>
-            <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+            <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
           </button>
         </div>
       </div>
@@ -347,62 +350,63 @@ export const NasaDataPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAuth
    ========================================================================== */
 export const SolutionsPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAuth }) => {
   return (
-    <div className="py-12 md:py-20 bg-white min-h-screen">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+    <div className="py-8 sm:py-12 md:py-20 bg-white min-h-screen">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10 sm:space-y-12">
         <div className="text-center max-w-3xl mx-auto space-y-3">
           <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">Agricultural Sectors</span>
-          <h1 className="font-display text-4xl sm:text-5xl font-extrabold text-[#073D2B]">
+          <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B]">
             Tailored Solutions for Every Farm Scale
           </h1>
-          <p className="text-base text-[#527367]">
+          <p className="text-fluid-lead text-[#527367]">
             Whether you manage a 400-acre family operation or coordinate a 50,000-acre watershed district, Field Shift provides dedicated intelligence.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div className="p-8 rounded-3xl bg-[#FAFDF8] border border-[#D5E5CA] space-y-4">
-            <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">Family & Row-Crop Farms</span>
-            <h3 className="font-bold text-2xl text-[#073D2B]">Cut Synthetic Inputs Without Sacrificing Margins</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
+          <div className="p-5 sm:p-8 rounded-3xl bg-[#FAFDF8] border border-[#D5E5CA] space-y-4">
+            <span className="inline-block px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">Family & Row-Crop Farms</span>
+            <h3 className="font-bold text-xl sm:text-2xl text-[#073D2B]">Cut Synthetic Inputs Without Sacrificing Margins</h3>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
               Transition smoothly away from vulnerable monocultures. Model the real nitrogen contribution of winter hairy vetch and crimson clover,
               and reduce synthetic N purchases by up to 35% within 3 seasons.
             </p>
             <ul className="space-y-2 text-xs text-[#2A4D3E] pt-2">
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#76B93F]" />
-                Field-specific planting & termination calendars
+              <li className="flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#76B93F] shrink-0 mt-0.5" />
+                <span>Field-specific planting & termination calendars</span>
               </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#76B93F]" />
-                Rootworm life-cycle disruption timelines
+              <li className="flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#76B93F] shrink-0 mt-0.5" />
+                <span>Rootworm life-cycle disruption timelines</span>
               </li>
             </ul>
           </div>
 
-          <div className="p-8 rounded-3xl bg-[#FAFDF8] border border-[#D5E5CA] space-y-4">
-            <span className="px-3 py-1 rounded-full bg-sky-100 text-sky-800 text-xs font-bold">Regenerative Co-operatives</span>
-            <h3 className="font-bold text-2xl text-[#073D2B]">Verified Carbon & Soil Health Documentation</h3>
+          <div className="p-5 sm:p-8 rounded-3xl bg-[#FAFDF8] border border-[#D5E5CA] space-y-4">
+            <span className="inline-block px-3 py-1 rounded-full bg-sky-100 text-sky-800 text-xs font-bold">Regenerative Co-operatives</span>
+            <h3 className="font-bold text-xl sm:text-2xl text-[#073D2B]">Verified Carbon & Soil Health Documentation</h3>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
               Provide satellite-verified proof of continuous living root cover to premium grain buyers, regenerative certification bodies,
               and ecosystem service markets.
             </p>
             <ul className="space-y-2 text-xs text-[#2A4D3E] pt-2">
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#76B93F]" />
-                Independent MODIS canopy persistence audits
+              <li className="flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#76B93F] shrink-0 mt-0.5" />
+                <span>Independent MODIS canopy persistence audits</span>
               </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#76B93F]" />
-                Multi-farm aggregation & collective seed purchasing models
+              <li className="flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#76B93F] shrink-0 mt-0.5" />
+                <span>Multi-farm aggregation & collective seed purchasing models</span>
               </li>
             </ul>
           </div>
         </div>
 
-        <div className="text-center pt-4">
+        <div className="text-center pt-2">
           <button
+            type="button"
             onClick={() => onOpenAuth('signup')}
-            className="px-8 py-3.5 rounded-full bg-[#073D2B] text-white text-sm font-bold hover:bg-[#145C3D] transition-all shadow-md"
+            className="w-full sm:w-auto min-h-[44px] px-8 py-3.5 rounded-full bg-[#073D2B] text-white text-sm font-bold hover:bg-[#145C3D] transition-all shadow-md"
           >
             Start Farm Profile Setup
           </button>
@@ -417,62 +421,68 @@ export const SolutionsPage: React.FC<PublicPageProps> = ({ onNavigate, onOpenAut
    ========================================================================== */
 export const ResourcesPage: React.FC<PublicPageProps> = ({ onNavigate }) => {
   return (
-    <div className="py-12 md:py-20 bg-[#F8F7ED] min-h-screen">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-12 md:py-20 bg-[#F8F7ED] min-h-screen">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         <div className="text-center max-w-3xl mx-auto space-y-3">
           <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">Knowledge Base & Research</span>
-          <h1 className="font-display text-4xl sm:text-5xl font-extrabold text-[#073D2B]">
+          <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B]">
             Scientific Resources & Documentation
           </h1>
-          <p className="text-sm sm:text-base text-[#527367]">
+          <p className="text-fluid-lead text-[#527367]">
             Peer-reviewed agronomic papers, open-source datasets, and step-by-step guides for crop rotation design.
           </p>
         </div>
 
         <div className="space-y-4">
-          <div className="bg-white p-6 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-center justify-between gap-4">
-            <div className="space-y-1">
+          <div className="bg-white p-4 sm:p-6 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-start sm:items-center justify-between gap-3 sm:gap-4">
+            <div className="space-y-1 min-w-0 flex-1">
               <span className="text-[10px] font-bold text-[#76B93F] uppercase">Technical Brief</span>
-              <h4 className="font-bold text-base text-[#073D2B]">
+              <h4 className="font-bold text-sm sm:text-base text-[#073D2B]">
                 Soil Moisture Active Passive (SMAP) Root-Zone Calibration for Midwest Loams
               </h4>
               <p className="text-xs text-[#527367]">NASA Goddard Space Flight Center & Iowa State Extension joint methodology note.</p>
             </div>
             <button
+              type="button"
               onClick={() => onNavigate('/nasa-data')}
-              className="p-2.5 rounded-xl bg-[#F0F5EE] hover:bg-[#EAF5DF] text-[#073D2B] transition-colors"
+              aria-label="Open SMAP calibration technical brief"
+              className="w-11 h-11 shrink-0 rounded-xl bg-[#F0F5EE] hover:bg-[#EAF5DF] text-[#073D2B] transition-colors flex items-center justify-center"
             >
               <ExternalLink className="w-5 h-5" />
             </button>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-center justify-between gap-4">
-            <div className="space-y-1">
+          <div className="bg-white p-4 sm:p-6 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-start sm:items-center justify-between gap-3 sm:gap-4">
+            <div className="space-y-1 min-w-0 flex-1">
               <span className="text-[10px] font-bold text-[#76B93F] uppercase">Agronomic Guide</span>
-              <h4 className="font-bold text-base text-[#073D2B]">
+              <h4 className="font-bold text-sm sm:text-base text-[#073D2B]">
                 Biological Nitrogen Fixation in Multi-Species Cover Mixtures (Vetch + Clover + Rye)
               </h4>
               <p className="text-xs text-[#527367]">Calculating credit allowances against standard USDA commercial recommendations.</p>
             </div>
             <button
+              type="button"
               onClick={() => onNavigate('/features')}
-              className="p-2.5 rounded-xl bg-[#F0F5EE] hover:bg-[#EAF5DF] text-[#073D2B] transition-colors"
+              aria-label="Open biological nitrogen fixation guide"
+              className="w-11 h-11 shrink-0 rounded-xl bg-[#F0F5EE] hover:bg-[#EAF5DF] text-[#073D2B] transition-colors flex items-center justify-center"
             >
               <ExternalLink className="w-5 h-5" />
             </button>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-center justify-between gap-4">
-            <div className="space-y-1">
+          <div className="bg-white p-4 sm:p-6 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-start sm:items-center justify-between gap-3 sm:gap-4">
+            <div className="space-y-1 min-w-0 flex-1">
               <span className="text-[10px] font-bold text-[#76B93F] uppercase">Data Provenance Manual</span>
-              <h4 className="font-bold text-base text-[#073D2B]">
+              <h4 className="font-bold text-sm sm:text-base text-[#073D2B]">
                 Field Shift Uncertainty Framework & Spatial Resolution Disclosures
               </h4>
               <p className="text-xs text-[#527367]">How we guard against overconfidence in coarse-resolution remote sensing data.</p>
             </div>
             <button
+              type="button"
               onClick={() => onNavigate('/about')}
-              className="p-2.5 rounded-xl bg-[#F0F5EE] hover:bg-[#EAF5DF] text-[#073D2B] transition-colors"
+              aria-label="Open uncertainty framework manual"
+              className="w-11 h-11 shrink-0 rounded-xl bg-[#F0F5EE] hover:bg-[#EAF5DF] text-[#073D2B] transition-colors flex items-center justify-center"
             >
               <ExternalLink className="w-5 h-5" />
             </button>

@@ -133,10 +133,10 @@ export const RotationSimulator: React.FC<RotationSimulatorProps> = ({
               <RefreshCw className="w-3.5 h-3.5" />
               Agronomic Decision Engine
             </div>
-            <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-[#073D2B] tracking-tight">
+            <h2 className="font-display text-fluid-h2 font-extrabold text-[#073D2B] tracking-tight">
               Crop Rotation Strategy Engine
             </h2>
-            <p className="text-base text-[#527367] mt-2">
+            <p className="text-sm sm:text-base text-[#527367] mt-2 leading-relaxed">
               Compare your current crop rotation with regenerative and climate-resilient alternatives.
               All models incorporate NASA SMAP soil moisture, NASA POWER thermal units, and local soil attributes.
             </p>
@@ -144,7 +144,7 @@ export const RotationSimulator: React.FC<RotationSimulatorProps> = ({
 
           <button
             onClick={onOpenDetailedPage}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs sm:text-sm font-semibold transition-all self-start md:self-auto"
+            className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs sm:text-sm font-semibold transition-all self-start md:self-auto"
           >
             <span>Full Multi-Year Simulator</span>
             <ArrowRight className="w-4 h-4 text-[#76B93F]" />
@@ -152,23 +152,24 @@ export const RotationSimulator: React.FC<RotationSimulatorProps> = ({
         </div>
 
         {/* Strategy Selector Tabs */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4 mb-8">
           {(['A', 'B', 'C'] as const).map((code) => {
             const strat = strategiesData[code];
             const isSelected = activeCode === code;
             return (
-              <div
+              <button
+                type="button"
                 key={code}
                 onClick={() => setActiveCode(code)}
-                className={`p-5 rounded-2xl cursor-pointer transition-all border text-left relative ${
+                className={`w-full p-4 sm:p-5 rounded-2xl cursor-pointer transition-all border text-left relative ${
                   isSelected
                     ? 'bg-[#F4F9EE] border-[#76B93F] shadow-md ring-2 ring-[#76B93F]/25'
                     : 'bg-[#FBFDF9] border-[#E2E8DE] hover:border-[#BAC9BE] hover:bg-white'
                 }`}
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span
-                    className={`inline-flex items-center justify-center w-8 h-8 rounded-xl font-display font-bold text-sm ${
+                    className={`inline-flex items-center justify-center w-8 h-8 rounded-xl font-display font-bold text-sm flex-shrink-0 ${
                       code === 'A'
                         ? 'bg-amber-100 text-amber-900'
                         : code === 'B'
@@ -187,36 +188,36 @@ export const RotationSimulator: React.FC<RotationSimulatorProps> = ({
                 <h3 className="font-bold text-base text-[#073D2B] mt-3">
                   {strat.title}
                 </h3>
-                <p className="text-xs text-[#527367] mt-1 line-clamp-1">
+                <p className="text-xs text-[#527367] mt-1 leading-snug">
                   {strat.tagline}
                 </p>
 
                 <div className="mt-3 pt-3 border-t border-[#E2E8DE]/60 flex items-center justify-between text-[11px] text-[#2F5942]">
                   <span>{strat.cropSequence.length} Crop Phases</span>
-                  <span className="font-semibold underline">Click to inspect</span>
+                  <span className="font-semibold underline">Tap to inspect</span>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
 
         {/* Selected Strategy Deep-Dive Container */}
-        <div className="bg-[#FAFDF8] rounded-3xl border border-[#D5E5CA] p-6 sm:p-8 shadow-sm">
+        <div className="bg-[#FAFDF8] rounded-3xl border border-[#D5E5CA] p-4 sm:p-8 shadow-sm">
           
           <div className="flex flex-col lg:flex-row lg:items-center justify-between pb-6 border-b border-[#E2E8DE] gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-1 rounded-md bg-[#073D2B] text-white text-xs font-bold">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="px-2.5 py-1 rounded-md bg-[#073D2B] text-white text-xs font-bold flex-shrink-0">
                   STRATEGY {curr.code}
                 </span>
-                <h3 className="text-2xl font-bold text-[#073D2B]">{curr.title}</h3>
+                <h3 className="text-xl sm:text-2xl font-bold text-[#073D2B]">{curr.title}</h3>
               </div>
               <p className="text-sm text-[#527367] mt-1">{curr.tagline}</p>
             </div>
 
             {/* Scientific disclaimer badge */}
-            <div className="bg-amber-50 border border-amber-200/80 rounded-xl px-3.5 py-2 text-xs text-amber-900 flex items-center gap-2 max-w-md">
-              <Info className="w-4 h-4 text-amber-700 flex-shrink-0" />
+            <div className="bg-amber-50 border border-amber-200/80 rounded-xl px-3.5 py-2.5 text-xs text-amber-900 flex items-start sm:items-center gap-2 lg:max-w-md">
+              <Info className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5 sm:mt-0" />
               <span>
                 Scores are model-derived using NASA satellite baselines and regional soil maps. They support farmer judgment and do not guarantee yield outcomes.
               </span>
@@ -224,21 +225,21 @@ export const RotationSimulator: React.FC<RotationSimulatorProps> = ({
           </div>
 
           {/* Crop Sequence Flow */}
-          <div className="py-6">
+          <div className="py-5 sm:py-6">
             <h4 className="text-xs font-bold uppercase tracking-wider text-[#145C3D] mb-3">
               Planned Crop Sequence & Seasonal Schedule
             </h4>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               {curr.cropSequence.map((crop, idx) => (
                 <React.Fragment key={idx}>
-                  <div className="bg-white border border-[#CDE5BA] rounded-xl px-4 py-2.5 shadow-2xs flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center text-xs font-bold">
+                  <div className="bg-white border border-[#CDE5BA] rounded-xl px-3 sm:px-4 py-2 sm:py-2.5 shadow-2xs flex items-center gap-2 max-w-full">
+                    <span className="w-6 h-6 rounded-full bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center text-xs font-bold flex-shrink-0">
                       {idx + 1}
                     </span>
                     <span className="text-xs sm:text-sm font-semibold text-[#073D2B]">{crop}</span>
                   </div>
                   {idx < curr.cropSequence.length - 1 && (
-                    <ArrowRight className="w-4 h-4 text-[#8C9E94] flex-shrink-0" />
+                    <ArrowRight className="w-4 h-4 text-[#8C9E94] flex-shrink-0 hidden min-[400px]:block" />
                   )}
                 </React.Fragment>
               ))}

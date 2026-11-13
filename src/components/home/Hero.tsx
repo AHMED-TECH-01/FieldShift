@@ -53,22 +53,22 @@ export const Hero: React.FC<HeroProps> = ({
             </div>
 
             {/* Main Heading with leaf green highlight */}
-            <h1 className="font-display text-4xl sm:text-5xl md:text-6xl font-extrabold text-[#073D2B] tracking-tight leading-[1.08]">
+            <h1 className="font-display text-fluid-hero font-extrabold text-[#073D2B] tracking-tight">
               Smarter Farming <br />
               with <span className="text-[#76B93F] underline decoration-[#76B93F]/40 underline-offset-8">NASA</span> Data
             </h1>
 
             {/* Description */}
-            <p className="text-base sm:text-lg text-[#2A4D3E] max-w-xl font-normal leading-relaxed">
+            <p className="text-fluid-lead text-[#2A4D3E] max-w-xl font-normal">
               Explore crop rotation strategies, analyze environmental trends and build a more
               resilient farm for a greener tomorrow.
             </p>
 
             {/* Action Buttons */}
-            <div className="flex flex-wrap items-center gap-3 pt-2">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 pt-2">
               <button
                 onClick={onExplore}
-                className="inline-flex items-center gap-2.5 px-6 py-3.5 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white font-semibold text-sm sm:text-base shadow-lg hover:shadow-xl transition-all group"
+                className="inline-flex items-center justify-center gap-2.5 min-h-[44px] px-6 py-3 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white font-semibold text-sm sm:text-base shadow-lg hover:shadow-xl transition-all group"
               >
                 <span>Explore the Platform</span>
                 <ArrowRight className="w-4 h-4 text-[#76B93F] group-hover:translate-x-1 transition-transform" />
@@ -76,7 +76,7 @@ export const Hero: React.FC<HeroProps> = ({
 
               <button
                 onClick={onWatchDemo}
-                className="inline-flex items-center gap-2 px-5 py-3.5 rounded-full bg-white hover:bg-[#F0F5EE] text-[#073D2B] font-semibold text-sm sm:text-base border border-[#CDE5BA] shadow-xs hover:border-[#76B93F] transition-all"
+                className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-3 rounded-full bg-white hover:bg-[#F0F5EE] text-[#073D2B] font-semibold text-sm sm:text-base border border-[#CDE5BA] shadow-xs hover:border-[#76B93F] transition-all"
               >
                 <div className="w-6 h-6 rounded-full bg-[#EAF5DF] flex items-center justify-center text-[#145C3D]">
                   <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
@@ -87,8 +87,8 @@ export const Hero: React.FC<HeroProps> = ({
 
             {/* Lower-left Agricultural Field Area with Tractor */}
             <div className="pt-4 mt-2">
-              <div className="relative rounded-2xl bg-gradient-to-r from-[#FFFFFF]/90 via-[#F7FAF4]/90 to-[#EBF3E5]/90 border border-[#D5E5CA] p-4 shadow-sm flex items-center gap-4">
-                <div className="relative w-28 h-20 sm:w-32 sm:h-22 flex-shrink-0 overflow-hidden rounded-xl bg-[#EAF2E4]/60 flex items-center justify-center">
+              <div className="relative rounded-2xl bg-gradient-to-r from-[#FFFFFF]/90 via-[#F7FAF4]/90 to-[#EBF3E5]/90 border border-[#D5E5CA] p-3.5 sm:p-4 shadow-sm flex flex-col min-[400px]:flex-row items-start min-[400px]:items-center gap-3.5 sm:gap-4">
+                <div className="relative w-full min-[400px]:w-28 h-24 min-[400px]:h-20 sm:w-32 sm:h-22 flex-shrink-0 overflow-hidden rounded-xl bg-[#EAF2E4]/60 flex items-center justify-center">
                   <img
                     src="/images/tractor_transparent.png"
                     alt="Agricultural Tractor in Field"
@@ -143,11 +143,11 @@ export const Hero: React.FC<HeroProps> = ({
             </div>
 
             {/* Floating Crop Rotation Insights Glass Panel */}
-            <div className="w-full max-w-[440px] mt-2 relative z-20 glass-panel rounded-2xl p-4 sm:p-5 shadow-2xl border border-white/80">
+            <div className="w-full max-w-[440px] mt-2 relative z-20 glass-panel rounded-2xl p-3.5 sm:p-5 shadow-2xl border border-white/80">
               
-              <div className="flex items-center justify-between pb-3 border-b border-[#E2E8DE]/70">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#E2E8DE]/70">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-6 h-6 rounded-lg bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center flex-shrink-0">
                     <TrendingUp className="w-3.5 h-3.5" />
                   </div>
                   <h2 className="text-sm font-bold text-[#073D2B]">Crop Rotation Insights</h2>
@@ -168,83 +168,86 @@ export const Hero: React.FC<HeroProps> = ({
               <div className="space-y-2.5">
                 
                 {/* Strategy A */}
-                <div
+                <button
+                  type="button"
                   onClick={() => onSelectStrategy('A')}
-                  className="group flex items-center justify-between p-2.5 rounded-xl bg-white/80 hover:bg-[#F8FBF5] border border-[#E2E8DE] hover:border-[#76B93F]/60 cursor-pointer transition-all shadow-2xs"
+                  className="w-full text-left group flex items-center justify-between gap-2 min-h-[56px] p-2.5 rounded-xl bg-white/80 hover:bg-[#F8FBF5] border border-[#E2E8DE] hover:border-[#76B93F]/60 cursor-pointer transition-all shadow-2xs"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg overflow-hidden bg-amber-100 flex items-center justify-center text-amber-800 font-bold text-xs border border-amber-200">
+                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+                    <div className="w-10 h-10 flex-shrink-0 rounded-lg overflow-hidden bg-amber-100 flex items-center justify-center text-amber-800 font-bold text-xs border border-amber-200">
                       🌾 A
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <h4 className="text-xs font-bold text-[#073D2B] group-hover:text-[#145C3D]">
                         Strategy A — Current Rotation
                       </h4>
                       <p className="text-[11px] text-[#527367]">Corn / Soybean Standard Biennial</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                     <div className="relative w-9 h-9 rounded-full bg-[#EAEFE8] flex items-center justify-center text-xs font-bold text-[#073D2B] border-2 border-amber-400">
                       72%
                     </div>
                     <ChevronRight className="w-4 h-4 text-[#8C9E94] group-hover:translate-x-0.5 transition-transform" />
                   </div>
-                </div>
+                </button>
 
                 {/* Strategy B */}
-                <div
+                <button
+                  type="button"
                   onClick={() => onSelectStrategy('B')}
-                  className="group flex items-center justify-between p-2.5 rounded-xl bg-white/80 hover:bg-[#F8FBF5] border border-[#E2E8DE] hover:border-[#76B93F]/60 cursor-pointer transition-all shadow-2xs"
+                  className="w-full text-left group flex items-center justify-between gap-2 min-h-[56px] p-2.5 rounded-xl bg-white/80 hover:bg-[#F8FBF5] border border-[#E2E8DE] hover:border-[#76B93F]/60 cursor-pointer transition-all shadow-2xs"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg overflow-hidden bg-emerald-100 flex items-center justify-center text-emerald-800 font-bold text-xs border border-emerald-200">
+                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+                    <div className="w-10 h-10 flex-shrink-0 rounded-lg overflow-hidden bg-emerald-100 flex items-center justify-center text-emerald-800 font-bold text-xs border border-emerald-200">
                       🌱 B
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <h4 className="text-xs font-bold text-[#073D2B] group-hover:text-[#145C3D]">
                         Strategy B — Soil Restoration
                       </h4>
                       <p className="text-[11px] text-[#527367]">Cereal Rye + Vetch Living Cover</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                     <div className="relative w-9 h-9 rounded-full bg-[#EAEFE8] flex items-center justify-center text-xs font-bold text-[#073D2B] border-2 border-[#76B93F]">
                       86%
                     </div>
                     <ChevronRight className="w-4 h-4 text-[#8C9E94] group-hover:translate-x-0.5 transition-transform" />
                   </div>
-                </div>
+                </button>
 
                 {/* Strategy C */}
-                <div
+                <button
+                  type="button"
                   onClick={() => onSelectStrategy('C')}
-                  className="group flex items-center justify-between p-2.5 rounded-xl bg-white/80 hover:bg-[#F8FBF5] border border-[#E2E8DE] hover:border-[#76B93F]/60 cursor-pointer transition-all shadow-2xs"
+                  className="w-full text-left group flex items-center justify-between gap-2 min-h-[56px] p-2.5 rounded-xl bg-white/80 hover:bg-[#F8FBF5] border border-[#E2E8DE] hover:border-[#76B93F]/60 cursor-pointer transition-all shadow-2xs"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg overflow-hidden bg-blue-100 flex items-center justify-center text-blue-800 font-bold text-xs border border-blue-200">
+                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+                    <div className="w-10 h-10 flex-shrink-0 rounded-lg overflow-hidden bg-blue-100 flex items-center justify-center text-blue-800 font-bold text-xs border border-blue-200">
                       🌽 C
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <h4 className="text-xs font-bold text-[#073D2B] group-hover:text-[#145C3D]">
                         Strategy C — Climate Resilient
                       </h4>
                       <p className="text-[11px] text-[#527367]">Sorghum & Drought-Tolerant Pulses</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                     <div className="relative w-9 h-9 rounded-full bg-[#EAEFE8] flex items-center justify-center text-xs font-bold text-[#073D2B] border-2 border-emerald-600">
                       91%
                     </div>
                     <ChevronRight className="w-4 h-4 text-[#8C9E94] group-hover:translate-x-0.5 transition-transform" />
                   </div>
-                </div>
+                </button>
 
               </div>
 
               {/* View Detailed Analysis Action */}
               <button
                 onClick={onViewDetailedAnalysis}
-                className="mt-3.5 w-full py-2.5 px-3 rounded-xl bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs"
+                className="mt-3.5 w-full min-h-[44px] py-2.5 px-3 rounded-xl bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs"
               >
                 <span>View Detailed Analysis</span>
                 <ArrowRight className="w-3.5 h-3.5 text-[#76B93F]" />

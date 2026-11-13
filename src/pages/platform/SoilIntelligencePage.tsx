@@ -88,14 +88,14 @@ export const SoilIntelligencePage: React.FC<SoilIntelligencePageProps> = ({
   const active = soilData[selectedSoilType];
 
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
       <SEO
         title="Soil Intelligence & Moisture Dynamics | FieldShift"
         description="Fusing laboratory soil assays with USDA NRCS SSURGO digital surveys and NASA SMAP microwave root-zone telemetry for deep agronomic clarity."
         path="/soil-intelligence"
         image="https://fieldshift.ag/images/soil-strata-profile.jpg"
       />
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         {/* Breadcrumb Header */}
         <div>
@@ -107,33 +107,34 @@ export const SoilIntelligencePage: React.FC<SoilIntelligencePageProps> = ({
             onNavigate={onNavigate}
           />
           <div className="mt-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
                 Ground Chemistry & Physical Physics
               </span>
-              <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+              <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
                 Precision Soil Intelligence
               </h1>
-              <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+              <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
                 Fusing certified laboratory soil core assays with USDA NRCS SSURGO digital surveys and
                 NASA SMAP microwave root-zone telemetry for deep agronomic clarity.
               </p>
             </div>
             <button
+              type="button"
               onClick={() => onNavigate('/dashboard/soil-intelligence')}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto"
+              className="w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto shrink-0"
             >
               <span>Explore Farm Soil in Dashboard</span>
-              <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+              <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
             </button>
           </div>
         </div>
 
         {/* Soil Selector Switcher */}
-        <div className="p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-sm space-y-4">
+        <div className="p-4 sm:p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#E2E8DE] pb-3">
             <div className="flex items-center gap-2">
-              <Layers className="w-5 h-5 text-[#145C3D]" />
+              <Layers className="w-5 h-5 text-[#145C3D] shrink-0" />
               <h2 className="font-bold text-base text-[#073D2B]">Select Soil Texture Profile</h2>
             </div>
             <span className="text-xs text-[#527367]">
@@ -148,9 +149,10 @@ export const SoilIntelligencePage: React.FC<SoilIntelligencePageProps> = ({
               { id: 'sandy-loam', label: 'Sandy Loam (Sparta Series)', badge: 'Rapid Drainage' },
             ].map((btn) => (
               <button
+                type="button"
                 key={btn.id}
                 onClick={() => setSelectedSoilType(btn.id as any)}
-                className={`p-4 rounded-2xl text-left border transition-all ${
+                className={`min-h-[56px] p-4 rounded-2xl text-left border transition-all ${
                   selectedSoilType === btn.id
                     ? 'bg-[#EAF5DF] border-[#76B93F] text-[#073D2B] font-bold shadow-xs'
                     : 'bg-white border-[#E2E8DE] text-[#527367] hover:border-[#76B93F]/50'
@@ -166,44 +168,44 @@ export const SoilIntelligencePage: React.FC<SoilIntelligencePageProps> = ({
         </div>
 
         {/* Active Profile Telemetry Display */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-1">
+        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-1 min-w-0">
             <span className="text-xs font-bold text-[#145C3D] uppercase">Soil pH Index</span>
-            <div className="font-display text-3xl font-extrabold text-[#073D2B]">{active.ph}</div>
+            <div className="font-display text-2xl sm:text-3xl font-extrabold text-[#073D2B]">{active.ph}</div>
             <p className="text-[11px] text-[#527367]">Target: 6.2 – 6.8 for optimal N nodulation.</p>
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-1">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-1 min-w-0">
             <span className="text-xs font-bold text-[#145C3D] uppercase">Soil Organic Matter</span>
-            <div className="font-display text-3xl font-extrabold text-[#073D2B]">{active.om}</div>
+            <div className="font-display text-2xl sm:text-3xl font-extrabold text-[#073D2B]">{active.om}</div>
             <p className="text-[11px] text-[#527367]">Buffers ~{active.holdingGallons} available moisture.</p>
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-1">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-1 min-w-0">
             <span className="text-xs font-bold text-[#145C3D] uppercase">Cation Exchange (CEC)</span>
-            <div className="font-display text-3xl font-extrabold text-[#073D2B]">{active.cec}</div>
+            <div className="font-display text-2xl sm:text-3xl font-extrabold text-[#073D2B]">{active.cec}</div>
             <p className="text-[11px] text-[#527367]">Measures calcium, magnesium & potassium retention.</p>
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-1">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-1 min-w-0">
             <span className="text-xs font-bold text-[#145C3D] uppercase">Available Water Cap.</span>
-            <div className="font-display text-3xl font-extrabold text-[#073D2B]">{active.waterCapacity}</div>
+            <div className="font-display text-2xl sm:text-3xl font-extrabold text-[#073D2B]">{active.waterCapacity}</div>
             <p className="text-[11px] text-[#527367]">Pore moisture available to crop root hairs.</p>
           </div>
         </div>
 
         {/* Soil Profile & Strata Visual Cutaway */}
-        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-4 overflow-hidden">
+        <div className="bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-4 overflow-hidden">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#E2E8DE] pb-4">
-            <div>
+            <div className="min-w-0">
               <span className="text-xs font-bold uppercase tracking-wider text-[#145C3D]">
                 Biological Strata Horizon
               </span>
-              <h3 className="font-display text-xl sm:text-2xl font-bold text-[#073D2B] mt-0.5">
+              <h3 className="font-display text-fluid-h2 font-bold text-[#073D2B] mt-0.5">
                 Soil Profile Architecture &amp; Root Moisture Percolation
               </h3>
             </div>
-            <span className="text-xs text-[#527367] bg-[#EAF5DF] px-3 py-1 rounded-full font-semibold self-start sm:self-auto">
+            <span className="text-xs text-[#527367] bg-[#EAF5DF] px-3 py-1 rounded-full font-semibold self-start sm:self-auto shrink-0">
               USDA-NRCS &amp; SMAP Grounding
             </span>
           </div>
@@ -224,10 +226,10 @@ export const SoilIntelligencePage: React.FC<SoilIntelligencePageProps> = ({
         </div>
 
         {/* Scientific Soil Dynamics Section */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div className="bg-white p-8 rounded-3xl border border-[#D5E5CA] shadow-sm space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
+          <div className="bg-white p-5 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-sm space-y-4">
             <div className="flex items-center gap-2 text-[#145C3D] font-bold text-base">
-              <Sprout className="w-5 h-5 text-[#76B93F]" />
+              <Sprout className="w-5 h-5 text-[#76B93F] shrink-0" />
               <h3>Biological Holding Capacity & Soil Armor</h3>
             </div>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
@@ -238,17 +240,17 @@ export const SoilIntelligencePage: React.FC<SoilIntelligencePageProps> = ({
             </p>
             <div className="space-y-2 pt-2 text-xs">
               {active.strengths.map((str, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-[#2A4D3E]">
-                  <CheckCircle2 className="w-4 h-4 text-[#76B93F] flex-shrink-0" />
+                <div key={idx} className="flex items-start gap-2 text-[#2A4D3E]">
+                  <CheckCircle2 className="w-4 h-4 text-[#76B93F] flex-shrink-0 mt-0.5" />
                   <span>{str}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="bg-white p-8 rounded-3xl border border-[#D5E5CA] shadow-sm space-y-4">
+          <div className="bg-white p-5 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-sm space-y-4">
             <div className="flex items-center gap-2 text-[#073D2B] font-bold text-base">
-              <ShieldAlert className="w-5 h-5 text-amber-600" />
+              <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
               <h3>Compaction Hazards & Plow-Pan Mitigation</h3>
             </div>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
@@ -258,7 +260,7 @@ export const SoilIntelligencePage: React.FC<SoilIntelligencePageProps> = ({
             </p>
             <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200 space-y-2 text-xs text-amber-900">
               <div className="font-bold flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4 text-amber-600" />
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>Biological Remediation Strategy</span>
               </div>
               <p>
@@ -271,24 +273,25 @@ export const SoilIntelligencePage: React.FC<SoilIntelligencePageProps> = ({
         </div>
 
         {/* NASA SMAP Microwave Ingestion Note */}
-        <div className="p-6 rounded-3xl bg-[#073D2B] text-white flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="space-y-1 max-w-2xl">
+        <div className="p-5 sm:p-6 rounded-3xl bg-[#073D2B] text-white flex flex-col md:flex-row md:items-center justify-between gap-5 sm:gap-6">
+          <div className="space-y-1 max-w-2xl min-w-0">
             <div className="flex items-center gap-2 text-[#9BD85A] text-xs font-bold uppercase tracking-wider">
-              <Sparkles className="w-4 h-4" />
-              NASA SMAP L4 Microwave Soil Ingestion
+              <Sparkles className="w-4 h-4 shrink-0" />
+              <span>NASA SMAP L4 Microwave Soil Ingestion</span>
             </div>
-            <h3 className="font-display text-xl font-bold">
+            <h3 className="font-display text-fluid-h2 font-bold">
               Root-Zone Moisture Calibration
             </h3>
-            <p className="text-xs text-white/80 leading-relaxed">
+            <p className="text-xs sm:text-sm text-white/80 leading-relaxed">
               NASA’s Soil Moisture Active Passive (SMAP) satellite measures L-band surface radiation (0–5 cm)
               and pairs it with the Catchment Land Surface Model to infer root-zone moisture (0–100 cm),
               alerting you when soil deficits threaten pollination windows.
             </p>
           </div>
           <button
+            type="button"
             onClick={() => onNavigate('/resources/ssurgo-integration')}
-            className="px-6 py-3 rounded-full bg-[#76B93F] hover:bg-[#9BD85A] text-[#073D2B] font-bold text-xs sm:text-sm whitespace-nowrap shadow-md transition-all"
+            className="w-full md:w-auto min-h-[44px] px-6 py-3 rounded-full bg-[#76B93F] hover:bg-[#9BD85A] text-[#073D2B] font-bold text-xs sm:text-sm text-center shadow-md transition-all shrink-0"
           >
             Read SSURGO & SMAP Guide
           </button>

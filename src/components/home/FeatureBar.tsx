@@ -57,18 +57,16 @@ export const FeatureBar: React.FC<FeatureBarProps> = ({ onSelectFeature, activeF
 
   return (
     <section className="relative z-20 -mt-6 sm:-mt-8 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div className="bg-white/95 backdrop-blur-xl border border-[#D0E2C8] rounded-3xl p-3 sm:p-4 shadow-xl shadow-[#073D2B]/5">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
-          {features.map((feat, index) => {
+      <div className="bg-white/95 backdrop-blur-xl border border-[#D0E2C8] rounded-3xl p-2.5 sm:p-4 shadow-xl shadow-[#073D2B]/5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
+          {features.map((feat) => {
             const Icon = feat.icon;
             const isActive = activeFeature === feat.id;
             return (
               <button
                 key={feat.id}
                 onClick={() => onSelectFeature(feat.id)}
-                className={`flex items-center gap-2.5 sm:gap-3 p-2.5 sm:p-3 rounded-2xl text-left transition-all group border ${
-                  index === 4 ? 'col-span-2 md:col-span-1' : ''
-                } ${
+                className={`flex items-center gap-3 min-h-[56px] p-2.5 sm:p-3 rounded-2xl text-left transition-all group border ${
                   isActive
                     ? 'bg-[#F2F8ED] border-[#76B93F] shadow-sm ring-2 ring-[#76B93F]/20'
                     : `bg-white/60 hover:bg-[#F8FBF6] border-transparent ${feat.hoverBorder}`
@@ -80,14 +78,14 @@ export const FeatureBar: React.FC<FeatureBarProps> = ({ onSelectFeature, activeF
                   <Icon className="w-5 h-5" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h3 className="text-xs font-bold text-[#073D2B] truncate group-hover:text-[#145C3D]">
+                  <h3 className="text-xs font-bold text-[#073D2B] leading-snug group-hover:text-[#145C3D]">
                     {feat.title}
                   </h3>
-                  <p className="text-[11px] text-[#527367] truncate mt-0.5">
+                  <p className="text-[11px] text-[#527367] leading-snug mt-0.5">
                     {feat.subtitle}
                   </p>
                 </div>
-                <ChevronRight className="w-4 h-4 text-[#BAC9BE] group-hover:text-[#073D2B] group-hover:translate-x-0.5 transition-all hidden sm:block flex-shrink-0" />
+                <ChevronRight className="w-4 h-4 text-[#BAC9BE] group-hover:text-[#073D2B] group-hover:translate-x-0.5 transition-all flex-shrink-0" />
               </button>
             );
           })}

@@ -16,8 +16,11 @@ This document provides a comprehensive audit and reference for all environment v
 | `GEMINI_TIMEOUT_MS`| **Backend Config** | No | `25000` | Milliseconds allowed for Gemini generation before deterministic fallback triggers | `25000` |
 | `DISABLE_HMR` | **Dev Config** | No | `"false"` | Disables Vite file watchers and WebSocket HMR | `"false"` or `"true"` |
 | `VITE_API_URL` | **Frontend Config**| No | `""` (relative) | Sets base URL for API requests when frontend runs standalone | `"http://localhost:3000"` |
-| `VITE_SUPABASE_URL` | **Frontend Config**| No | *None* | Supabase project URL for optional third-party auth | `"https://xyz.supabase.co"` |
-| `VITE_SUPABASE_ANON_KEY` | **Frontend Config**| No | *None* | Supabase public anonymous API key for auth | `"eyJhbGciOiJIUzI1Ni..."` |
+| `VITE_SUPABASE_URL` | **Frontend Config**| No | *None* | Supabase project URL for browser client authentication | `"https://xyz.supabase.co"` |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | **Frontend Config**| No | *None* | Supabase client-safe publishable key (`sb_publishable_...`) | `"sb_publishable_..."` |
+| `VITE_SUPABASE_ANON_KEY` | **Frontend Config**| No | *None* | Legacy alias for Supabase client key (`sb_publishable_...` or `eyJ...`) | `"sb_publishable_..."` |
+| `SUPABASE_URL` | **Backend Config** | No | *None* | Server-side Supabase project URL for Express API persistence | `"https://xyz.supabase.co"` |
+| `SUPABASE_SECRET_KEY` | **Backend Secret** | No | *None* | Server-only Supabase secret key (`sb_secret_...`) for DB & JWT verification | `"sb_secret_..."` |
 | `NASA_API_KEY` | **Backend Optional**| No | *None (Open demo)*| Expands rate limit on `api.nasa.gov` from 30 to 1,000 requests/hr | `"DEMO_KEY"` or `"YOUR_NASA_API_KEY"` |
 | `EARTHDATA_TOKEN` | **Backend Optional**| No | *None (Public)*| Bearer token for direct NASA Earthdata CMR granular granule queries | `"eyJhbGciOiJIUzI1Ni..."` |
 
@@ -28,8 +31,9 @@ This document provides a comprehensive audit and reference for all environment v
 ## 2. Architectural Classification: Frontend vs. Backend
 
 ### 🔒 Backend-Only Variables (Server Execution Only)
-The following variables are read strictly inside `server.ts` or `vite.config.ts` during server startup or API execution:
+The following variables are read strictly inside `app.ts`, `server.ts`, or `vite.config.ts` during server startup or API execution:
 - `GEMINI_API_KEY`: **Strictly server-side**. Kept inside Node.js memory. **NEVER** injected into the client bundle or sent across the wire.
+- `SUPABASE_SECRET_KEY`: **Strictly server-side**. Used exclusively by Express for PostgreSQL queries (`farms`, `profiles`, `farmer_priorities`) and JWT verification.
 - `PORT`: Server socket listener configuration.
 - `NODE_ENV` / `APP_ENV`: Controls Express middleware vs. static file routing.
 - `GEMINI_TIMEOUT_MS`: Controls server-side request race condition timeouts and bounded retries.
@@ -75,13 +79,12 @@ Field Shift ingests multi-mission NASA Earth observation data to evaluate crop r
 
 ## 5. Authentication & Database Configuration
 
-- **In-Memory Store with Seeded Credentials**:
-  - The application includes built-in authentication and session management in `server.ts`.
-  - **Reviewer / Demo User**: `ahmed@example.com` (OTP code: `482910` or password: `password123`).
-  - **Testing User**: `test@test.com` (Password: `12345678`).
-  - Self-service account registration with 6-digit email OTP verification works out-of-the-box without external database dependencies.
-- **Persistent Cloud Database (Optional)**:
-  - If integrating Google Cloud SQL or Firebase in the future, credentials (`DATABASE_URL` or `FIREBASE_CONFIG`) should be passed as server-side environment variables and never exposed to the frontend.
+- **Supabase PostgreSQL & Auth (Persistent)**:
+  - Stores user profiles (`public.profiles`), farm parcels (`public.farms`), and saved farmer priorities (`public.farmer_priorities`) with Row Level Security (RLS).
+  - Client authentication uses `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (`VITE_SUPABASE_ANON_KEY` fallback).
+  - Backend Express API verifies Supabase JWTs and executes server-side queries using `SUPABASE_URL` and `SUPABASE_SECRET_KEY`.
+- **Resilient Demo & Fallback Mode**:
+  - When Supabase env vars are absent, the application falls back to an in-memory store with seeded demo credentials (`ahmed@example.com` / `password123`, `test@test.com` / `12345678`).
 
 ---
 
@@ -138,8 +141,10 @@ Field Shift is fully configured for zero-cost deployment on **Vercel** as a unif
 | :--- | :--- | :--- |
 | `GEMINI_API_KEY` | Your Google AI Studio API key (`AIzaSy...`) | Production, Preview, Development |
 | `NODE_ENV` | `production` | Production |
-| `VITE_SUPABASE_URL` | *(Optional)* Your Supabase project URL | Production, Preview, Development |
-| `VITE_SUPABASE_ANON_KEY` | *(Optional)* Your Supabase anonymous client key | Production, Preview, Development |
+| `VITE_SUPABASE_URL` | Your Supabase project URL | Production, Preview, Development |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Your Supabase client publishable key | Production, Preview, Development |
+| `SUPABASE_URL` | Your Supabase project URL | Production, Preview, Development |
+| `SUPABASE_SECRET_KEY` | Your Supabase server secret key | Production, Preview, Development |
 
 ---
 

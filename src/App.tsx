@@ -34,6 +34,8 @@ import { PrivacyPolicyPage, TermsOfServicePage } from './pages/legal/LegalPages'
 import { Dashboard } from './pages/Dashboard';
 import { User } from './types';
 import { SEO } from './components/common/SEO';
+import { authService } from './services/authService';
+import { supabase } from './lib/supabase';
 
 const ROUTE_SEO: Record<string, { title: string; description: string; noIndex?: boolean }> = {
   '/': {
@@ -144,7 +146,7 @@ export default function App() {
       setCurrentPath(window.location.pathname);
     }
 
-    // Check localStorage for logged-in user session
+    // Check localStorage & active Supabase/backend session
     const storedUser = localStorage.getItem('fieldshift_user');
     if (storedUser) {
       try {
@@ -154,7 +156,33 @@ export default function App() {
       }
     }
 
-    return () => window.removeEventListener('popstate', handlePopState);
+    authService.getSession().then((sessionRes) => {
+      if (sessionRes.success && sessionRes.user) {
+        setCurrentUser(sessionRes.user);
+      }
+    });
+
+    const authSubscription = supabase?.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        const email = session.user.email || '';
+        const metaName = session.user.user_metadata?.full_name;
+        const mappedUser: User = {
+          email,
+          fullName: typeof metaName === 'string' && metaName.trim()
+            ? metaName.trim()
+            : (email.split('@')[0] || 'Farmer'),
+          verified: !!session.user.email_confirmed_at || true,
+        };
+        localStorage.setItem('fieldshift_token', session.access_token);
+        localStorage.setItem('fieldshift_user', JSON.stringify(mappedUser));
+        setCurrentUser(mappedUser);
+      }
+    });
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      authSubscription?.data?.subscription?.unsubscribe();
+    };
   }, []);
 
   const navigateTo = (path: string) => {
@@ -174,9 +202,8 @@ export default function App() {
     navigateTo('/dashboard');
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('fieldshift_token');
-    localStorage.removeItem('fieldshift_user');
+  const handleLogout = async () => {
+    await authService.logout();
     setCurrentUser(null);
     navigateTo('/');
   };

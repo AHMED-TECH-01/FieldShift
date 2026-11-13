@@ -26,8 +26,8 @@ interface SolutionPageProps {
    ========================================================================== */
 export const RowCropProducersPage: React.FC<SolutionPageProps> = ({ onNavigate, onOpenAuth }) => {
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         {/* Breadcrumb Header */}
         <div>
@@ -39,31 +39,32 @@ export const RowCropProducersPage: React.FC<SolutionPageProps> = ({ onNavigate, 
             onNavigate={onNavigate}
           />
           <div className="mt-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
                 Family & Commercial Grain Operations
               </span>
-              <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+              <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
                 Field Shift for Row-Crop Producers
               </h1>
-              <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+              <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
                 Practical, profit-first crop rotation pathways engineered for corn, soybean, wheat, and cotton
                 growers facing escalating synthetic fertilizer costs and tight seasonal windows.
               </p>
             </div>
             <button
+              type="button"
               onClick={() => onOpenAuth('signup')}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto"
+              className="w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto shrink-0"
             >
               <span>Build Farm Profile</span>
-              <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+              <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
             </button>
           </div>
         </div>
 
         {/* 3 Core Value Pillars */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center">
               <DollarSign className="w-6 h-6" />
             </div>
@@ -74,7 +75,7 @@ export const RowCropProducersPage: React.FC<SolutionPageProps> = ({ onNavigate, 
             </p>
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center">
               <Tractor className="w-6 h-6" />
             </div>
@@ -85,7 +86,7 @@ export const RowCropProducersPage: React.FC<SolutionPageProps> = ({ onNavigate, 
             </p>
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center">
               <Droplets className="w-6 h-6" />
             </div>
@@ -98,10 +99,10 @@ export const RowCropProducersPage: React.FC<SolutionPageProps> = ({ onNavigate, 
         </div>
 
         {/* Real Farm Scenario Case Study */}
-        <div className="bg-white rounded-3xl p-8 border border-[#D5E5CA] shadow-sm grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-          <div className="space-y-4">
+        <div className="bg-white rounded-3xl p-5 sm:p-8 border border-[#D5E5CA] shadow-sm grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8 items-center">
+          <div className="space-y-4 min-w-0">
             <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">Real-World Application</span>
-            <h2 className="font-display text-2xl font-bold text-[#073D2B]">
+            <h2 className="font-display text-fluid-h2 font-bold text-[#073D2B]">
               Transitioning 1,200 Acres in Story County, Iowa
             </h2>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
@@ -110,33 +111,35 @@ export const RowCropProducersPage: React.FC<SolutionPageProps> = ({ onNavigate, 
               dropped from 5.4 tons/acre/year to under 1.1 tons, while corn yields following the cover crop remained steady.
             </p>
             <div className="space-y-2 pt-2 text-xs">
-              <div className="flex items-center gap-2 text-[#2A4D3E]">
-                <CheckCircle2 className="w-4 h-4 text-[#76B93F]" />
+              <div className="flex items-start gap-2 text-[#2A4D3E]">
+                <CheckCircle2 className="w-4 h-4 text-[#76B93F] shrink-0 mt-0.5" />
                 <span>$42/acre net savings on synthetic chemical fertilizer</span>
               </div>
-              <div className="flex items-center gap-2 text-[#2A4D3E]">
-                <CheckCircle2 className="w-4 h-4 text-[#76B93F]" />
+              <div className="flex items-start gap-2 text-[#2A4D3E]">
+                <CheckCircle2 className="w-4 h-4 text-[#76B93F] shrink-0 mt-0.5" />
                 <span>NDVI canopy persistence validated by NASA MODIS</span>
               </div>
             </div>
           </div>
 
-          <div className="p-6 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA] space-y-3">
+          <div className="p-4 sm:p-6 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA] space-y-3 min-w-0">
             <h4 className="font-bold text-sm text-[#073D2B]">Featured Producer Features</h4>
             <div className="space-y-2 text-xs">
               <button
+                type="button"
                 onClick={() => onNavigate('/crop-rotation')}
-                className="w-full text-left p-3 rounded-xl bg-white border border-[#E2E8DE] hover:border-[#76B93F] transition-all flex items-center justify-between"
+                className="w-full min-h-[44px] text-left p-3 rounded-xl bg-white border border-[#E2E8DE] hover:border-[#76B93F] transition-all flex items-center justify-between gap-2"
               >
                 <span className="font-semibold text-[#073D2B]">Crop Rotation Engine (3-Strategy Comparison)</span>
-                <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+                <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
               </button>
               <button
+                type="button"
                 onClick={() => onNavigate('/soil-intelligence')}
-                className="w-full text-left p-3 rounded-xl bg-white border border-[#E2E8DE] hover:border-[#76B93F] transition-all flex items-center justify-between"
+                className="w-full min-h-[44px] text-left p-3 rounded-xl bg-white border border-[#E2E8DE] hover:border-[#76B93F] transition-all flex items-center justify-between gap-2"
               >
                 <span className="font-semibold text-[#073D2B]">Soil Chemistry & Moisture Buffer Explorer</span>
-                <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+                <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
               </button>
             </div>
           </div>
@@ -152,8 +155,8 @@ export const RowCropProducersPage: React.FC<SolutionPageProps> = ({ onNavigate, 
    ========================================================================== */
 export const RegenerativeAgPage: React.FC<SolutionPageProps> = ({ onNavigate, onOpenAuth }) => {
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         <div>
           <Breadcrumbs
@@ -164,31 +167,32 @@ export const RegenerativeAgPage: React.FC<SolutionPageProps> = ({ onNavigate, on
             onNavigate={onNavigate}
           />
           <div className="mt-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
                 Cooperative & Enterprise Land Stewards
               </span>
-              <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+              <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
                 Verified Regenerative Intelligence
               </h1>
-              <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+              <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
                 Provide objective, satellite-verified proof of continuous living root cover, soil organic carbon
                 gains, and reduced bare-field fallow periods to grain buyers and premium sustainability markets.
               </p>
             </div>
             <button
+              type="button"
               onClick={() => onOpenAuth('signup')}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto"
+              className="w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto shrink-0"
             >
               <span>Connect Your Co-op</span>
-              <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+              <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
             </button>
           </div>
         </div>
 
         {/* Benefits Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center">
               <ShieldCheck className="w-6 h-6" />
             </div>
@@ -199,7 +203,7 @@ export const RegenerativeAgPage: React.FC<SolutionPageProps> = ({ onNavigate, on
             </p>
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center">
               <Users className="w-6 h-6" />
             </div>
@@ -210,7 +214,7 @@ export const RegenerativeAgPage: React.FC<SolutionPageProps> = ({ onNavigate, on
             </p>
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center">
               <Award className="w-6 h-6" />
             </div>
@@ -223,11 +227,11 @@ export const RegenerativeAgPage: React.FC<SolutionPageProps> = ({ onNavigate, on
         </div>
 
         {/* Co-op Quote Banner */}
-        <div className="p-8 rounded-3xl bg-[#073D2B] text-white space-y-4">
+        <div className="p-5 sm:p-8 rounded-3xl bg-[#073D2B] text-white space-y-4">
           <span className="text-xs font-bold uppercase tracking-wider text-[#9BD85A]">
             Cooperative Member Testimony
           </span>
-          <p className="font-display text-xl sm:text-2xl font-bold leading-snug">
+          <p className="font-display text-lg sm:text-2xl font-bold leading-snug">
             “Field Shift gave our 42 member farms the objective satellite verification our premium oat and food-grade
             soybean buyers demanded — without putting intrusive hardware in our cabs.”
           </p>
@@ -246,8 +250,8 @@ export const RegenerativeAgPage: React.FC<SolutionPageProps> = ({ onNavigate, on
    ========================================================================== */
 export const WatershedConservationPage: React.FC<SolutionPageProps> = ({ onNavigate, onOpenAuth }) => {
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         <div>
           <Breadcrumbs
@@ -258,32 +262,33 @@ export const WatershedConservationPage: React.FC<SolutionPageProps> = ({ onNavig
             onNavigate={onNavigate}
           />
           <div className="mt-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
                 Conservation Districts & Water Quality Authorities
               </span>
-              <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+              <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
                 Watershed & Soil Conservation
               </h1>
-              <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+              <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
                 Landscape-scale hydrological modeling to pinpoint critical runoff source areas, reduce agricultural
                 nutrient loading, and protect municipal water supply basins.
               </p>
             </div>
             <button
+              type="button"
               onClick={() => onNavigate('/dashboard')}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto"
+              className="w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto shrink-0"
             >
               <span>Explore Watershed Tools</span>
-              <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+              <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
             </button>
           </div>
         </div>
 
         {/* Feature Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div className="p-8 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-4">
-            <h3 className="font-bold text-xl text-[#073D2B]">Critical Source Area (CSA) Mapping</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
+          <div className="p-5 sm:p-8 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-4">
+            <h3 className="font-bold text-lg sm:text-xl text-[#073D2B]">Critical Source Area (CSA) Mapping</h3>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
               Combining NASA SRTM 30m topographic slope gradients with NASA GPM IMERG 30-minute precipitation
               intensity curves allows conservation technicians to identify the 10% of field parcels causing
@@ -299,8 +304,8 @@ export const WatershedConservationPage: React.FC<SolutionPageProps> = ({ onNavig
             </div>
           </div>
 
-          <div className="p-8 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-4">
-            <h3 className="font-bold text-xl text-[#073D2B]">Regional Fallow Period Reduction</h3>
+          <div className="p-5 sm:p-8 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-4">
+            <h3 className="font-bold text-lg sm:text-xl text-[#073D2B]">Regional Fallow Period Reduction</h3>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
               Monitor regional cover crop adoption percentages across entire HUC-8 and HUC-12 hydrologic units.
               Identify sub-basins with prolonged bare-soil windows between harvest and planting, and target
@@ -327,8 +332,8 @@ export const WatershedConservationPage: React.FC<SolutionPageProps> = ({ onNavig
    ========================================================================== */
 export const CropAdvisorsPage: React.FC<SolutionPageProps> = ({ onNavigate, onOpenAuth }) => {
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         <div>
           <Breadcrumbs
@@ -339,31 +344,32 @@ export const CropAdvisorsPage: React.FC<SolutionPageProps> = ({ onNavigate, onOp
             onNavigate={onNavigate}
           />
           <div className="mt-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
                 Agronomists & Independent Crop Consultants
               </span>
-              <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+              <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
                 Field Shift for Certified Crop Advisors
               </h1>
-              <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+              <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
                 Equip your advisory practice with objective orbital telemetry, repeatable multi-year rotation
                 modeling, and transparent grower presentation dossiers.
               </p>
             </div>
             <button
+              type="button"
               onClick={() => onOpenAuth('signup')}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto"
+              className="w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto shrink-0"
             >
               <span>Request CCA Practice License</span>
-              <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+              <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
             </button>
           </div>
         </div>
 
         {/* CCA Features */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center">
               <Compass className="w-6 h-6" />
             </div>
@@ -374,7 +380,7 @@ export const CropAdvisorsPage: React.FC<SolutionPageProps> = ({ onNavigate, onOp
             </p>
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center">
               <Award className="w-6 h-6" />
             </div>
@@ -385,7 +391,7 @@ export const CropAdvisorsPage: React.FC<SolutionPageProps> = ({ onNavigate, onOp
             </p>
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
+          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center">
               <Layers className="w-6 h-6" />
             </div>
@@ -398,14 +404,15 @@ export const CropAdvisorsPage: React.FC<SolutionPageProps> = ({ onNavigate, onOp
         </div>
 
         {/* Callout */}
-        <div className="p-6 rounded-3xl bg-white border border-[#D5E5CA] flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div>
+        <div className="p-5 sm:p-6 rounded-3xl bg-white border border-[#D5E5CA] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="min-w-0">
             <h4 className="font-bold text-base text-[#073D2B]">Looking for Technical Methodologies?</h4>
             <p className="text-xs text-[#527367] mt-0.5">Explore our mathematical formulations and scientific limits.</p>
           </div>
           <button
+            type="button"
             onClick={() => onNavigate('/resources/agronomic-documentation')}
-            className="px-5 py-2.5 rounded-full bg-[#073D2B] text-white text-xs font-semibold hover:bg-[#145C3D] transition-all"
+            className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-full bg-[#073D2B] text-white text-xs font-semibold hover:bg-[#145C3D] transition-all text-center shrink-0"
           >
             Review Agronomic Documentation
           </button>

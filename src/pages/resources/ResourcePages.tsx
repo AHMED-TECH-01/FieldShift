@@ -29,8 +29,8 @@ interface ResourcePageProps {
    ========================================================================== */
 export const AgronomicDocsPage: React.FC<ResourcePageProps> = ({ onNavigate }) => {
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         <div>
           <Breadcrumbs
@@ -44,10 +44,10 @@ export const AgronomicDocsPage: React.FC<ResourcePageProps> = ({ onNavigate }) =
             <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
               Technical Methodology & Formulations
             </span>
-            <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+            <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
               Agronomic Documentation
             </h1>
-            <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+            <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
               Mathematical formulations, biological assumptions, and peer-reviewed agronomic models
               driving the Field Shift crop rotation scoring and bare-field hazard engines.
             </p>
@@ -55,15 +55,15 @@ export const AgronomicDocsPage: React.FC<ResourcePageProps> = ({ onNavigate }) =
         </div>
 
         {/* Core Mathematical Formulations */}
-        <div className="space-y-6">
+        <div className="space-y-5 sm:space-y-6">
           
           {/* Formulation 1: Biological Nitrogen Fixation */}
-          <div className="bg-white p-7 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-lg text-[#073D2B]">
+          <div className="bg-white p-5 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <h3 className="font-bold text-base sm:text-lg text-[#073D2B]">
                 1. Biological Nitrogen Fixation (BNF) Allocation Model
               </h3>
-              <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#EAF5DF] text-[#145C3D]">
+              <span className="self-start sm:self-auto px-3 py-1 rounded-full text-xs font-bold bg-[#EAF5DF] text-[#145C3D] shrink-0">
                 Fabaceae Symbiosis
               </span>
             </div>
@@ -71,7 +71,7 @@ export const AgronomicDocsPage: React.FC<ResourcePageProps> = ({ onNavigate }) =
               Field Shift calculates bio-available nitrogen credits contributed to succeeding cash crops using
               the USDA-NRCS legume nodulation coefficient adjusted for soil temperature and residual mineral nitrate:
             </p>
-            <div className="p-4 rounded-2xl bg-[#073D2B] text-white font-mono text-xs sm:text-sm overflow-x-auto">
+            <div className="p-3.5 sm:p-4 rounded-2xl bg-[#073D2B] text-white font-mono text-xs sm:text-sm overflow-x-auto break-words">
               N_credit (lbs/ac) = DryBiomass_ton * %N_tissue * %N_fixed * SoilTemp_factor * (1 - NO3_suppression)
             </div>
             <div className="text-xs text-[#2A4D3E] space-y-1.5">
@@ -81,19 +81,19 @@ export const AgronomicDocsPage: React.FC<ResourcePageProps> = ({ onNavigate }) =
           </div>
 
           {/* Formulation 2: Bare-Field Exposure Index */}
-          <div className="bg-white p-7 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-lg text-[#073D2B]">
+          <div className="bg-white p-5 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <h3 className="font-bold text-base sm:text-lg text-[#073D2B]">
                 2. Bare-Field Exposure & Erosion Vulnerability Index (BFEI)
               </h3>
-              <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-900 border border-amber-200">
+              <span className="self-start sm:self-auto px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-900 border border-amber-200 shrink-0">
                 RUSLE-2 Derivative
               </span>
             </div>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
               Quantifies vulnerability to wind and sheet/rill water erosion between crop harvest and succeeding canopy closure:
             </p>
-            <div className="p-4 rounded-2xl bg-[#073D2B] text-white font-mono text-xs sm:text-sm overflow-x-auto">
+            <div className="p-3.5 sm:p-4 rounded-2xl bg-[#073D2B] text-white font-mono text-xs sm:text-sm overflow-x-auto break-words">
               BFEI = Σ [Days(NDVI &lt; 0.28) * RainfallIntensity_GPM * SRTM_SlopeFactor * (1 - StoverCover%)]
             </div>
             <div className="text-xs text-[#2A4D3E] space-y-1.5">
@@ -103,12 +103,12 @@ export const AgronomicDocsPage: React.FC<ResourcePageProps> = ({ onNavigate }) =
           </div>
 
           {/* Formulation 3: Pest Cycle Disruption Coefficient */}
-          <div className="bg-white p-7 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-lg text-[#073D2B]">
+          <div className="bg-white p-5 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <h3 className="font-bold text-base sm:text-lg text-[#073D2B]">
                 3. Taxonomic Host Break & Pest Disruption Matrix
               </h3>
-              <span className="px-3 py-1 rounded-full text-xs font-bold bg-sky-50 text-sky-900 border border-sky-200">
+              <span className="self-start sm:self-auto px-3 py-1 rounded-full text-xs font-bold bg-sky-50 text-sky-900 border border-sky-200 shrink-0">
                 Entomological Taxonomy
               </span>
             </div>
@@ -133,9 +133,42 @@ export const AgronomicDocsPage: React.FC<ResourcePageProps> = ({ onNavigate }) =
    2. NASA EARTHDATA GUIDE (/resources/nasa-earthdata-guide)
    ========================================================================== */
 export const NasaEarthdataGuidePage: React.FC<ResourcePageProps> = ({ onNavigate }) => {
+  const missionRows = [
+    {
+      mission: 'SMAP L4 (SPL4SMGP)',
+      archive: 'NASA GES DISC',
+      resolution: '9 km grid',
+      parameter: 'Root-Zone Soil Moisture (0–100 cm depth)',
+    },
+    {
+      mission: 'GPM IMERG (GPM_3IMERGM)',
+      archive: 'NASA PPS',
+      resolution: '0.1° (~10 km)',
+      parameter: 'Precipitation Accumulation & Storm Intensity',
+    },
+    {
+      mission: 'MODIS (MOD13Q1)',
+      archive: 'NASA LP DAAC',
+      resolution: '250 meters',
+      parameter: '16-day Composite NDVI & EVI Vegetation Health',
+    },
+    {
+      mission: 'NASA POWER Agroclimatology',
+      archive: 'NASA Langley',
+      resolution: '0.5° Daily',
+      parameter: 'Solar Radiation, Daily Max/Min Temp, GDD',
+    },
+    {
+      mission: 'SRTM GL1',
+      archive: 'NASA LP DAAC',
+      resolution: '30 meters',
+      parameter: 'Digital Elevation Model (DEM), Slope & Aspect',
+    },
+  ];
+
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         <div>
           <Breadcrumbs
@@ -149,20 +182,40 @@ export const NasaEarthdataGuidePage: React.FC<ResourcePageProps> = ({ onNavigate
             <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
               Open Science Data Architecture
             </span>
-            <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+            <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
               NASA Earthdata API Integration Guide
             </h1>
-            <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+            <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
               How Field Shift discovers, queries, extracts, and spatializes planetary observations from NASA
               Distributed Active Archive Centers (DAACs) to deliver sub-field telemetry.
             </p>
           </div>
         </div>
 
-        {/* Mission Catalog Table */}
-        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-2xs space-y-6">
-          <h3 className="font-bold text-lg text-[#073D2B]">Active NASA Mission Ingestion Feeds</h3>
-          <div className="overflow-x-auto">
+        {/* Mission Catalog (Cards on mobile, Table on md+) */}
+        <div className="bg-white rounded-3xl p-5 sm:p-8 border border-[#D5E5CA] shadow-2xs space-y-5 sm:space-y-6">
+          <h3 className="font-bold text-base sm:text-lg text-[#073D2B]">Active NASA Mission Ingestion Feeds</h3>
+
+          {/* Mobile Card Layout */}
+          <div className="md:hidden space-y-3">
+            {missionRows.map((row) => (
+              <div key={row.mission} className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#E2E8DE] space-y-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-[#073D2B] text-sm">{row.mission}</span>
+                  <span className="font-mono text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-white border border-[#D5E5CA] text-[#145C3D]">
+                    {row.resolution}
+                  </span>
+                </div>
+                <p className="text-[#2A4D3E] leading-relaxed">{row.parameter}</p>
+                <div className="text-[11px] text-[#527367]">
+                  Archive: <strong className="text-[#073D2B]">{row.archive}</strong>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop Table */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-[#E2E8DE] text-[#073D2B]">
@@ -173,52 +226,30 @@ export const NasaEarthdataGuidePage: React.FC<ResourcePageProps> = ({ onNavigate
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E2E8DE] text-[#2A4D3E]">
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-[#073D2B]">SMAP L4 (SPL4SMGP)</td>
-                  <td className="py-3 px-3">NASA GES DISC</td>
-                  <td className="py-3 px-3 font-mono">9 km grid</td>
-                  <td className="py-3 px-3">Root-Zone Soil Moisture (0–100 cm depth)</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-[#073D2B]">GPM IMERG (GPM_3IMERGM)</td>
-                  <td className="py-3 px-3">NASA PPS</td>
-                  <td className="py-3 px-3 font-mono">0.1° (~10 km)</td>
-                  <td className="py-3 px-3">Precipitation Accumulation & Storm Intensity</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-[#073D2B]">MODIS (MOD13Q1)</td>
-                  <td className="py-3 px-3">NASA LP DAAC</td>
-                  <td className="py-3 px-3 font-mono">250 meters</td>
-                  <td className="py-3 px-3">16-day Composite NDVI & EVI Vegetation Health</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-[#073D2B]">NASA POWER Agroclimatology</td>
-                  <td className="py-3 px-3">NASA Langley</td>
-                  <td className="py-3 px-3 font-mono">0.5° Daily</td>
-                  <td className="py-3 px-3">Solar Radiation, Daily Max/Min Temp, GDD</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-3 font-semibold text-[#073D2B]">SRTM GL1</td>
-                  <td className="py-3 px-3">NASA LP DAAC</td>
-                  <td className="py-3 px-3 font-mono">30 meters</td>
-                  <td className="py-3 px-3">Digital Elevation Model (DEM), Slope & Aspect</td>
-                </tr>
+                {missionRows.map((row) => (
+                  <tr key={row.mission}>
+                    <td className="py-3 px-3 font-semibold text-[#073D2B]">{row.mission}</td>
+                    <td className="py-3 px-3">{row.archive}</td>
+                    <td className="py-3 px-3 font-mono">{row.resolution}</td>
+                    <td className="py-3 px-3">{row.parameter}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </div>
 
         {/* Integration Architecture */}
-        <div className="bg-white p-6 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-4">
+        <div className="bg-white p-5 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-4">
           <div className="flex items-center gap-2 text-[#145C3D] font-bold text-base">
-            <Terminal className="w-5 h-5 text-[#76B93F]" />
+            <Terminal className="w-5 h-5 text-[#76B93F] shrink-0" />
             <h3>Server-Side Geospatial Query Workflow</h3>
           </div>
           <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
             When a farmer registers a field polygon or coordinates in Field Shift, the server executes a bounded
             spatial query against the NASA Common Metadata Repository (CMR) API to identify intersecting granules.
           </p>
-          <div className="p-4 rounded-2xl bg-[#073D2B] text-white font-mono text-xs overflow-x-auto space-y-1">
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-[#073D2B] text-white font-mono text-xs overflow-x-auto space-y-1 break-all sm:break-normal">
             <p className="text-white/60"># 1. Discover intersecting SMAP HDF5 granules via NASA CMR</p>
             <p>GET https://cmr.earthdata.nasa.gov/search/granules.json?short_name=SPL4SMGP&bounding_box=-94.0,41.5,-93.0,42.5</p>
             <p className="text-white/60 pt-2"># 2. Extract root-zone volumetric soil moisture layer (sm_rootzone)</p>
@@ -240,8 +271,8 @@ export const NasaEarthdataGuidePage: React.FC<ResourcePageProps> = ({ onNavigate
    ========================================================================== */
 export const SsurgoIntegrationPage: React.FC<ResourcePageProps> = ({ onNavigate }) => {
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         <div>
           <Breadcrumbs
@@ -255,10 +286,10 @@ export const SsurgoIntegrationPage: React.FC<ResourcePageProps> = ({ onNavigate 
             <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
               Federal Soil Database Connection
             </span>
-            <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+            <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
               USDA SSURGO Soil Survey Integration
             </h1>
-            <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+            <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
               How Field Shift pairs satellite remote sensing with the USDA Natural Resources Conservation Service
               (NRCS) Soil Survey Geographic Database (SSURGO).
             </p>
@@ -266,10 +297,10 @@ export const SsurgoIntegrationPage: React.FC<ResourcePageProps> = ({ onNavigate 
         </div>
 
         {/* Real Status Disclosure */}
-        <div className="p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-4">
-          <div className="flex items-center justify-between">
+        <div className="p-5 sm:p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <h3 className="font-bold text-base text-[#073D2B]">Integration Status & Implementation Scope</h3>
-            <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
+            <span className="self-start sm:self-auto px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 shrink-0">
               Operational Regional Profiles
             </span>
           </div>
@@ -305,8 +336,8 @@ export const SsurgoIntegrationPage: React.FC<ResourcePageProps> = ({ onNavigate 
    ========================================================================== */
 export const ScientificEthicsPage: React.FC<ResourcePageProps> = ({ onNavigate }) => {
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         <div>
           <Breadcrumbs
@@ -320,10 +351,10 @@ export const ScientificEthicsPage: React.FC<ResourcePageProps> = ({ onNavigate }
             <span className="text-xs font-bold uppercase tracking-wider text-[#76B93F]">
               Foundational Principles
             </span>
-            <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B] mt-1">
+            <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B] mt-1">
               Scientific Ethics, Transparency & Agricultural Disclaimer
             </h1>
-            <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+            <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
               Our non-negotiable commitments to agricultural producers: algorithmic transparency, data sovereignty,
               unbiased recommendations, and ground-truth humility.
             </p>
@@ -331,10 +362,10 @@ export const ScientificEthicsPage: React.FC<ResourcePageProps> = ({ onNavigate }
         </div>
 
         {/* 4 Ethical Pillars */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
+          <div className="p-5 sm:p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="flex items-center gap-2 text-[#073D2B] font-bold text-base">
-              <ShieldCheck className="w-5 h-5 text-[#76B93F]" />
+              <ShieldCheck className="w-5 h-5 text-[#76B93F] shrink-0" />
               <h3>1. Zero Fabricated Precision</h3>
             </div>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
@@ -344,9 +375,9 @@ export const ScientificEthicsPage: React.FC<ResourcePageProps> = ({ onNavigate }
             </p>
           </div>
 
-          <div className="p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-3">
+          <div className="p-5 sm:p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="flex items-center gap-2 text-[#073D2B] font-bold text-base">
-              <ShieldCheck className="w-5 h-5 text-[#76B93F]" />
+              <ShieldCheck className="w-5 h-5 text-[#76B93F] shrink-0" />
               <h3>2. Unbiased Independence</h3>
             </div>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
@@ -356,9 +387,9 @@ export const ScientificEthicsPage: React.FC<ResourcePageProps> = ({ onNavigate }
             </p>
           </div>
 
-          <div className="p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-3">
+          <div className="p-5 sm:p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="flex items-center gap-2 text-[#073D2B] font-bold text-base">
-              <ShieldCheck className="w-5 h-5 text-[#76B93F]" />
+              <ShieldCheck className="w-5 h-5 text-[#76B93F] shrink-0" />
               <h3>3. Farmer Data Sovereignty</h3>
             </div>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
@@ -367,9 +398,9 @@ export const ScientificEthicsPage: React.FC<ResourcePageProps> = ({ onNavigate }
             </p>
           </div>
 
-          <div className="p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-3">
+          <div className="p-5 sm:p-6 rounded-3xl bg-white border border-[#D5E5CA] shadow-2xs space-y-3">
             <div className="flex items-center gap-2 text-[#073D2B] font-bold text-base">
-              <ShieldCheck className="w-5 h-5 text-[#76B93F]" />
+              <ShieldCheck className="w-5 h-5 text-[#76B93F] shrink-0" />
               <h3>4. Ground-Truth Humility</h3>
             </div>
             <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
@@ -380,10 +411,10 @@ export const ScientificEthicsPage: React.FC<ResourcePageProps> = ({ onNavigate }
         </div>
 
         {/* Legal & Professional Disclaimer Box */}
-        <div className="p-7 sm:p-8 rounded-3xl bg-[#073D2B] text-white space-y-4">
+        <div className="p-5 sm:p-8 rounded-3xl bg-[#073D2B] text-white space-y-4">
           <div className="flex items-center gap-2 text-[#9BD85A] font-bold text-sm uppercase tracking-wider">
-            <AlertTriangle className="w-4 h-4 text-[#76B93F]" />
-            Official Agronomic Disclaimer
+            <AlertTriangle className="w-4 h-4 text-[#76B93F] shrink-0" />
+            <span>Official Agronomic Disclaimer</span>
           </div>
           <p className="text-xs sm:text-sm text-white/85 leading-relaxed">
             The crop rotation models, water retention estimates, and financial projections provided by Field Shift are

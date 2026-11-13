@@ -158,16 +158,16 @@ export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
+    <div className="bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
       
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E2E8DE] pb-5">
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold uppercase tracking-wider mb-1.5">
-            <Sliders className="w-3.5 h-3.5" />
-            Requirement A: Multi-Criteria Farmer Priorities Engine
+            <Sliders className="w-3.5 h-3.5 shrink-0" />
+            <span>Requirement A: Farmer Priorities Engine</span>
           </div>
-          <h3 className="font-display text-2xl font-bold text-[#073D2B]">
+          <h3 className="font-display text-fluid-h2 font-bold text-[#073D2B]">
             Define & Calibrate Your Farm Objectives
           </h3>
           <p className="text-xs text-[#527367] mt-1 max-w-2xl">
@@ -182,21 +182,21 @@ export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
           <button
             type="button"
             onClick={() => handlePreset('conservation')}
-            className="px-3 py-1 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D] transition-colors"
+            className="min-h-[40px] px-3.5 py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D] transition-colors"
           >
             Soil Health
           </button>
           <button
             type="button"
             onClick={() => handlePreset('profit')}
-            className="px-3 py-1 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D] transition-colors"
+            className="min-h-[40px] px-3.5 py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D] transition-colors"
           >
             High Liquidity
           </button>
           <button
             type="button"
             onClick={() => handlePreset('drought')}
-            className="px-3 py-1 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D] transition-colors"
+            className="min-h-[40px] px-3.5 py-1.5 rounded-full bg-[#FAFDF8] border border-[#CDE5BA] hover:bg-[#EAF5DF] text-xs font-semibold text-[#145C3D] transition-colors"
           >
             Drought Defense
           </button>
@@ -207,7 +207,7 @@ export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
       {rankingExplanation && (
         <div className="p-4 rounded-2xl bg-[#F4F9EE] border border-[#D5E8C8] text-xs text-[#1F4A34] flex items-start gap-3">
           <Sparkles className="w-5 h-5 text-[#76B93F] flex-shrink-0 mt-0.5" />
-          <div className="space-y-1">
+          <div className="space-y-1 min-w-0">
             <h4 className="font-bold text-sm text-[#073D2B]">How Changing Priorities Influenced Your Rankings</h4>
             <div className="leading-relaxed" dangerouslySetInnerHTML={{ __html: rankingExplanation.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }} />
           </div>
@@ -215,7 +215,7 @@ export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
       )}
 
       {/* 12 Sliders Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
         {priorityFields.map((field) => {
           const val = priorities[field.key];
           return (
@@ -224,13 +224,13 @@ export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
               className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#E2E8DE] hover:border-[#76B93F]/60 transition-all flex flex-col justify-between space-y-3"
             >
               <div>
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between gap-2 mb-1">
                   <span className="text-xs font-bold text-[#073D2B]">{field.label}</span>
-                  <span className="w-7 h-7 rounded-lg bg-[#EAF5DF] text-[#145C3D] font-display font-bold text-xs flex items-center justify-center">
+                  <span className="w-8 h-7 shrink-0 rounded-lg bg-[#EAF5DF] text-[#145C3D] font-display font-bold text-xs flex items-center justify-center">
                     {val}/5
                   </span>
                 </div>
-                <p className="text-[11px] text-[#527367] leading-snug line-clamp-2">
+                <p className="text-[11px] text-[#527367] leading-snug">
                   {field.description}
                 </p>
               </div>
@@ -245,10 +245,10 @@ export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
                   onChange={(e) => handleSliderChange(field.key, Number(e.target.value))}
                   className="w-full accent-[#073D2B] cursor-pointer"
                 />
-                <div className="flex justify-between text-[10px] text-[#8C9E94] mt-1 font-medium">
+                <div className="flex justify-between text-[10px] text-[#527367] mt-1 font-medium">
                   <span>Low Weight</span>
                   <span>Moderate</span>
-                  <span>Critical Priority</span>
+                  <span>Critical</span>
                 </div>
               </div>
             </div>
@@ -267,7 +267,7 @@ export const PrioritiesEngine: React.FC<PrioritiesEngineProps> = ({
           type="button"
           disabled={recalculating}
           onClick={() => onApplyPriorities(priorities)}
-          className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 shrink-0"
+          className="w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50 shrink-0"
         >
           {recalculating ? (
             <>

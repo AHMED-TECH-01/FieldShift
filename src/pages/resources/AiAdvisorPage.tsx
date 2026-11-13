@@ -97,8 +97,8 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
   };
 
   return (
-    <div className="py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+    <div className="py-8 sm:py-10 md:py-16 bg-[#F8F7ED] min-h-screen text-[#102A24]">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
         
         {/* Breadcrumb Header */}
         <div>
@@ -110,71 +110,72 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
             onNavigate={onNavigate}
           />
           <div className="mt-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold uppercase tracking-wider mb-2">
-                <Sparkles className="w-3.5 h-3.5 text-[#76B93F]" />
-                Gemini 3.8 Flash Grounded Copilot
+                <Sparkles className="w-3.5 h-3.5 text-[#76B93F] shrink-0" />
+                <span>Gemini 3.8 Flash Grounded Copilot</span>
               </div>
-              <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#073D2B]">
+              <h1 className="font-display text-fluid-h1 font-extrabold text-[#073D2B]">
                 AI Agricultural Advisor
               </h1>
-              <p className="text-sm sm:text-base text-[#527367] mt-2 max-w-2xl leading-relaxed">
+              <p className="text-fluid-lead text-[#527367] mt-2 max-w-2xl leading-relaxed">
                 Objective agronomic advisory grounded in your real-time NASA satellite observations,
                 soil chemistry indices, and custom farmer priorities.
               </p>
             </div>
             <button
+              type="button"
               onClick={() => onNavigate('/dashboard/ai-advisor')}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto"
+              className="w-full sm:w-auto min-h-[44px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-[#073D2B] text-white text-xs sm:text-sm font-semibold hover:bg-[#145C3D] transition-all shadow-md self-start md:self-auto shrink-0"
             >
               <span>Open in Dashboard</span>
-              <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+              <ArrowRight className="w-4 h-4 text-[#76B93F] shrink-0" />
             </button>
           </div>
         </div>
 
         {/* Telemetry Grounding Indicators Strip */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-white p-4 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-sky-50 text-sky-800 flex items-center justify-center">
+          <div className="bg-white p-4 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-sky-50 text-sky-800 flex items-center justify-center shrink-0">
               <Satellite className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <span className="text-[10px] font-bold text-[#527367] uppercase block">NASA SMAP Grounding</span>
-              <span className="text-xs font-bold text-[#073D2B]">0.284 m³/m³ Root Moisture</span>
+              <span className="text-xs font-bold text-[#073D2B] break-words">0.284 m³/m³ Root Moisture</span>
             </div>
           </div>
 
-          <div className="bg-white p-4 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#145C3D] flex items-center justify-center">
+          <div className="bg-white p-4 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#145C3D] flex items-center justify-center shrink-0">
               <Sprout className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <span className="text-[10px] font-bold text-[#527367] uppercase block">MODIS NDVI Grounding</span>
-              <span className="text-xs font-bold text-[#073D2B]">0.72 Active Photosynthesis</span>
+              <span className="text-xs font-bold text-[#073D2B] break-words">0.72 Active Photosynthesis</span>
             </div>
           </div>
 
-          <div className="bg-white p-4 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-800 flex items-center justify-center">
+          <div className="bg-white p-4 rounded-2xl border border-[#D5E5CA] shadow-2xs flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-800 flex items-center justify-center shrink-0">
               <ShieldCheck className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <span className="text-[10px] font-bold text-[#527367] uppercase block">Agronomic Code</span>
-              <span className="text-xs font-bold text-[#073D2B]">Zero Corporate Bias</span>
+              <span className="text-xs font-bold text-[#073D2B] break-words">Zero Corporate Bias</span>
             </div>
           </div>
         </div>
 
         {/* Interactive Chat Console */}
-        <div className="bg-white rounded-3xl border border-[#D5E5CA] shadow-sm overflow-hidden flex flex-col h-[520px]">
+        <div className="bg-white rounded-3xl border border-[#D5E5CA] shadow-sm overflow-hidden flex flex-col h-[65dvh] min-h-[380px] max-h-[560px]">
           
           {/* Messages Window */}
-          <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-[#FAFDF8]/50">
+          <div className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-4 bg-[#FAFDF8]/50">
             {messages.map((m, idx) => (
               <div
                 key={idx}
-                className={`flex gap-3 max-w-[85%] ${
+                className={`flex gap-2.5 sm:gap-3 max-w-[92%] sm:max-w-[85%] ${
                   m.sender === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'
                 }`}
               >
@@ -189,7 +190,7 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
                 </div>
 
                 <div
-                  className={`p-4 rounded-2xl text-xs sm:text-sm leading-relaxed whitespace-pre-line ${
+                  className={`min-w-0 break-words p-3.5 sm:p-4 rounded-2xl text-xs sm:text-sm leading-relaxed whitespace-pre-line ${
                     m.sender === 'user'
                       ? 'bg-[#073D2B] text-white rounded-tr-xs'
                       : m.isFallback
@@ -203,12 +204,12 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
                   {m.sender === 'ai' && (
                     <div className="mt-3 pt-2.5 border-t border-[#E2E8DE] flex flex-wrap items-center justify-between gap-2 text-[11px]">
                       {m.isFallback ? (
-                        <div className="flex items-center gap-1.5 text-amber-900 font-medium bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                        <div className="flex items-center gap-1.5 text-amber-900 font-medium bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 max-w-full">
                           <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                          <span>Agronomic Fallback Engine • Gemini Offline ({m.fallbackReason || 'Temporarily Unavailable'})</span>
+                          <span className="break-words">Agronomic Fallback Engine • Gemini Offline ({m.fallbackReason || 'Temporarily Unavailable'})</span>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5 text-[#145C3D] font-medium bg-[#EAF5DF] px-2.5 py-1 rounded-lg border border-[#C2E0B0]">
+                        <div className="flex items-center gap-1.5 text-[#145C3D] font-medium bg-[#EAF5DF] px-2.5 py-1 rounded-lg border border-[#C2E0B0] max-w-full">
                           <Sparkles className="w-3.5 h-3.5 text-[#76B93F] shrink-0" />
                           <span>Gemini 3.8 Flash • NASA Grounded {m.latencyMs ? `(${Math.round(m.latencyMs / 100) / 10}s)` : ''}</span>
                         </div>
@@ -219,7 +220,7 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
                           type="button"
                           onClick={() => handleSend(m.originalPrompt)}
                           disabled={loading}
-                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                          className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-[11px] font-bold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
                         >
                           <RotateCcw className="w-3 h-3 text-[#76B93F]" />
                           <span>Retry with Live Gemini</span>
@@ -232,20 +233,21 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
             ))}
             {loading && (
               <div className="flex items-center gap-2 text-xs text-[#527367] p-2">
-                <RefreshCw className="w-4 h-4 animate-spin text-[#76B93F]" />
+                <RefreshCw className="w-4 h-4 animate-spin text-[#76B93F] shrink-0" />
                 <span>Consulting NASA telemetry and agronomic models...</span>
               </div>
             )}
           </div>
 
           {/* Quick Prompts Bar */}
-          <div className="px-6 py-2.5 bg-white border-t border-[#E2E8DE] flex items-center gap-2 overflow-x-auto text-xs">
-            <span className="text-[11px] font-bold text-[#527367] whitespace-nowrap">Suggested Inquiries:</span>
+          <div className="px-4 sm:px-6 py-2.5 bg-white border-t border-[#E2E8DE] flex items-center gap-2 overflow-x-auto scrollbar-none text-xs">
+            <span className="text-[11px] font-bold text-[#527367] whitespace-nowrap shrink-0">Suggested Inquiries:</span>
             {quickPrompts.map((qp, i) => (
               <button
+                type="button"
                 key={i}
                 onClick={() => handleSend(qp)}
-                className="px-3 py-1 rounded-full bg-[#F0F5EE] hover:bg-[#EAF5DF] text-[#073D2B] text-[11px] whitespace-nowrap transition-colors border border-[#D5E5CA]"
+                className="min-h-[36px] px-3 py-1.5 rounded-full bg-[#F0F5EE] hover:bg-[#EAF5DF] text-[#073D2B] text-[11px] whitespace-nowrap transition-colors border border-[#D5E5CA] shrink-0"
               >
                 {qp}
               </button>
@@ -253,7 +255,7 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
           </div>
 
           {/* Input Box */}
-          <div className="p-4 bg-white border-t border-[#E2E8DE] flex items-center gap-3">
+          <div className="p-3 sm:p-4 bg-white border-t border-[#E2E8DE] flex items-center gap-2 sm:gap-3">
             <input
               type="text"
               value={prompt}
@@ -261,13 +263,14 @@ How can I help you compare crop sequences, calculate biological nitrogen credits
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleSend();
               }}
-              placeholder="Ask an agronomic question (e.g., 'Compare hairy vetch vs red clover on clay loam')..."
-              className="flex-1 px-4 py-2.5 rounded-full border border-[#D5E5CA] bg-white text-xs sm:text-sm text-[#073D2B] focus:outline-hidden focus:ring-2 focus:ring-[#76B93F]"
+              placeholder="Ask an agronomic question..."
+              className="flex-1 min-w-0 min-h-[44px] px-4 py-2.5 rounded-full border border-[#D5E5CA] bg-white text-sm text-[#073D2B] focus:outline-hidden focus:ring-2 focus:ring-[#76B93F]"
             />
             <button
+              type="button"
               onClick={() => handleSend()}
               disabled={loading || !prompt.trim()}
-              className="p-3 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white disabled:opacity-40 transition-all shadow-xs"
+              className="w-11 h-11 shrink-0 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white disabled:opacity-40 transition-all shadow-xs flex items-center justify-center"
               aria-label="Send message"
             >
               <Send className="w-4 h-4" />

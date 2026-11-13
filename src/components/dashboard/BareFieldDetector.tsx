@@ -29,16 +29,16 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
   };
 
   return (
-    <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
+    <div className="bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
       
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E2E8DE] pb-5">
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 text-rose-800 text-xs font-bold uppercase tracking-wider mb-2">
-            <ShieldAlert className="w-3.5 h-3.5" />
-            Requirement C: Bare-Field Period & Topsoil Vulnerability Analysis
+            <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+            <span>Requirement C: Bare-Field Vulnerability</span>
           </div>
-          <h3 className="font-display text-2xl font-bold text-[#073D2B]">
+          <h3 className="font-display text-fluid-h2 font-bold text-[#073D2B]">
             Seasonal Fallow Detection & Cover Crop Windows
           </h3>
           <p className="text-xs text-[#527367] mt-1 max-w-2xl">
@@ -48,7 +48,7 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
         </div>
 
         {/* Scientific Rule Notice */}
-        <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3 max-w-xs text-[11px] text-amber-900 flex items-start gap-2">
+        <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3 lg:max-w-xs text-[11px] text-amber-900 flex items-start gap-2">
           <Info className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
           <span>
             <strong>Scientific Guardrail:</strong> Low vegetation readings alone do not confirm bare soil; standing stubble, snow cover, and crop residue must be factored in.
@@ -63,28 +63,37 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
         </h4>
 
         {/* Timeline Months Bar */}
-        <div className="grid grid-cols-12 gap-1 text-center text-[10px] font-bold text-[#527367] px-2">
-          {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m) => (
-            <span key={m}>{m}</span>
-          ))}
+        <div className="overflow-x-auto pb-1">
+          <div className="min-w-[440px] grid grid-cols-12 gap-1 text-center text-[10px] font-bold text-[#527367] px-2">
+            {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m) => (
+              <span key={m}>{m}</span>
+            ))}
+          </div>
         </div>
 
         {/* Strategy A Timeline Row */}
-        <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#E2E8DE] space-y-2">
-          <div className="flex items-center justify-between text-xs">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-[#FAFDF8] border border-[#E2E8DE] space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-bold text-amber-900">Strategy A: Existing Monoculture</span>
-            <span className="font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded">
+            <span className="font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded">
               135 Bare Days (High Vulnerability)
             </span>
           </div>
 
           <div className="h-6 w-full bg-slate-200 rounded-lg overflow-hidden flex text-[10px] text-white font-bold">
-            {/* Jan-April: Bare */}
-            <div className="w-[33%] bg-rose-400 flex items-center justify-center">BARE FALLOW</div>
-            {/* May-Sept: Standing crop */}
-            <div className="w-[42%] bg-emerald-600 flex items-center justify-center">CORN / SOY CANOPY</div>
-            {/* Oct-Dec: Bare */}
-            <div className="w-[25%] bg-rose-400 flex items-center justify-center">POST-HARVEST BARE</div>
+            <div className="w-[33%] bg-rose-400 flex items-center justify-center px-1 truncate">
+              <span className="hidden sm:inline">BARE FALLOW</span>
+            </div>
+            <div className="w-[42%] bg-emerald-600 flex items-center justify-center px-1 truncate">
+              <span className="hidden sm:inline">CORN / SOY CANOPY</span>
+            </div>
+            <div className="w-[25%] bg-rose-400 flex items-center justify-center px-1 truncate">
+              <span className="hidden sm:inline">POST-HARVEST BARE</span>
+            </div>
+          </div>
+          <div className="flex sm:hidden flex-wrap gap-2 text-[10px] font-semibold text-[#2A4D3E]">
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-rose-400" /> Jan–Apr / Oct–Dec Bare Fallow</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-emerald-600" /> May–Sep Canopy</span>
           </div>
           <p className="text-[11px] text-[#527367]">
             Est. annual topsoil loss: <strong>3.8 tons / acre</strong> on 2.3% slope during spring thaw storms.
@@ -92,8 +101,8 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
         </div>
 
         {/* Strategy B Timeline Row */}
-        <div className="p-4 rounded-2xl bg-emerald-50/50 border border-emerald-200 space-y-2">
-          <div className="flex items-center justify-between text-xs">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-emerald-50/50 border border-emerald-200 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-bold text-emerald-900">Strategy B: Soil Restoration & Winter Cover</span>
             <span className="font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
               0 Bare Days (365 Continuous Living Armor)
@@ -101,9 +110,19 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
           </div>
 
           <div className="h-6 w-full bg-emerald-600 rounded-lg overflow-hidden flex text-[10px] text-white font-bold">
-            <div className="w-[33%] bg-emerald-700 flex items-center justify-center">WINTER RYE + VETCH</div>
-            <div className="w-[42%] bg-emerald-600 flex items-center justify-center">CORN / SOY CANOPY</div>
-            <div className="w-[25%] bg-emerald-700 flex items-center justify-center">OVER-SEEDED COVER</div>
+            <div className="w-[33%] bg-emerald-700 flex items-center justify-center px-1 truncate">
+              <span className="hidden sm:inline">WINTER RYE + VETCH</span>
+            </div>
+            <div className="w-[42%] bg-emerald-600 flex items-center justify-center px-1 truncate">
+              <span className="hidden sm:inline">CORN / SOY CANOPY</span>
+            </div>
+            <div className="w-[25%] bg-emerald-700 flex items-center justify-center px-1 truncate">
+              <span className="hidden sm:inline">OVER-SEEDED COVER</span>
+            </div>
+          </div>
+          <div className="flex sm:hidden flex-wrap gap-2 text-[10px] font-semibold text-emerald-900">
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-emerald-700" /> Winter Rye + Vetch / Over-Seeded</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-emerald-600" /> Main Canopy</span>
           </div>
           <p className="text-[11px] text-emerald-900 font-medium">
             Est. annual topsoil loss: <strong>&lt; 0.2 tons / acre</strong> (94% erosion reduction confirmed).
@@ -111,8 +130,8 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
         </div>
 
         {/* Strategy C Timeline Row */}
-        <div className="p-4 rounded-2xl bg-blue-50/50 border border-blue-200 space-y-2">
-          <div className="flex items-center justify-between text-xs">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-blue-50/50 border border-blue-200 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-bold text-blue-900">Strategy C: Climate Resilient & Stover Fiber</span>
             <span className="font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded">
               45 Bare Days (Managed Stover Residue)
@@ -120,10 +139,24 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
           </div>
 
           <div className="h-6 w-full bg-slate-200 rounded-lg overflow-hidden flex text-[10px] text-white font-bold">
-            <div className="w-[25%] bg-blue-600 flex items-center justify-center">TRITICALE</div>
-            <div className="w-[42%] bg-blue-700 flex items-center justify-center">SORGHUM / PULSES</div>
-            <div className="w-[12%] bg-amber-400 flex items-center justify-center">RADISH</div>
-            <div className="w-[21%] bg-blue-800 flex items-center justify-center">UPRIGHT STOVER</div>
+            <div className="w-[25%] bg-blue-600 flex items-center justify-center px-1 truncate">
+              <span className="hidden sm:inline">TRITICALE</span>
+            </div>
+            <div className="w-[42%] bg-blue-700 flex items-center justify-center px-1 truncate">
+              <span className="hidden sm:inline">SORGHUM / PULSES</span>
+            </div>
+            <div className="w-[12%] bg-amber-400 flex items-center justify-center px-1 truncate text-amber-950">
+              <span className="hidden sm:inline">RADISH</span>
+            </div>
+            <div className="w-[21%] bg-blue-800 flex items-center justify-center px-1 truncate">
+              <span className="hidden sm:inline">UPRIGHT STOVER</span>
+            </div>
+          </div>
+          <div className="flex sm:hidden flex-wrap gap-2 text-[10px] font-semibold text-[#2A4D3E]">
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-blue-600" /> Triticale</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-blue-700" /> Sorghum / Pulses</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-amber-400" /> Radish</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-xs bg-blue-800" /> Upright Stover</span>
           </div>
           <p className="text-[11px] text-[#527367]">
             Est. annual topsoil loss: <strong>0.8 tons / acre</strong> (Stover residue buffers wind and surface runoff).
@@ -132,10 +165,10 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
       </div>
 
       {/* Visual Agronomic In-Field Demonstration */}
-      <div className="rounded-2xl border border-[#D5E5CA] bg-[#FAFDF8] p-5 space-y-3 overflow-hidden">
-        <div className="flex items-center justify-between">
+      <div className="rounded-2xl border border-[#D5E5CA] bg-[#FAFDF8] p-3.5 sm:p-5 space-y-3 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-[#76B93F]" />
+            <CheckCircle2 className="w-4 h-4 text-[#76B93F] shrink-0" />
             <span className="text-xs font-bold text-[#073D2B]">In-Field Topsoil Protection Verification</span>
           </div>
           <span className="text-[10px] font-bold text-[#145C3D] bg-[#EAF5DF] px-2 py-0.5 rounded">
@@ -151,7 +184,7 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
             loading="lazy"
             className="w-full h-full object-cover"
           />
-          <div className="absolute bottom-2 left-2 right-2 bg-[#073D2B]/90 backdrop-blur-xs text-white p-2.5 rounded-lg text-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1">
+          <div className="absolute bottom-2 left-2 right-2 bg-[#073D2B]/90 backdrop-blur-xs text-white p-2.5 rounded-lg text-[11px] sm:text-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1">
             <span><strong>Left:</strong> Living Cereal Rye Armor (0.3 t/ac erosion)</span>
             <span className="text-rose-300"><strong>Right:</strong> Bare Fallow Surface Gullying (3.8 t/ac loss)</span>
           </div>
@@ -159,7 +192,7 @@ export const BareFieldDetector: React.FC<BareFieldDetectorProps> = ({ farmId }) 
       </div>
 
       {/* Cover Crop Opportunity Action Bar */}
-      <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA] flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-[#EAF5DF] text-[#145C3D] flex items-center justify-center flex-shrink-0">
             <Sprout className="w-5 h-5" />

@@ -38,15 +38,15 @@ export const ExplainabilityExplorer: React.FC<ExplainabilityExplorerProps> = ({ 
   };
 
   return (
-    <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
+    <div className="bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-6">
       
       {/* Header */}
       <div className="border-b border-[#E2E8DE] pb-5">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold uppercase tracking-wider mb-2">
-          <FileCheck2 className="w-3.5 h-3.5" />
-          Requirements I & J: Evidence & Recommendation Explainability
+          <FileCheck2 className="w-3.5 h-3.5 shrink-0" />
+          <span>Requirements I & J: Recommendation Audit</span>
         </div>
-        <h3 className="font-display text-2xl font-bold text-[#073D2B]">
+        <h3 className="font-display text-fluid-h2 font-bold text-[#073D2B]">
           Transparent 10-Point Agronomic Recommendation Audit
         </h3>
         <p className="text-xs text-[#527367] mt-1 max-w-2xl">
@@ -56,49 +56,50 @@ export const ExplainabilityExplorer: React.FC<ExplainabilityExplorerProps> = ({ 
       </div>
 
       {/* Strategy Switcher */}
-      <div className="flex items-center gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
         {(['A', 'B', 'C'] as const).map((code) => {
           const s = strategies.find((st) => st.code === code);
           const isSelected = selectedCode === code;
           return (
             <button
+              type="button"
               key={code}
               onClick={() => setSelectedCode(code)}
-              className={`flex-1 p-3 rounded-2xl border text-left transition-all ${
+              className={`w-full min-h-[56px] p-3 sm:p-3.5 rounded-2xl border text-left transition-all ${
                 isSelected
                   ? 'bg-[#F2F8ED] border-[#76B93F] ring-2 ring-[#76B93F]/20'
                   : 'bg-white border-[#E2E8DE] hover:border-[#BAC9BE]'
               }`}
             >
-              <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center justify-between gap-2 mb-1">
                 <span className="font-display font-bold text-xs text-[#073D2B]">Strategy {code}</span>
                 <span className="font-bold text-xs text-[#145C3D]">{s?.score}%</span>
               </div>
-              <p className="text-[11px] text-[#527367] truncate">{s?.title}</p>
+              <p className="text-[11px] text-[#527367] leading-snug">{s?.title}</p>
             </button>
           );
         })}
       </div>
 
-      {/* 10 Explainability Accordion / Panels */}
+      {/* 10 Explainability Panels */}
       <div className="space-y-3">
         
         {/* 1. Why Suggested */}
         <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA]">
-          <h4 className="font-bold text-xs text-[#073D2B] uppercase tracking-wider mb-1 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-[#073D2B] text-white flex items-center justify-center text-[10px]">1</span>
-            Why This Strategy Was Suggested
+          <h4 className="font-bold text-xs text-[#073D2B] uppercase tracking-wider mb-1.5 flex items-center gap-2">
+            <span className="w-5 h-5 shrink-0 rounded-full bg-[#073D2B] text-white flex items-center justify-center text-[10px]">1</span>
+            <span>Why This Strategy Was Suggested</span>
           </h4>
-          <p className="text-xs text-[#2A4D3E] pl-7 leading-relaxed">{exp.whySuggested}</p>
+          <p className="text-xs text-[#2A4D3E] pl-3 sm:pl-7 leading-relaxed">{exp.whySuggested}</p>
         </div>
 
         {/* 2. NASA Observations Used */}
         <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA]">
           <h4 className="font-bold text-xs text-[#073D2B] uppercase tracking-wider mb-2 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-sky-700 text-white flex items-center justify-center text-[10px]">2</span>
-            NASA Earth Observations Grounding
+            <span className="w-5 h-5 shrink-0 rounded-full bg-sky-700 text-white flex items-center justify-center text-[10px]">2</span>
+            <span>NASA Earth Observations Grounding</span>
           </h4>
-          <ul className="space-y-1.5 pl-7 text-xs text-[#2A4D3E]">
+          <ul className="space-y-1.5 pl-6 sm:pl-7 text-xs text-[#2A4D3E]">
             {exp.nasaObservationsUsed.map((obs, i) => (
               <li key={i} className="list-disc">{obs}</li>
             ))}
@@ -108,10 +109,10 @@ export const ExplainabilityExplorer: React.FC<ExplainabilityExplorerProps> = ({ 
         {/* 3. Soil Information Used */}
         <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA]">
           <h4 className="font-bold text-xs text-[#073D2B] uppercase tracking-wider mb-2 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-emerald-700 text-white flex items-center justify-center text-[10px]">3</span>
-            Local Soil Information Inputs
+            <span className="w-5 h-5 shrink-0 rounded-full bg-emerald-700 text-white flex items-center justify-center text-[10px]">3</span>
+            <span>Local Soil Information Inputs</span>
           </h4>
-          <ul className="space-y-1.5 pl-7 text-xs text-[#2A4D3E]">
+          <ul className="space-y-1.5 pl-6 sm:pl-7 text-xs text-[#2A4D3E]">
             {exp.soilInformationUsed.map((soil, i) => (
               <li key={i} className="list-disc">{soil}</li>
             ))}
@@ -121,10 +122,10 @@ export const ExplainabilityExplorer: React.FC<ExplainabilityExplorerProps> = ({ 
         {/* 4. Crop Characteristics */}
         <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA]">
           <h4 className="font-bold text-xs text-[#073D2B] uppercase tracking-wider mb-2 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-amber-700 text-white flex items-center justify-center text-[10px]">4</span>
-            Crop Characteristics That Influenced The Recommendation
+            <span className="w-5 h-5 shrink-0 rounded-full bg-amber-700 text-white flex items-center justify-center text-[10px]">4</span>
+            <span>Crop Characteristics That Influenced The Recommendation</span>
           </h4>
-          <ul className="space-y-1.5 pl-7 text-xs text-[#2A4D3E]">
+          <ul className="space-y-1.5 pl-6 sm:pl-7 text-xs text-[#2A4D3E]">
             {exp.cropCharacteristicsInfluenced.map((crop, i) => (
               <li key={i} className="list-disc">{crop}</li>
             ))}
@@ -134,10 +135,10 @@ export const ExplainabilityExplorer: React.FC<ExplainabilityExplorerProps> = ({ 
         {/* 5. Farmer Priorities */}
         <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA]">
           <h4 className="font-bold text-xs text-[#073D2B] uppercase tracking-wider mb-2 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-indigo-700 text-white flex items-center justify-center text-[10px]">5</span>
-            Farmer Priorities That Influenced The Ranking
+            <span className="w-5 h-5 shrink-0 rounded-full bg-indigo-700 text-white flex items-center justify-center text-[10px]">5</span>
+            <span>Farmer Priorities That Influenced The Ranking</span>
           </h4>
-          <ul className="space-y-1.5 pl-7 text-xs text-[#2A4D3E]">
+          <ul className="space-y-1.5 pl-6 sm:pl-7 text-xs text-[#2A4D3E]">
             {exp.farmerPrioritiesInfluenced.map((prio, i) => (
               <li key={i} className="list-disc">{prio}</li>
             ))}
@@ -147,10 +148,10 @@ export const ExplainabilityExplorer: React.FC<ExplainabilityExplorerProps> = ({ 
         {/* 6. Potential Benefits */}
         <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA]">
           <h4 className="font-bold text-xs text-[#073D2B] uppercase tracking-wider mb-2 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-emerald-700 text-white flex items-center justify-center text-[10px]">6</span>
-            Expected Potential Agronomic & Financial Benefits
+            <span className="w-5 h-5 shrink-0 rounded-full bg-emerald-700 text-white flex items-center justify-center text-[10px]">6</span>
+            <span>Expected Potential Agronomic & Financial Benefits</span>
           </h4>
-          <ul className="space-y-1.5 pl-7 text-xs text-emerald-900 font-medium">
+          <ul className="space-y-1.5 pl-6 sm:pl-7 text-xs text-emerald-900 font-medium">
             {exp.expectedPotentialBenefits.map((ben, i) => (
               <li key={i} className="list-disc">{ben}</li>
             ))}
@@ -160,10 +161,10 @@ export const ExplainabilityExplorer: React.FC<ExplainabilityExplorerProps> = ({ 
         {/* 7. Risks & Hazards */}
         <div className="p-4 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA]">
           <h4 className="font-bold text-xs text-rose-900 uppercase tracking-wider mb-2 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-rose-700 text-white flex items-center justify-center text-[10px]">7</span>
-            Environmental & Agricultural Risks
+            <span className="w-5 h-5 shrink-0 rounded-full bg-rose-700 text-white flex items-center justify-center text-[10px]">7</span>
+            <span>Environmental & Agricultural Risks</span>
           </h4>
-          <ul className="space-y-1.5 pl-7 text-xs text-rose-800">
+          <ul className="space-y-1.5 pl-6 sm:pl-7 text-xs text-rose-800">
             {exp.environmentalAndAgriculturalRisks.map((risk, i) => (
               <li key={i} className="list-disc">{risk}</li>
             ))}
@@ -173,10 +174,10 @@ export const ExplainabilityExplorer: React.FC<ExplainabilityExplorerProps> = ({ 
         {/* 8. Missing Information */}
         <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200">
           <h4 className="font-bold text-xs text-amber-900 uppercase tracking-wider mb-2 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center text-[10px]">8</span>
-            Missing Information Identified
+            <span className="w-5 h-5 shrink-0 rounded-full bg-amber-600 text-white flex items-center justify-center text-[10px]">8</span>
+            <span>Missing Information Identified</span>
           </h4>
-          <ul className="space-y-1.5 pl-7 text-xs text-amber-900">
+          <ul className="space-y-1.5 pl-6 sm:pl-7 text-xs text-amber-900">
             {exp.missingInformation.map((miss, i) => (
               <li key={i} className="list-disc">{miss}</li>
             ))}
@@ -186,10 +187,10 @@ export const ExplainabilityExplorer: React.FC<ExplainabilityExplorerProps> = ({ 
         {/* 9. Uncertainty & Limitations */}
         <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
           <h4 className="font-bold text-xs text-slate-800 uppercase tracking-wider mb-2 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-slate-600 text-white flex items-center justify-center text-[10px]">9</span>
-            Uncertainty & Spatial Resolution Disclosures
+            <span className="w-5 h-5 shrink-0 rounded-full bg-slate-600 text-white flex items-center justify-center text-[10px]">9</span>
+            <span>Uncertainty & Spatial Resolution Disclosures</span>
           </h4>
-          <ul className="space-y-1.5 pl-7 text-xs text-slate-700">
+          <ul className="space-y-1.5 pl-6 sm:pl-7 text-xs text-slate-700">
             {exp.uncertaintyAndLimitations.map((unc, i) => (
               <li key={i} className="list-disc">{unc}</li>
             ))}
@@ -199,10 +200,10 @@ export const ExplainabilityExplorer: React.FC<ExplainabilityExplorerProps> = ({ 
         {/* 10. Local Expert Validation Checklist */}
         <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-300">
           <h4 className="font-bold text-xs text-emerald-950 uppercase tracking-wider mb-2 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-emerald-800 text-white flex items-center justify-center text-[10px]">10</span>
-            What Should Be Checked With Local Agricultural Experts
+            <span className="w-5 h-5 shrink-0 rounded-full bg-emerald-800 text-white flex items-center justify-center text-[10px]">10</span>
+            <span>What Should Be Checked With Local Agricultural Experts</span>
           </h4>
-          <ul className="space-y-1.5 pl-7 text-xs text-emerald-900 font-semibold">
+          <ul className="space-y-1.5 pl-6 sm:pl-7 text-xs text-emerald-900 font-semibold">
             {exp.localExpertValidationChecklist.map((chk, i) => (
               <li key={i} className="list-disc">{chk}</li>
             ))}

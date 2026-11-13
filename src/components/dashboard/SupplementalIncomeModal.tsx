@@ -34,17 +34,17 @@ export const SupplementalIncomeModal: React.FC<SupplementalIncomeModalProps> = (
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-3xl max-w-3xl w-full shadow-2xl border border-[#D5E5CA] max-h-[90vh] overflow-y-auto p-6 sm:p-8 space-y-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fs-fade overflow-y-auto">
+      <div className="bg-white rounded-2xl sm:rounded-3xl max-w-3xl w-full shadow-2xl border border-[#D5E5CA] max-h-[92dvh] overflow-y-auto my-auto p-5 sm:p-8 space-y-6">
         
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-[#E2E8DE] pb-4">
-          <div>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold uppercase tracking-wider mb-1.5">
-              <DollarSign className="w-3.5 h-3.5" />
-              Requirement E: Supplemental Agricultural Income Analysis
+        <div className="flex items-start justify-between gap-3 border-b border-[#E2E8DE] pb-4">
+          <div className="min-w-0">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-[11px] sm:text-xs font-bold uppercase tracking-wider mb-1.5">
+              <DollarSign className="w-3.5 h-3.5 shrink-0" />
+              <span>Requirement E: Supplemental Agricultural Income</span>
             </div>
-            <h3 className="font-display text-2xl font-bold text-[#073D2B]">
+            <h3 className="font-display text-xl sm:text-2xl font-bold text-[#073D2B]">
               Diversified Revenue Streams & Conservation Incentives
             </h3>
             <p className="text-xs text-[#527367] mt-1 max-w-xl">
@@ -54,7 +54,8 @@ export const SupplementalIncomeModal: React.FC<SupplementalIncomeModalProps> = (
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-full hover:bg-[#F0F5EE] text-[#073D2B]"
+            className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full hover:bg-[#F0F5EE] text-[#073D2B]"
+            aria-label="Close Supplemental Income Explorer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -74,10 +75,10 @@ export const SupplementalIncomeModal: React.FC<SupplementalIncomeModalProps> = (
           {opportunities.map((opp, idx) => (
             <div
               key={idx}
-              className="p-5 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA] space-y-3 flex flex-col justify-between"
+              className="p-4 sm:p-5 rounded-2xl bg-[#FAFDF8] border border-[#D5E5CA] space-y-3 flex flex-col justify-between"
             >
               <div>
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1">
                   <span className="text-[10px] font-bold text-[#145C3D] bg-[#EAF5DF] px-2 py-0.5 rounded">
                     {opp.category}
                   </span>
@@ -111,13 +112,13 @@ export const SupplementalIncomeModal: React.FC<SupplementalIncomeModalProps> = (
         </div>
 
         {/* Footer */}
-        <div className="pt-2 flex items-center justify-between">
+        <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
           <span className="text-xs text-[#527367]">
             Source: Iowa State Ag Decision Maker & USDA NRCS Cost-Share Schedules.
           </span>
           <button
             onClick={onClose}
-            className="px-6 py-2.5 rounded-full bg-[#073D2B] text-white text-xs font-bold hover:bg-[#145C3D]"
+            className="px-6 py-2.5 min-h-[44px] rounded-full bg-[#073D2B] text-white text-xs font-bold hover:bg-[#145C3D]"
           >
             Close Income Explorer
           </button>
