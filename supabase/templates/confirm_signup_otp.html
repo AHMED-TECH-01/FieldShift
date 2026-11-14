@@ -1,0 +1,47 @@
+<!--
+  Supabase Dashboard -> Authentication -> Email Templates -> Confirm signup
+  Subject: Verify your FieldShift account
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Verify your FieldShift account</title>
+  </head>
+  <body style="margin:0;padding:24px;background-color:#F8F7ED;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#102A24;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:520px;margin:0 auto;background-color:#FFFFFF;border:1px solid #D5E5CA;border-radius:16px;overflow:hidden;">
+      <tr>
+        <td style="background-color:#073D2B;padding:24px 28px;color:#FFFFFF;">
+          <h1 style="margin:0;font-size:20px;line-height:1.3;font-weight:700;">
+            Field<span style="color:#76B93F;">Shift</span>
+          </h1>
+          <p style="margin:6px 0 0;font-size:13px;color:#D5E5CA;">
+            Smarter Farming with NASA Earth Observations
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:28px;">
+          <p style="margin:0 0 16px;font-size:15px;line-height:1.5;color:#102A24;">
+            Welcome to FieldShift!
+          </p>
+          <p style="margin:0 0 16px;font-size:15px;line-height:1.5;color:#102A24;">
+            Your email verification code is:
+          </p>
+          <div style="margin:20px 0;padding:16px 20px;background-color:#EAF5DF;border:1px solid #C2E0B0;border-radius:12px;text-align:center;">
+            <span style="font-size:32px;font-weight:800;letter-spacing:8px;color:#073D2B;font-family:'Courier New',Courier,monospace;">
+              {{ .Token }}
+            </span>
+          </div>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.5;color:#204033;">
+            Enter this 6-digit code in FieldShift to verify your email address.
+          </p>
+          <p style="margin:0;font-size:13px;line-height:1.5;color:#527367;">
+            If you did not create this account, you can ignore this email.
+          </p>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

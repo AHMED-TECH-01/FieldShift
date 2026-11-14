@@ -6,7 +6,8 @@ import { defineConfig } from 'vite';
 const projectRoot = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig(() => {
-  const isHttps = process.env.APP_URL?.startsWith('https:');
+  const hmrDisabled = process.env.DISABLE_HMR === 'true';
+  const isHttps = Boolean(process.env.APP_URL?.startsWith('https:'));
 
   return {
     plugins: [react(), tailwindcss()],
@@ -16,29 +17,19 @@ export default defineConfig(() => {
       },
     },
     server: {
-      port: 3000,
+      port: Number(process.env.APP_PORT) || 3000,
       host: '0.0.0.0',
-      // Proxy API and Auth requests to backend server when Vite runs standalone
-      proxy: {
-        '/api': {
-          target: process.env.VITE_API_URL || 'http://localhost:3000',
-          changeOrigin: true,
-          secure: false,
-        },
-        '/auth': {
-          target: process.env.VITE_API_URL || 'http://localhost:3000',
-          changeOrigin: true,
-          secure: false,
-        },
-      },
-      // HMR is enabled for local dev/preview, configured for reverse-proxy WSS when on HTTPS
-      hmr: process.env.DISABLE_HMR === 'true'
-        ? false
+      allowedHosts: true as const,
+      // Use Vite 8 `server.ws` directly so HTTPS reverse proxies connect via WSS port 443
+      // without falling back to standalone port 24678.
+      ws: hmrDisabled
+        ? (false as const)
         : {
-            clientPort: isHttps ? 443 : undefined,
+            ...(isHttps ? { clientPort: 443 } : {}),
           },
-      // Disable file watching only when DISABLE_HMR is true to save CPU during agent edits
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      hmr: !hmrDisabled,
+      // Disable file watching only when DISABLE_HMR=true in headless/container environments.
+      watch: hmrDisabled ? null : {},
     },
   };
 });

@@ -186,7 +186,7 @@ async function persistObservationRows(userClient: SupabaseClient, rows: any[]): 
 
 export async function syncNasaPowerForFarm(
   userClient: SupabaseClient,
-  userId: string,
+  userId: string | null,
   farm: DbFarmRecord,
   options?: { startDate?: string; endDate?: string; days?: number; resolution?: 'daily' | 'monthly' }
 ) {
@@ -295,7 +295,7 @@ export async function syncNasaPowerForFarm(
 
 export async function syncModisForFarm(
   userClient: SupabaseClient,
-  userId: string,
+  userId: string | null,
   farm: DbFarmRecord
 ) {
   const geom = resolveFarmGeometry({ coordinates: farm.coordinates });
@@ -314,13 +314,13 @@ export async function syncModisForFarm(
     .single();
 
   try {
-    const [ornlResult, cmrResult] = await Promise.all([
+    const [ornlSettled, cmrSettled] = await Promise.allSettled([
       fetchModisOrnlData({
         farmId: farm.id,
         userId,
         longitude: geom.longitude,
         latitude: geom.latitude,
-        maxComposites: 4,
+        maxComposites: 8,
         spatialMethod: geom.spatialMethod,
       }),
       fetchEarthdataCmrGranules({
@@ -331,49 +331,68 @@ export async function syncModisForFarm(
         dataset: 'modis',
         boundingBox: geom.boundingBox,
         spatialMethod: geom.spatialMethod,
-      }).catch(() => ({ entriesCount: 0, rows: [] as any[], retrievedAt: new Date().toISOString() })),
+      }),
     ]);
 
-    const combinedRows = [...ornlResult.rows, ...cmrResult.rows];
+    const ornlResult = ornlSettled.status === 'fulfilled' ? ornlSettled.value : null;
+    const ornlError = ornlSettled.status === 'rejected' ? ornlSettled.reason : null;
+    const cmrResult =
+      cmrSettled.status === 'fulfilled'
+        ? cmrSettled.value
+        : { entriesCount: 0, rows: [] as any[], retrievedAt: new Date().toISOString() };
+
+    if (!ornlResult && cmrResult.rows.length === 0) {
+      throw ornlError || new Error('Both MODIS ORNL DAAC and Earthdata CMR requests failed.');
+    }
+
+    const combinedRows = [...(ornlResult?.rows || []), ...cmrResult.rows];
     const savedCount = await persistObservationRows(userClient, combinedRows);
     summaryCache.invalidatePrefix(`${farm.id}:`);
+
+    const jobStatus = ornlResult ? 'completed' : 'partial';
+    const ornlErrorMessage =
+      ornlError instanceof Error ? ornlError.message : ornlError ? String(ornlError) : null;
 
     if (jobRow?.id) {
       await userClient
         .from('ingestion_jobs')
         .update({
-          status: 'completed',
+          status: jobStatus,
           records_received: combinedRows.length,
           records_saved: savedCount,
+          error_message: ornlErrorMessage,
           completed_at: new Date().toISOString(),
           metadata: {
-            tile: ornlResult.latestTile,
-            cellSizeMeters: ornlResult.cellSizeMeters,
-            numericPixelRows: ornlResult.rows.length,
+            tile: ornlResult?.latestTile || null,
+            cellSizeMeters: ornlResult?.cellSizeMeters || null,
+            numericPixelRows: ornlResult?.rows.length || 0,
             cmrGranuleRows: cmrResult.rows.length,
+            ornlAvailable: Boolean(ornlResult),
           },
         })
         .eq('id', jobRow.id);
     }
 
-    logEvent('NasaSync', 'MODIS_SYNC_COMPLETED', {
+    logEvent('NasaSync', ornlResult ? 'MODIS_SYNC_COMPLETED' : 'MODIS_SYNC_PARTIAL_CMR_ONLY', {
       farmId: farm.id,
-      numericRows: ornlResult.rows.length,
+      numericRows: ornlResult?.rows.length || 0,
       cmrGranules: cmrResult.rows.length,
       recordsSaved: savedCount,
+      ornlError: ornlErrorMessage,
     });
 
     return {
       dataset: 'modis',
-      status: 'completed' as const,
+      status: jobStatus,
       farmId: farm.id,
       recordsReceived: combinedRows.length,
       recordsSaved: savedCount,
-      numericPixelCount: ornlResult.rows.length,
+      numericPixelCount: ornlResult?.rows.length || 0,
       granulesFound: cmrResult.entriesCount,
-      tile: ornlResult.latestTile,
-      spatialResolution: `${ornlResult.cellSizeMeters ?? 250} m`,
-      retrievedAt: ornlResult.retrievedAt,
+      tile: ornlResult?.latestTile || null,
+      spatialResolution: `${ornlResult?.cellSizeMeters ?? 250} m`,
+      retrievedAt: ornlResult?.retrievedAt || cmrResult.retrievedAt,
+      ornlError: ornlErrorMessage,
       jobId: jobRow?.id || null,
     };
   } catch (err: any) {
@@ -394,7 +413,7 @@ export async function syncModisForFarm(
 
 export async function syncEarthdataCmrForFarm(
   userClient: SupabaseClient,
-  userId: string,
+  userId: string | null,
   farm: DbFarmRecord,
   dataset: SupportedCmrDataset
 ) {
@@ -486,7 +505,7 @@ export async function syncEarthdataCmrForFarm(
 
 export async function ingestAllAvailableForFarm(
   userClient: SupabaseClient,
-  userId: string,
+  userId: string | null,
   farm: DbFarmRecord,
   options?: { days?: number }
 ) {
@@ -494,19 +513,19 @@ export async function ingestAllAvailableForFarm(
   const tasks: Array<Promise<void>> = [
     syncNasaPowerForFarm(userClient, userId, farm, { days: options?.days || 30 })
       .then((r) => { outcomes['nasa-power'] = { ok: true, ...r }; })
-      .catch((e) => { outcomes['nasa-power'] = { ok: false, error: e?.message }; }),
+      .catch((e) => { outcomes['nasa-power'] = { ok: false, error: e?.message, code: e?.code || 'NASA_POWER_FAILED' }; }),
     syncModisForFarm(userClient, userId, farm)
-      .then((r) => { outcomes.modis = { ok: true, ...r }; })
-      .catch((e) => { outcomes.modis = { ok: false, error: e?.message }; }),
+      .then((r) => { outcomes.modis = { ok: r.status === 'completed', ...r }; })
+      .catch((e) => { outcomes.modis = { ok: false, error: e?.message, code: e?.code || 'MODIS_FAILED' }; }),
     syncEarthdataCmrForFarm(userClient, userId, farm, 'smap')
       .then((r) => { outcomes.smap = { ok: true, ...r }; })
-      .catch((e) => { outcomes.smap = { ok: false, error: e?.message }; }),
+      .catch((e) => { outcomes.smap = { ok: false, error: e?.message, code: e?.code || 'SMAP_FAILED' }; }),
     syncEarthdataCmrForFarm(userClient, userId, farm, 'gpm')
       .then((r) => { outcomes.gpm = { ok: true, ...r }; })
-      .catch((e) => { outcomes.gpm = { ok: false, error: e?.message }; }),
+      .catch((e) => { outcomes.gpm = { ok: false, error: e?.message, code: e?.code || 'GPM_FAILED' }; }),
     syncEarthdataCmrForFarm(userClient, userId, farm, 'ecostress')
       .then((r) => { outcomes.ecostress = { ok: true, ...r }; })
-      .catch((e) => { outcomes.ecostress = { ok: false, error: e?.message }; }),
+      .catch((e) => { outcomes.ecostress = { ok: false, error: e?.message, code: e?.code || 'ECOSTRESS_FAILED' }; }),
   ];
 
   await Promise.all(tasks);
@@ -530,6 +549,7 @@ export interface FarmNasaSummary {
   growingDegreeDaysBase10C: number | null;
   missingPowerPointsCount: number;
   hasModisNumericData: boolean;
+  hasModisMaskedOnly: boolean;
   latestModisNdvi: number | null;
   latestModisEvi: number | null;
   latestModisNdviDate: string | null;
@@ -538,6 +558,10 @@ export interface FarmNasaSummary {
   latestModisRetrievedAt: string | null;
   latestModisLstC: number | null;
   latestModisLstDate: string | null;
+  latestModisMaskedDate: string | null;
+  latestModisMaskedQuality: string | null;
+  latestModisJobStatus: string | null;
+  latestModisJobError: string | null;
   cmrGranulesByDataset: Record<
     string,
     {
@@ -564,7 +588,7 @@ export interface FarmNasaSummary {
 export async function getFarmNasaObservationsSummary(
   client: SupabaseClient,
   farmId: string,
-  cacheOwnerScope = 'default'
+  cacheOwnerScope = 'public'
 ): Promise<FarmNasaSummary> {
   const cacheKey = `${farmId}:${cacheOwnerScope}`;
   const cached = summaryCache.get(cacheKey);
@@ -572,15 +596,41 @@ export async function getFarmNasaObservationsSummary(
     return cached;
   }
 
-  const { data: obsRows, error } = await client
-    .from('nasa_observations')
-    .select('*')
-    .eq('farm_id', farmId)
-    .order('observed_at', { ascending: false })
-    .limit(600);
+  // Query each dataset bucket separately so large daily POWER series never evict 16-day MODIS or CMR rows
+  const [powerQueryRes, modisQueryRes, cmrQueryRes, modisJobRes] = await Promise.all([
+    client
+      .from('nasa_observations')
+      .select('*')
+      .eq('farm_id', farmId)
+      .eq('dataset_id', 'nasa-power')
+      .order('observed_at', { ascending: false })
+      .limit(700),
+    client
+      .from('nasa_observations')
+      .select('*')
+      .eq('farm_id', farmId)
+      .eq('dataset_id', 'modis')
+      .order('observed_at', { ascending: false })
+      .limit(120),
+    client
+      .from('nasa_observations')
+      .select('*')
+      .eq('farm_id', farmId)
+      .in('dataset_id', ['smap', 'gpm', 'ecostress'])
+      .order('observed_at', { ascending: false })
+      .limit(60),
+    client
+      .from('ingestion_jobs')
+      .select('status, error_message, created_at')
+      .eq('farm_id', farmId)
+      .eq('dataset_id', 'modis')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
-  if (error) {
-    logEvent('NasaRead', 'OBSERVATIONS_QUERY_ERROR', { farmId, error: error.message });
+  if (powerQueryRes.error && modisQueryRes.error && cmrQueryRes.error) {
+    logEvent('NasaRead', 'OBSERVATIONS_QUERY_ERROR', { farmId, error: powerQueryRes.error.message });
     return {
       farmId,
       hasPowerData: false,
@@ -597,6 +647,7 @@ export async function getFarmNasaObservationsSummary(
       growingDegreeDaysBase10C: null,
       missingPowerPointsCount: 0,
       hasModisNumericData: false,
+      hasModisMaskedOnly: false,
       latestModisNdvi: null,
       latestModisEvi: null,
       latestModisNdviDate: null,
@@ -605,14 +656,24 @@ export async function getFarmNasaObservationsSummary(
       latestModisRetrievedAt: null,
       latestModisLstC: null,
       latestModisLstDate: null,
+      latestModisMaskedDate: null,
+      latestModisMaskedQuality: null,
+      latestModisJobStatus: null,
+      latestModisJobError: null,
       cmrGranulesByDataset: {},
       dailyTimeline: [],
       recentNormalizedObservations: [],
     };
   }
 
-  const rows = obsRows || [];
-  const powerRows = rows.filter((r: any) => r.dataset_id === 'nasa-power' && r.product_id !== 'NASA_POWER_AG_MONTHLY');
+  const powerAllRows = powerQueryRes.data || [];
+  const modisRows = modisQueryRes.data || [];
+  const cmrOtherRows = cmrQueryRes.data || [];
+  const combinedRecentRows = [...modisRows, ...cmrOtherRows, ...powerAllRows].sort((a: any, b: any) =>
+    String(b.observed_at).localeCompare(String(a.observed_at))
+  );
+
+  const powerRows = powerAllRows.filter((r: any) => r.product_id !== 'NASA_POWER_AG_MONTHLY');
 
   const dayMap = new Map<
     string,
@@ -689,17 +750,22 @@ export async function getFarmNasaObservationsSummary(
     }
   }
 
-  // Extract live MODIS numeric NDVI / EVI / LST_Day_1km
-  const modisNdviRows = rows.filter((r: any) => r.dataset_id === 'modis' && r.variable === 'NDVI' && !r.is_missing && r.value !== null);
-  const modisEviRows = rows.filter((r: any) => r.dataset_id === 'modis' && r.variable === 'EVI' && !r.is_missing && r.value !== null);
-  const modisLstRows = rows.filter((r: any) => r.dataset_id === 'modis' && r.variable === 'LST_Day_1km' && !r.is_missing && r.value !== null);
+  // Extract live MODIS numeric NDVI / EVI / LST_Day_1km + quality-masked ORNL rows
+  const modisNdviRows = modisRows.filter((r: any) => r.variable === 'NDVI' && !r.is_missing && r.value !== null);
+  const modisEviRows = modisRows.filter((r: any) => r.variable === 'EVI' && !r.is_missing && r.value !== null);
+  const modisLstRows = modisRows.filter((r: any) => r.variable === 'LST_Day_1km' && !r.is_missing && r.value !== null);
+  const modisOrnlMaskedRows = modisRows.filter(
+    (r: any) => r.provenance === 'live_api_nasa_ornl_modis' && (r.is_missing || r.value === null)
+  );
   const latestNdviRow = modisNdviRows[0];
   const latestEviRow = modisEviRows[0];
   const latestLstRow = modisLstRows[0];
+  const latestMaskedRow = modisOrnlMaskedRows[0];
 
   const cmrGranulesByDataset: FarmNasaSummary['cmrGranulesByDataset'] = {};
   for (const ds of ['smap', 'gpm', 'modis', 'ecostress'] as const) {
-    const dsRows = rows.filter((r: any) => r.dataset_id === ds && r.variable.includes('GRANULE_COVERAGE'));
+    const sourcePool = ds === 'modis' ? modisRows : cmrOtherRows;
+    const dsRows = sourcePool.filter((r: any) => r.dataset_id === ds && String(r.variable).includes('GRANULE_COVERAGE'));
     const latest = dsRows[0];
     cmrGranulesByDataset[ds] = {
       granuleCount: dsRows.length,
@@ -709,6 +775,8 @@ export async function getFarmNasaObservationsSummary(
       pixelValuesAvailable: ds === 'modis' && Boolean(latestNdviRow),
     };
   }
+
+  const latestModisJob = modisJobRes.data || null;
 
   const summary: FarmNasaSummary = {
     farmId,
@@ -726,17 +794,22 @@ export async function getFarmNasaObservationsSummary(
     growingDegreeDaysBase10C: gddDays > 0 ? Number(gddSum.toFixed(1)) : null,
     missingPowerPointsCount: missingCount,
     hasModisNumericData: Boolean(latestNdviRow),
+    hasModisMaskedOnly: !latestNdviRow && modisOrnlMaskedRows.length > 0,
     latestModisNdvi: latestNdviRow ? Number(latestNdviRow.value) : null,
     latestModisEvi: latestEviRow ? Number(latestEviRow.value) : null,
     latestModisNdviDate: latestNdviRow ? String(latestNdviRow.observed_at).slice(0, 10) : null,
     latestModisQuality: latestNdviRow?.raw_metadata?.qualityStatus || latestNdviRow?.quality_flag || null,
-    latestModisTile: latestNdviRow?.raw_metadata?.tile || null,
+    latestModisTile: latestNdviRow?.raw_metadata?.tile || latestMaskedRow?.raw_metadata?.tile || null,
     latestModisRetrievedAt: latestNdviRow ? String(latestNdviRow.retrieved_at) : null,
     latestModisLstC: latestLstRow ? Number(latestLstRow.value) : null,
     latestModisLstDate: latestLstRow ? String(latestLstRow.observed_at).slice(0, 10) : null,
+    latestModisMaskedDate: latestMaskedRow ? String(latestMaskedRow.observed_at).slice(0, 10) : null,
+    latestModisMaskedQuality: latestMaskedRow?.raw_metadata?.qualityStatus || latestMaskedRow?.quality_flag || null,
+    latestModisJobStatus: latestModisJob?.status || null,
+    latestModisJobError: latestModisJob?.error_message || null,
     cmrGranulesByDataset,
     dailyTimeline: timeline,
-    recentNormalizedObservations: rows.slice(0, 40).map(mapDbObservationToCanonical),
+    recentNormalizedObservations: combinedRecentRows.slice(0, 40).map(mapDbObservationToCanonical),
   };
 
   summaryCache.set(cacheKey, summary);

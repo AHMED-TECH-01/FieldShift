@@ -229,7 +229,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
       if (obsRes.status === 'fulfilled') {
         setNasaTelemetry(obsRes.value);
       } else {
-        setNasaError('Unable to load NASA observation summary for this parcel.');
+        const reason: any = obsRes.reason;
+        if (reason?.status === 401) {
+          setNasaError('Authentication required or session expired. Please sign in again.');
+        } else if (reason?.status === 403 || reason?.status === 404) {
+          setNasaError('Unauthorized farm access or parcel not found.');
+        } else {
+          setNasaError(reason?.message || 'Unable to load NASA observation summary for this parcel.');
+        }
       }
 
       if (climateRes.status === 'fulfilled') {
@@ -315,6 +322,26 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
+  const formatNasaSyncError = (err: any, fallbackMsg: string): string => {
+    const status = err?.status;
+    if (status === 401) {
+      return 'Not authenticated or session expired (401). Please sign in again.';
+    }
+    if (status === 403) {
+      return 'Unauthorized farm access (403). You do not have permission to access this parcel.';
+    }
+    if (status === 404) {
+      return 'Farm parcel not found (404).';
+    }
+    if (status === 502 || status === 503 || status === 504) {
+      if (err?.data?.metadataOnly && typeof err?.data?.metadataGranulesFound === 'number') {
+        return `${err.message} (${err.data.metadataGranulesFound} Earthdata CMR granule metadata entries indexed; 0 numeric observations saved).`;
+      }
+      return err?.message || 'NASA upstream API is temporarily unavailable. Please retry shortly.';
+    }
+    return err?.message || fallbackMsg;
+  };
+
   const handleSyncNasaPower = async () => {
     setSyncingPower(true);
     setSyncBanner(null);
@@ -332,7 +359,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     } catch (err: any) {
       setSyncBanner({
         type: 'error',
-        message: err?.message || 'Failed to sync NASA POWER agroclimatology.',
+        message: formatNasaSyncError(err, 'Failed to sync NASA POWER agroclimatology.'),
       });
     } finally {
       setSyncingPower(false);
@@ -347,22 +374,50 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const results = await Promise.allSettled(
         targets.map((ds) => apiClient.post(`/api/datasets/${ds}/sync`, { farmId: selectedFarmId }))
       );
-      const totalGranules = results.reduce((sum, r) => {
+
+      let totalGranules = 0;
+      let modisNumeric = 0;
+      const warnings: string[] = [];
+
+      results.forEach((r, idx) => {
+        const ds = targets[idx];
         if (r.status === 'fulfilled') {
-          return sum + (r.value.granulesFound ?? r.value.recordsSaved ?? 0);
+          totalGranules += Number(r.value.granulesFound ?? r.value.recordsSaved ?? 0);
+          if (ds === 'modis') {
+            modisNumeric = Number(r.value.numericPixelCount || 0);
+            if (r.value.status === 'partial' && r.value.ornlError) {
+              warnings.push(`MODIS pixels unavailable (${r.value.ornlError}); CMR granules indexed`);
+            }
+          }
+        } else {
+          warnings.push(`${ds.toUpperCase()}: ${formatNasaSyncError(r.reason, 'sync failed')}`);
         }
-        return sum;
-      }, 0);
-      setSyncBanner({
-        type: 'success',
-        message: `Synced MODIS 250m numeric pixels and indexed ${totalGranules} NASA Earthdata CMR granules across SMAP, GPM, MODIS & ECOSTRESS.`,
       });
+
+      if (warnings.length === targets.length) {
+        setSyncBanner({
+          type: 'error',
+          message: `Satellite sync failed: ${warnings[0]}`,
+        });
+      } else {
+        setSyncBanner({
+          type: warnings.length > 0 && modisNumeric === 0 ? 'error' : 'success',
+          message:
+            modisNumeric > 0
+              ? `Synced ${modisNumeric} MODIS 250m/1km pixel records and indexed ${totalGranules} Earthdata CMR granules.${
+                  warnings.length > 0 ? ` Partial issues: ${warnings.join('; ')}.` : ''
+                }`
+              : `Indexed ${totalGranules} NASA Earthdata CMR granules.${
+                  warnings.length > 0 ? ` Notice: ${warnings.join('; ')}.` : ''
+                }`,
+        });
+      }
       await fetchNasaAndFarmAnalytics(selectedFarmId);
       await recalculateStrategies(priorities, activeScenario);
     } catch (err: any) {
       setSyncBanner({
         type: 'error',
-        message: err?.message || 'Failed to query NASA Earthdata CMR granules.',
+        message: formatNasaSyncError(err, 'Failed to query NASA Earthdata CMR granules.'),
       });
     } finally {
       setSyncingCmr(false);
@@ -375,23 +430,48 @@ export const Dashboard: React.FC<DashboardProps> = ({
     try {
       const res = await apiClient.post(`/api/nasa/ingest/${selectedFarmId}`, { days: 30 });
       const outcomes = res?.outcomes || {};
-      const powerSaved = outcomes['nasa-power']?.recordsSaved || 0;
-      const modisPixels = outcomes.modis?.numericPixelCount || 0;
+      const powerOutcome = outcomes['nasa-power'];
+      const modisOutcome = outcomes.modis;
+      const powerSaved = powerOutcome?.recordsSaved || 0;
+      const modisPixels = modisOutcome?.numericPixelCount || 0;
       const cmrTotal = ['smap', 'gpm', 'modis', 'ecostress'].reduce(
         (sum, k) => sum + Number(outcomes[k]?.granulesFound || 0),
         0
       );
+      const partialIssues: string[] = [];
+      if (powerOutcome && !powerOutcome.ok) {
+        partialIssues.push(`NASA POWER failed (${powerOutcome.error || 'upstream error'})`);
+      }
+      if (modisOutcome && !modisOutcome.ok) {
+        partialIssues.push(
+          modisOutcome.granulesFound > 0
+            ? `MODIS CMR granules indexed (${modisOutcome.granulesFound}), ORNL pixel API unavailable (${modisOutcome.ornlError || modisOutcome.error || 'timeout'})`
+            : `MODIS failed (${modisOutcome.error || 'upstream timeout'})`
+        );
+      }
+      for (const k of ['smap', 'gpm', 'ecostress']) {
+        if (outcomes[k] && !outcomes[k].ok) {
+          partialIssues.push(`${k.toUpperCase()} failed (${outcomes[k].error || 'upstream error'})`);
+        }
+      }
+
       setSyncBanner({
-        type: 'success',
-        message: `Ingested ${powerSaved} NASA POWER rows, ${modisPixels} MODIS 250m/1km pixel records, and ${cmrTotal} Earthdata CMR granule metadata entries.`,
+        type: partialIssues.length > 0 && powerSaved === 0 && modisPixels === 0 ? 'error' : 'success',
+        message:
+          partialIssues.length > 0
+            ? `Ingested ${powerSaved} NASA POWER rows, ${modisPixels} MODIS pixel rows, and ${cmrTotal} CMR granules. Note: ${partialIssues.join('; ')}.`
+            : `Ingested ${powerSaved} NASA POWER rows, ${modisPixels} MODIS 250m/1km pixel records, and ${cmrTotal} Earthdata CMR granule metadata entries.`,
       });
       await fetchNasaAndFarmAnalytics(selectedFarmId);
       await recalculateStrategies(priorities, activeScenario);
     } catch (err: any) {
       setSyncBanner({
         type: 'error',
-        message: err?.message || 'Failed to ingest NASA Earth observation feeds.',
+        message: formatNasaSyncError(err, 'Failed to ingest NASA Earth observation feeds.'),
       });
+      if (err?.data?.metadataOnly) {
+        await fetchNasaAndFarmAnalytics(selectedFarmId);
+      }
     } finally {
       setSyncingAll(false);
     }
@@ -1082,9 +1162,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-[#527367] mt-0.5">
-                    {power?.status === 'synced' || modis?.status === 'synced'
+                    {power?.status === 'synced' || modis?.status === 'synced' || modis?.status === 'granule_metadata_only' || modis?.status === 'quality_masked'
                       ? `${power?.status === 'synced' ? `POWER ${power.daysObserved}d synced` : 'POWER not synced'} • ${
-                          modis?.status === 'synced' ? `MODIS 250m NDVI (${modis.observedAt})` : 'MODIS not synced'
+                          modis?.status === 'synced'
+                            ? `MODIS 250m NDVI (${modis.observedAt})`
+                            : modis?.status === 'quality_masked'
+                            ? `MODIS cloud/snow masked (${modis.observedAt})`
+                            : modis?.status === 'granule_metadata_only'
+                            ? 'MODIS CMR granule indexed'
+                            : modis?.status === 'ingestion_failed'
+                            ? 'MODIS upstream failed'
+                            : 'MODIS not synced'
                         }.`
                       : 'Ingest live NASA POWER agroclimatology, MODIS 250m vegetation indices, and Earthdata CMR granule metadata.'}
                   </p>
@@ -1251,11 +1339,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <Sprout className="w-3.5 h-3.5 text-emerald-600" />
                       NASA MODIS
                     </span>
-                    <span className="text-[10px] font-mono text-emerald-700 font-bold">
+                    <span
+                      className={`text-[10px] font-mono font-bold ${
+                        modis?.status === 'ingestion_failed'
+                          ? 'text-rose-700'
+                          : modis?.status === 'quality_masked'
+                          ? 'text-amber-700'
+                          : 'text-emerald-700'
+                      }`}
+                    >
                       {modis?.status === 'synced'
                         ? 'LIVE 250m'
+                        : modis?.status === 'quality_masked'
+                        ? 'CLOUD/SNOW'
                         : modis?.latestGranuleId
                         ? '250m CMR'
+                        : modis?.status === 'ingestion_failed'
+                        ? 'SYNC FAILED'
                         : 'NOT SYNCED'}
                     </span>
                   </div>
@@ -1264,15 +1364,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       ? 'Loading...'
                       : modis?.status === 'synced' && modis?.currentNDVI !== null && modis?.currentNDVI !== undefined
                       ? `${modis.currentNDVI} NDVI`
+                      : modis?.status === 'quality_masked'
+                      ? 'Quality Masked'
                       : modis?.latestGranuleId
                       ? 'Granule Only'
-                      : 'Unavailable'}
+                      : modis?.status === 'ingestion_failed'
+                      ? 'API Unavailable'
+                      : 'Not Synced'}
                   </div>
                   <p className="text-[11px] text-[#2A4D3E] break-words">
                     {modis?.status === 'synced'
                       ? `EVI: ${modis.currentEVI ?? '—'}${modis.lstDayC !== null && modis.lstDayC !== undefined ? ` • LST: ${modis.lstDayC}°C` : ''} • ${modis.observedAt}`
+                      : modis?.status === 'quality_masked'
+                      ? `${modis.qualityStatus || 'Cloud/Snow obscured'} (${modis.observedAt || 'latest composite'})`
                       : modis?.latestGranuleId
-                      ? `Granule indexed (${modis.granuleTimestamp ? new Date(modis.granuleTimestamp).toLocaleDateString() : 'CMR'}) • Run Sync MODIS for pixel NDVI`
+                      ? `Granule indexed (${modis.granuleTimestamp ? new Date(modis.granuleTimestamp).toLocaleDateString() : 'CMR'})${modis.ornlError ? ' • ORNL pixel API timed out' : ' • Run Sync MODIS for pixel NDVI'}`
+                      : modis?.status === 'ingestion_failed'
+                      ? `${modis.error || 'MODIS ORNL DAAC upstream unavailable'}`
                       : 'Ingest MODIS 250m to retrieve live ORNL DAAC NDVI, EVI & quality flag'}
                   </p>
                 </div>

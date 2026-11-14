@@ -260,7 +260,7 @@ export function normalizeModisLstCelsius(
 
 export interface DbObservationInsertRow {
   farm_id: string;
-  user_id: string;
+  user_id: string | null;
   scope_owner_id: string;
   provider: string;
   dataset_id: string;

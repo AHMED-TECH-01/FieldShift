@@ -75,21 +75,32 @@ export const NasaRoadmapExplorer: React.FC<NasaRoadmapExplorerProps> = ({ farmId
     setSyncNotice(null);
     try {
       const res = await apiClient.post(`/api/datasets/${datasetId}/sync`, { farmId, days: 30 });
+      const isPartialModis = datasetId === 'modis' && res.status === 'partial';
       setSyncNotice({
-        type: 'success',
+        type: isPartialModis ? 'error' : 'success',
         message:
           datasetId === 'nasa-power'
             ? `Synced ${res.recordsSaved || 0} live NASA POWER agroclimatology records (${res.startDate} to ${res.endDate}).`
             : datasetId === 'modis'
-            ? `Synced ${res.numericPixelCount || 0} live MODIS 250m/1km pixel records + ${res.granulesFound ?? 0} Earthdata CMR granules.`
-            : `Discovered ${res.granulesFound ?? res.recordsSaved ?? 0} Earthdata CMR granule metadata entries for ${datasetId.toUpperCase()}.`,
+            ? isPartialModis
+              ? `Indexed ${res.granulesFound ?? 0} Earthdata CMR granules for MODIS, but ORNL DAAC numeric pixel API failed (${res.ornlError || 'upstream timeout'}).`
+              : `Synced ${res.numericPixelCount || 0} live MODIS 250m/1km pixel records + ${res.granulesFound ?? 0} Earthdata CMR granules.`
+            : `Discovered ${res.granulesFound ?? res.recordsSaved ?? 0} Earthdata CMR granule metadata entries for ${datasetId.toUpperCase()} (metadata-only; numeric raster extraction unavailable).`,
       });
       await fetchSyncStatus();
       onSynced?.();
     } catch (err: any) {
+      const msg =
+        err?.status === 401
+          ? 'Not authenticated or session expired (401). Please sign in again.'
+          : err?.status === 403
+          ? 'Unauthorized farm access (403).'
+          : err?.status === 404
+          ? 'Farm parcel not found (404).'
+          : err?.message || `Failed to sync ${datasetId}.`;
       setSyncNotice({
         type: 'error',
-        message: err?.message || `Failed to sync ${datasetId}.`,
+        message: msg,
       });
     } finally {
       setSyncingId(null);
