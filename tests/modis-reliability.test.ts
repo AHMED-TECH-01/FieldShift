@@ -10,7 +10,7 @@ import {
   normalizeModisScaledIndex,
   parseRetryAfterMs,
 } from '../backend/nasa/units-and-quality.js';
-import { fetchModisOrnlData } from '../backend/nasa/providers.js';
+import { fetchEarthdataCmrGranules, fetchModisOrnlData } from '../backend/nasa/providers.js';
 import { syncModisForFarm } from '../backend/nasa.js';
 import { resetSupabaseClientsForTesting } from '../backend/supabase.js';
 
@@ -680,6 +680,12 @@ test('9. Dashboard status mapping via HTTP routes distinguishes Granule Indexed 
       })
     ).json();
     assert.equal(obsAfterTimeout.realTimeMetrics.solarInsolationPOWER.status, 'synced');
+    assert.equal(obsAfterTimeout.realTimeMetrics.precipitationPOWER.status, 'synced');
+    assert.equal(obsAfterTimeout.realTimeMetrics.precipitationPOWER.valueTotalMm, 4.2);
+    assert.equal(obsAfterTimeout.realTimeMetrics.precipitationPOWER.windowStart, '2026-04-07');
+    assert.equal(obsAfterTimeout.realTimeMetrics.precipitationPOWER.windowEnd, '2026-04-07');
+    assert.equal(obsAfterTimeout.realTimeMetrics.precipitationGPM.value30DayTotal, null);
+    assert.equal(obsAfterTimeout.realTimeMetrics.precipitationGPM.pixelValuesAvailable, false);
     const vegTimeout = obsAfterTimeout.realTimeMetrics.vegetationNDVI;
     assert.equal(vegTimeout.status, 'granule_metadata_only');
     assert.equal(vegTimeout.granuleIndexed, true);
@@ -741,3 +747,69 @@ test('9. Dashboard status mapping via HTTP routes distinguishes Granule Indexed 
     }
   }
 });
+
+test('10. MODIS totalBudgetMs aborts retries before Vercel deadline and CMR falls back cleanly on expired token', async () => {
+  let ornlCalls = 0;
+  const started = Date.now();
+  await assert.rejects(
+    () =>
+      fetchModisOrnlData({
+        farmId: sampleFarm.id,
+        userId: sampleFarm.userId,
+        longitude: -93.62,
+        latitude: 42.03,
+        timeoutMs: 80,
+        totalBudgetMs: 110,
+        maxRetries: 2,
+        baseBackoffMs: 25,
+        fetchImpl: async (_url, init) => {
+          ornlCalls++;
+          return new Promise<globalThis.Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+            });
+          });
+        },
+      }),
+    (err: any) => err instanceof NasaUpstreamError && err.code === 'NASA_TIMEOUT'
+  );
+  const elapsed = Date.now() - started;
+  assert.equal(ornlCalls, 1, 'Deadline budget must stop futile retries once remaining budget < 1.5s');
+  assert.ok(elapsed < 250, `Expected bounded timeout under 250ms, took ${elapsed}ms`);
+
+  let cmrCalls = 0;
+  const cmrFallback = await fetchEarthdataCmrGranules({
+    farmId: sampleFarm.id,
+    userId: sampleFarm.userId,
+    longitude: -93.62,
+    latitude: 42.03,
+    dataset: 'gpm',
+    earthdataToken: 'expired-token-123',
+    fetchImpl: async (_url, init) => {
+      cmrCalls++;
+      const auth = (init?.headers as Record<string, string>)?.Authorization;
+      if (auth) {
+        return jsonResponse({ error: 'Invalid token' }, 401);
+      }
+      return jsonResponse({
+        feed: {
+          entry: [
+            {
+              id: 'G-GPM-PUB-1',
+              producer_granule_id: '3B-DAY-L.MS.MRG.3IMERG.20261101.V07B.nc4',
+              time_start: '2026-11-01T00:00:00.000Z',
+              time_end: '2026-11-01T23:59:59.000Z',
+              data_center: 'GES_DISC',
+            },
+          ],
+        },
+      });
+    },
+  });
+  assert.equal(cmrCalls, 2);
+  assert.equal(cmrFallback.entriesCount, 1);
+  assert.equal(cmrFallback.rows[0].value, null);
+  assert.equal(cmrFallback.rows[0].is_missing, true);
+  assert.equal(cmrFallback.rows[0].raw_metadata.earthdataTokenRejected, true);
+});
+

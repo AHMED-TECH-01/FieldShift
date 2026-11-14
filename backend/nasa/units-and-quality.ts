@@ -375,6 +375,7 @@ export async function fetchNasaJson<T = any>(
     maxRetries?: number;
     baseBackoffMs?: number;
     maxBackoffMs?: number;
+    deadlineMs?: number;
     headers?: Record<string, string>;
     fetchImpl?: typeof globalThis.fetch;
     onAttempt?: (info: { attempt: number; maxAttempts: number; url: string }) => void;
@@ -384,14 +385,18 @@ export async function fetchNasaJson<T = any>(
   const maxRetries = Math.min(2, Math.max(0, options?.maxRetries ?? 2));
   const baseBackoffMs = Math.max(0, options?.baseBackoffMs ?? 450);
   const maxBackoffMs = Math.max(baseBackoffMs, options?.maxBackoffMs ?? 5000);
+  const deadlineMs = typeof options?.deadlineMs === 'number' && Number.isFinite(options.deadlineMs) ? options.deadlineMs : null;
   const doFetch = options?.fetchImpl ?? globalThis.fetch;
   const startedAt = Date.now();
   let lastError: NasaUpstreamError | null = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const attemptTimeoutMs = deadlineMs !== null
+      ? Math.min(timeoutMs, Math.max(250, deadlineMs - Date.now()))
+      : timeoutMs;
     options?.onAttempt?.({ attempt: attempt + 1, maxAttempts: maxRetries + 1, url });
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
     try {
       const response = await doFetch(url, {
         method: 'GET',
@@ -459,7 +464,7 @@ export async function fetchNasaJson<T = any>(
         lastError = err;
       } else if (err?.name === 'AbortError') {
         lastError = new NasaUpstreamError(
-          `NASA upstream request timed out after ${timeoutMs}ms`,
+          `NASA upstream request timed out after ${attemptTimeoutMs}ms`,
           504,
           'NASA_TIMEOUT',
           true,
@@ -486,6 +491,9 @@ export async function fetchNasaJson<T = any>(
           ? Math.min(15000, Math.max(0, lastError.retryAfterMs))
           : 0;
       const delayMs = Math.max(retryAfterDelay, expDelay + jitter);
+      if (deadlineMs !== null && deadlineMs - (Date.now() + delayMs) < 1500) {
+        break;
+      }
       if (delayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }

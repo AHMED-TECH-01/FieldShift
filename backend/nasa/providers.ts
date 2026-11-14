@@ -256,6 +256,7 @@ export async function fetchModisOrnlData(params: {
   timeoutMs?: number;
   maxRetries?: number;
   baseBackoffMs?: number;
+  totalBudgetMs?: number;
   spatialMethod?: 'point_centroid_approximation' | 'polygon_boundary';
   fetchImpl?: typeof globalThis.fetch;
 }) {
@@ -281,6 +282,19 @@ export async function fetchModisOrnlData(params: {
       ? Math.floor(params.timeoutMs)
       : getModisTimeoutMs();
   const maxRetries = Math.min(2, Math.max(0, params.maxRetries ?? 2));
+  const explicitBudget =
+    typeof params.totalBudgetMs === 'number' && Number.isFinite(params.totalBudgetMs) && params.totalBudgetMs > 0
+      ? Math.floor(params.totalBudgetMs)
+      : null;
+  const envBudgetRaw = Number(process.env.MODIS_TOTAL_BUDGET_MS);
+  const defaultVercelBudget =
+    Number.isFinite(envBudgetRaw) && envBudgetRaw > 0
+      ? Math.floor(envBudgetRaw)
+      : process.env.VERCEL
+      ? Math.min(44000, Math.max(timeoutMs + 2000, 40000))
+      : null;
+  const totalBudgetMs = explicitBudget ?? defaultVercelBudget;
+  const deadlineMs = totalBudgetMs !== null ? startedAt + totalBudgetMs : undefined;
   const maxComposites = Math.min(10, Math.max(1, params.maxComposites || 8));
   const spatialMethod = params.spatialMethod || 'point_centroid_approximation';
   const spatialDisclosure =
@@ -306,6 +320,7 @@ export async function fetchModisOrnlData(params: {
     timeoutMs,
     maxRetries,
     baseBackoffMs: params.baseBackoffMs,
+    deadlineMs,
     fetchImpl: params.fetchImpl,
   });
 
@@ -337,9 +352,9 @@ export async function fetchModisOrnlData(params: {
     subsetUrls = [ndviUrl, eviUrl, relUrl];
 
     const [ndviRes, eviRes, relRes] = await Promise.all([
-      fetchNasaJson<any>(ndviUrl, { timeoutMs, maxRetries, baseBackoffMs: params.baseBackoffMs, fetchImpl: params.fetchImpl }),
-      fetchNasaJson<any>(eviUrl, { timeoutMs, maxRetries, baseBackoffMs: params.baseBackoffMs, fetchImpl: params.fetchImpl }),
-      fetchNasaJson<any>(relUrl, { timeoutMs, maxRetries, baseBackoffMs: params.baseBackoffMs, fetchImpl: params.fetchImpl }),
+      fetchNasaJson<any>(ndviUrl, { timeoutMs, maxRetries, baseBackoffMs: params.baseBackoffMs, deadlineMs, fetchImpl: params.fetchImpl }),
+      fetchNasaJson<any>(eviUrl, { timeoutMs, maxRetries, baseBackoffMs: params.baseBackoffMs, deadlineMs, fetchImpl: params.fetchImpl }),
+      fetchNasaJson<any>(relUrl, { timeoutMs, maxRetries, baseBackoffMs: params.baseBackoffMs, deadlineMs, fetchImpl: params.fetchImpl }),
     ]);
 
     cellSizeMeters = typeof ndviRes?.cellsize === 'number' ? Number(ndviRes.cellsize.toFixed(2)) : cellSizeMeters;
@@ -404,13 +419,14 @@ export async function fetchModisOrnlData(params: {
     }
   }
 
-  // 2. Optionally fetch MOD11A2 (1km 8-day Land Surface Temperature) — graceful if unavailable
-  try {
+  // 2. Optionally fetch MOD11A2 (1km 8-day Land Surface Temperature) — graceful if unavailable or budget low
+  if (!deadlineMs || deadlineMs - Date.now() >= 4000) try {
     const lstDatesUrl = `https://modis.ornl.gov/rst/api/v1/MOD11A2/dates?latitude=${coord.latitude}&longitude=${coord.longitude}`;
     const lstDatesPayload = await fetchNasaJson<any>(lstDatesUrl, {
       timeoutMs,
       maxRetries: Math.min(1, maxRetries),
       baseBackoffMs: params.baseBackoffMs,
+      deadlineMs,
       fetchImpl: params.fetchImpl,
     });
     const lstDates: Array<{ modis_date: string; calendar_date: string }> = Array.isArray(lstDatesPayload?.dates)
@@ -421,7 +437,7 @@ export async function fetchModisOrnlData(params: {
         ? lstDates.filter((d) => d.calendar_date >= params.startDate! && d.calendar_date <= params.endDate!).slice(-3)
         : lstDates.slice(-3);
 
-    if (selectedLstDates.length > 0) {
+    if (selectedLstDates.length > 0 && (!deadlineMs || deadlineMs - Date.now() >= 2500)) {
       const lstUrl =
         `https://modis.ornl.gov/rst/api/v1/MOD11A2/subset?latitude=${coord.latitude}&longitude=${coord.longitude}` +
         `&startDate=${encodeURIComponent(selectedLstDates[0].modis_date)}&endDate=${encodeURIComponent(selectedLstDates[selectedLstDates.length - 1].modis_date)}&band=LST_Day_1km&kmAboveBelow=0&kmLeftRight=0`;
@@ -429,6 +445,7 @@ export async function fetchModisOrnlData(params: {
         timeoutMs,
         maxRetries: Math.min(1, maxRetries),
         baseBackoffMs: params.baseBackoffMs,
+        deadlineMs,
         fetchImpl: params.fetchImpl,
       });
       for (const item of Array.isArray(lstRes?.subset) ? lstRes.subset : []) {
@@ -540,16 +557,33 @@ export async function fetchEarthdataCmrGranules(params: {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const payload = await fetchNasaJson<any>(sourceUrl, {
-    timeoutMs: 12000,
-    maxRetries: 2,
-    headers,
-    fetchImpl: params.fetchImpl,
-  });
+  let payload: any;
+  let earthdataTokenRejected = false;
+  try {
+    payload = await fetchNasaJson<any>(sourceUrl, {
+      timeoutMs: 12000,
+      maxRetries: 2,
+      headers,
+      fetchImpl: params.fetchImpl,
+    });
+  } catch (err: any) {
+    // Public CMR collection search returns 401 when an expired/invalid Bearer token is attached;
+    // retry once unauthenticated for public granule metadata so CMR discovery does not break.
+    if (token && err instanceof NasaUpstreamError && (err.status === 401 || err.status === 403)) {
+      earthdataTokenRejected = true;
+      payload = await fetchNasaJson<any>(sourceUrl, {
+        timeoutMs: 12000,
+        maxRetries: 2,
+        fetchImpl: params.fetchImpl,
+      });
+    } else {
+      throw err;
+    }
+  }
 
   const entries = Array.isArray(payload?.feed?.entry) ? payload.feed.entry : [];
   const retrievedAt = new Date().toISOString();
-  const hasEarthdataToken = Boolean(token);
+  const hasValidEarthdataToken = Boolean(token) && !earthdataTokenRejected;
 
   const rawRows: DbObservationInsertRow[] = entries.map((entry: any): DbObservationInsertRow => {
     const observedAt = entry.time_start ? new Date(entry.time_start).toISOString() : retrievedAt;
@@ -575,7 +609,7 @@ export async function fetchEarthdataCmrGranules(params: {
       retrieved_at: retrievedAt,
       spatial_resolution: cfg.spatialResolution,
       temporal_resolution: cfg.temporalResolution,
-      quality_flag: hasEarthdataToken
+      quality_flag: hasValidEarthdataToken
         ? 'granule_discovered_binary_decoder_required'
         : 'granule_metadata_only_earthdata_auth_required',
       processing_method: cfg.processingMethod,
@@ -590,7 +624,10 @@ export async function fetchEarthdataCmrGranules(params: {
         timeEnd: entry.time_end,
         dataCenter: entry.data_center,
         granuleSizeMb: entry.granule_size ? Number(entry.granule_size) : null,
-        qualityStatus: hasEarthdataToken
+        earthdataTokenRejected,
+        qualityStatus: earthdataTokenRejected
+          ? 'Granule verified via public CMR (configured EARTHDATA_TOKEN was rejected with 401/403; binary HDF5/NetCDF worker not active)'
+          : hasValidEarthdataToken
           ? 'Granule verified via CMR (authenticated binary HDF5/NetCDF extraction worker required for numeric grid readout)'
           : 'Granule coverage verified via CMR (EARTHDATA_TOKEN & HDF5/NetCDF worker required for numeric pixels)',
         spatialMethod: params.spatialMethod || 'point_centroid_approximation',

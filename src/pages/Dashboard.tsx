@@ -1244,6 +1244,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           {activeSubPage === '/dashboard' && (() => {
             const rt = nasaTelemetry?.realTimeMetrics;
             const power = rt?.solarInsolationPOWER;
+            const precipPower = rt?.precipitationPOWER;
             const smap = rt?.soilMoistureSMAP;
             const gpm = rt?.precipitationGPM;
             const modis = rt?.vegetationNDVI;
@@ -1387,36 +1388,39 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </p>
                 </div>
 
-                {/* Card 2: NASA POWER / GPM Precip */}
-                <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
-                  <div className="flex items-center justify-between text-xs text-[#527367]">
-                    <span className="flex items-center gap-1">
-                      <Droplets className="w-3.5 h-3.5 text-blue-600" />
-                      Precip (POWER/GPM)
-                    </span>
-                    <span className="text-[10px] font-mono text-emerald-700 font-bold">
-                      {gpm?.value30DayTotal !== null && gpm?.value30DayTotal !== undefined
-                        ? 'LIVE MM'
-                        : gpm?.latestGranuleId
-                        ? 'CMR INDEXED'
-                        : 'NOT SYNCED'}
-                    </span>
-                  </div>
-                  <div className="font-display text-2xl font-bold text-[#073D2B]">
-                    {nasaLoading
-                      ? 'Loading...'
-                      : gpm?.value30DayTotal !== null && gpm?.value30DayTotal !== undefined
-                      ? `${gpm.value30DayTotal} mm`
-                      : gpm?.latestGranuleId
-                      ? 'Granule Only'
-                      : 'Unavailable'}
-                  </div>
-                  <p className="text-[11px] text-[#2A4D3E]">
-                    {gpm?.value30DayTotal !== null && gpm?.value30DayTotal !== undefined
-                      ? `Observed Window Total (${power?.daysObserved || 30}d)${gpm?.latestGranuleId ? ` • GPM: ${gpm.latestGranuleId.slice(0, 14)}...` : ''}`
-                      : 'Sync NASA POWER for cumulative daily PRECTOTCORR precipitation'}
-                  </p>
-                </div>
+                {/* Card 2: NASA POWER Precipitation (Strict Provenance — Separate from GPM CMR) */}
+                {(() => {
+                  const precipMm = precipPower?.valueTotalMm ?? power?.precipTotalMm ?? null;
+                  const daysObserved = precipPower?.daysObserved || power?.daysObserved || 0;
+                  const winStart = precipPower?.windowStart || power?.windowStart || null;
+                  const winEnd = precipPower?.windowEnd || power?.windowEnd || null;
+                  const hasPrecip = precipMm !== null && precipMm !== undefined;
+                  return (
+                    <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
+                      <div className="flex items-center justify-between text-xs text-[#527367]">
+                        <span className="flex items-center gap-1">
+                          <Droplets className="w-3.5 h-3.5 text-blue-600" />
+                          Precip (NASA POWER)
+                        </span>
+                        <span className="text-[10px] font-mono text-emerald-700 font-bold">
+                          {hasPrecip ? 'LIVE 0.5° MM' : gpm?.latestGranuleId ? 'GPM CMR ONLY' : 'NOT SYNCED'}
+                        </span>
+                      </div>
+                      <div className="font-display text-2xl font-bold text-[#073D2B]">
+                        {nasaLoading ? 'Loading...' : hasPrecip ? `${precipMm} mm` : 'Unavailable'}
+                      </div>
+                      <p className="text-[11px] text-[#2A4D3E] break-words">
+                        {hasPrecip
+                          ? `PRECTOTCORR (${daysObserved}d${winStart && winEnd ? `: ${winStart} to ${winEnd}` : ''})${
+                              gpm?.latestGranuleId ? ' • GPM CMR: metadata only' : ''
+                            }`
+                          : `Sync NASA POWER for daily PRECTOTCORR rainfall${
+                              gpm?.latestGranuleId ? ' • GPM CMR granule indexed (no pixels)' : ''
+                            }`}
+                      </p>
+                    </div>
+                  );
+                })()}
 
                 {/* Card 3: NASA SMAP CMR */}
                 <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">

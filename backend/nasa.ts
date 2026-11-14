@@ -91,6 +91,7 @@ export interface ModisSyncOptions {
   timeoutMs?: number;
   maxRetries?: number;
   baseBackoffMs?: number;
+  totalBudgetMs?: number;
   fetchImpl?: typeof globalThis.fetch;
 }
 
@@ -655,6 +656,7 @@ export async function syncModisForFarm(
           timeoutMs,
           maxRetries: options?.maxRetries,
           baseBackoffMs: options?.baseBackoffMs,
+          totalBudgetMs: options?.totalBudgetMs,
           spatialMethod: geom.spatialMethod,
           fetchImpl: options?.fetchImpl,
         }),
@@ -1037,6 +1039,9 @@ export interface FarmNasaSummary {
   farmId: string;
   hasPowerData: boolean;
   powerRecordCount: number;
+  powerDaysObserved: number;
+  powerWindowStart: string | null;
+  powerWindowEnd: string | null;
   powerLatestObservedAt: string | null;
   powerLastRetrievedAt: string | null;
   meanTempC: number | null;
@@ -1147,6 +1152,9 @@ export async function getFarmNasaObservationsSummary(
       farmId,
       hasPowerData: false,
       powerRecordCount: 0,
+      powerDaysObserved: 0,
+      powerWindowStart: null,
+      powerWindowEnd: null,
       powerLatestObservedAt: null,
       powerLastRetrievedAt: null,
       meanTempC: null,
@@ -1309,13 +1317,19 @@ export async function getFarmNasaObservationsSummary(
   const modisMaskedPixelCount = modisOrnlMaskedRows.length;
   const granuleIndexed = Boolean(cmrGranulesByDataset.modis?.latestGranuleId);
   const latestPersistenceFailed = jobStages?.persistence?.status === 'failed';
+  const latestJobStartedMs = latestModisJob?.created_at ? Date.parse(String(latestModisJob.created_at)) : NaN;
+  const isStaleRunningJob =
+    (latestModisJob?.status === 'running' || latestModisJob?.status === 'pending') &&
+    Number.isFinite(latestJobStartedMs) &&
+    Date.now() - latestJobStartedMs > 120_000;
   const latestJobPixelFailed =
     jobStages?.pixelRetrieval?.status === 'failed' ||
     latestModisJob?.status === 'failed' ||
-    (latestModisJob?.status === 'partial' && Boolean(latestModisJob?.error_message));
+    (latestModisJob?.status === 'partial' && Boolean(latestModisJob?.error_message)) ||
+    isStaleRunningJob;
 
   const pixelRetrievalStatus: FarmNasaSummary['modisStages']['pixelRetrievalStatus'] =
-    latestModisJob?.status === 'running' || latestModisJob?.status === 'pending'
+    (latestModisJob?.status === 'running' || latestModisJob?.status === 'pending') && !isStaleRunningJob
       ? 'pending'
       : latestJobPixelFailed
       ? 'failed'
@@ -1325,15 +1339,27 @@ export async function getFarmNasaObservationsSummary(
       ? 'quality_masked'
       : 'pending';
 
+  const effectiveJobError =
+    latestModisJob?.error_message ||
+    (isStaleRunningJob
+      ? 'Previous MODIS sync did not complete before the server execution timeout window.'
+      : null);
+
   const latestModisFailureExplanation =
     latestJobPixelFailed || latestPersistenceFailed
-      ? summarizeModisFailureReason(latestModisJob?.error_message, latestPersistenceFailed)
+      ? summarizeModisFailureReason(effectiveJobError, latestPersistenceFailed)
       : null;
+
+  const powerWindowStart = timeline.length > 0 ? timeline[0].date : null;
+  const powerWindowEnd = timeline.length > 0 ? timeline[timeline.length - 1].date : null;
 
   const summary: FarmNasaSummary = {
     farmId,
     hasPowerData: timeline.length > 0,
     powerRecordCount: powerRows.length,
+    powerDaysObserved: timeline.length,
+    powerWindowStart,
+    powerWindowEnd,
     powerLatestObservedAt: latestObsAt,
     powerLastRetrievedAt: latestRetrievedAt,
     meanTempC: avg(timeline.map((d) => d.t2m)),
