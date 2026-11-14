@@ -13,7 +13,7 @@ export const loginSchema = z.object({
 
 export const verifyOtpSchema = z.object({
   email: z.string().trim().email('Valid email address is required').max(254),
-  code: z.string().trim().min(4, 'Verification code is required').max(12),
+  code: z.string().trim().regex(/^\d{6}$/, 'Verification code must be exactly 6 numeric digits'),
 });
 
 export const resendOtpSchema = z.object({

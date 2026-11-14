@@ -38,3 +38,13 @@ export function getSupabaseClient(): SupabaseClient | null {
 }
 
 export const supabase = getSupabaseClient();
+
+let testClientOverride: SupabaseClient | null | undefined = undefined;
+
+export function getActiveSupabaseClient(): SupabaseClient | null {
+  return testClientOverride !== undefined ? testClientOverride : supabase;
+}
+
+export function setSupabaseClientForTesting(client: SupabaseClient | null | undefined): void {
+  testClientOverride = client;
+}

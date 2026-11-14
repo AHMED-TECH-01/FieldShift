@@ -3,15 +3,23 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import {
+  authenticateRequestContext,
   AuthenticatedRequest,
+  authorizeNasaFarmAccess,
+  extractRequestToken,
   getAccessibleFarmById,
+  getAuthorizedIngestionJob,
   getSupabaseAdminClient,
   getSupabaseAuthClient,
+  getSupabasePublishableKey,
   getSupabasePublicClient,
+  getSupabaseUrl,
+  getSupabaseUserClient,
+  isSupabaseConfigured,
   listAccessibleFarms,
   mapDbFarmRow,
+  requireAccessibleFarm,
   requireAuth,
-  resolveRequestUser,
 } from './backend/supabase.js';
 import {
   advisorRequestSchema,
@@ -79,6 +87,7 @@ function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) return true;
   if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) return true;
   if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)) return true;
+  if (/^https:\/\/[a-z0-9.-]+\.run\.app$/i.test(origin)) return true;
   const configuredAppUrl = (process.env.APP_URL || process.env.APP_URI || '').trim().replace(/\/$/, '');
   if (configuredAppUrl && origin === configuredAppUrl) return true;
   return false;
@@ -175,7 +184,7 @@ app.get('/api/health', async (_req: Request, res: Response) => {
   const nasaCapabilities = getNasaIntegrationCapabilities();
 
   res.json({
-    status: supabaseReachable ? 'healthy' : 'degraded',
+    status: !envSummary.supabaseConfigured || supabaseReachable ? 'healthy' : 'degraded',
     platform: 'FieldShift Agricultural Intelligence Platform',
     version: '2.7.0',
     runtime: process.env.VERCEL ? 'vercel-serverless' : 'node-express',
@@ -294,9 +303,12 @@ app.post(authRegisterPaths, authRateLimit, async (req: Request, res: Response) =
     return;
   }
 
-  const supaAuth = getSupabaseAuthClient();
+  const supaAuth = isSupabaseConfigured() ? getSupabaseAuthClient() : null;
   if (!supaAuth) {
-    res.status(503).json({ error: 'Authentication service is not configured.' });
+    res.status(503).json({
+      error: 'Supabase authentication service is not configured.',
+      code: 'SUPABASE_UNCONFIGURED',
+    });
     return;
   }
 
@@ -313,7 +325,21 @@ app.post(authRegisterPaths, authRateLimit, async (req: Request, res: Response) =
     });
 
     if (error) {
-      res.status(400).json({ error: error.message });
+      const isDuplicate = /already registered|already exists/i.test(error.message);
+      res.status(isDuplicate ? 409 : 400).json({
+        error: isDuplicate
+          ? 'An account with this email already exists. Please sign in instead.'
+          : error.message,
+        code: isDuplicate ? 'USER_ALREADY_EXISTS' : 'SIGNUP_FAILED',
+      });
+      return;
+    }
+
+    if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      res.status(409).json({
+        error: 'An account with this email already exists. Please sign in instead.',
+        code: 'USER_ALREADY_EXISTS',
+      });
       return;
     }
 
@@ -336,7 +362,7 @@ app.post(authRegisterPaths, authRateLimit, async (req: Request, res: Response) =
     res.status(201).json({
       success: true,
       autoConfirmed: false,
-      message: 'Verification email/code sent to your email address.',
+      message: 'We sent a 6-digit verification code to your email address.',
       email: normalizedEmail,
     });
   } catch (err: any) {
@@ -353,9 +379,12 @@ app.post(authVerifyPaths, authRateLimit, async (req: Request, res: Response) => 
     return;
   }
 
-  const supaAuth = getSupabaseAuthClient();
+  const supaAuth = isSupabaseConfigured() ? getSupabaseAuthClient() : null;
   if (!supaAuth) {
-    res.status(503).json({ error: 'Authentication service is not configured.' });
+    res.status(503).json({
+      error: 'Supabase authentication service is not configured.',
+      code: 'SUPABASE_UNCONFIGURED',
+    });
     return;
   }
 
@@ -379,7 +408,7 @@ app.post(authVerifyPaths, authRateLimit, async (req: Request, res: Response) => 
       user: {
         email: data.user.email || normalizedEmail,
         fullName: String(metaName),
-        verified: true,
+        verified: Boolean(data.user.email_confirmed_at),
       },
       token: data.session.access_token,
     });
@@ -397,9 +426,12 @@ app.post(authResendPaths, authRateLimit, async (req: Request, res: Response) => 
     return;
   }
 
-  const supaAuth = getSupabaseAuthClient();
+  const supaAuth = isSupabaseConfigured() ? getSupabaseAuthClient() : null;
   if (!supaAuth) {
-    res.status(503).json({ error: 'Authentication service is not configured.' });
+    res.status(503).json({
+      error: 'Supabase authentication service is not configured.',
+      code: 'SUPABASE_UNCONFIGURED',
+    });
     return;
   }
 
@@ -409,12 +441,18 @@ app.post(authResendPaths, authRateLimit, async (req: Request, res: Response) => 
       email: parsed.data.email.toLowerCase(),
     });
     if (error) {
-      res.status(400).json({ error: error.message });
+      const isRateLimit =
+        (error as any).status === 429 ||
+        /rate limit|security purposes|only request this after/i.test(error.message);
+      res.status(isRateLimit ? 429 : 400).json({
+        error: error.message,
+        code: isRateLimit ? 'RATE_LIMITED' : 'RESEND_FAILED',
+      });
       return;
     }
     res.json({
       success: true,
-      message: 'A new verification email/code has been dispatched.',
+      message: 'A new 6-digit verification code has been sent to your email address.',
     });
   } catch (err: any) {
     logEvent('Auth', 'RESEND_OTP_EXCEPTION', { message: err?.message });
@@ -435,9 +473,12 @@ app.post(authLoginPaths, authRateLimit, async (req: Request, res: Response) => {
     return;
   }
 
-  const supaAuth = getSupabaseAuthClient();
+  const supaAuth = isSupabaseConfigured() ? getSupabaseAuthClient() : null;
   if (!supaAuth) {
-    res.status(503).json({ error: 'Authentication service is not configured.' });
+    res.status(503).json({
+      error: 'Supabase authentication service is not configured.',
+      code: 'SUPABASE_UNCONFIGURED',
+    });
     return;
   }
 
@@ -449,7 +490,14 @@ app.post(authLoginPaths, authRateLimit, async (req: Request, res: Response) => {
     });
 
     if (error || !data?.session || !data?.user) {
-      res.status(401).json({ error: error?.message || 'Invalid login credentials.' });
+      const msg = error?.message || 'Invalid login credentials.';
+      const isUnconfirmed = /email not confirmed|confirm your email/i.test(msg);
+      res.status(isUnconfirmed ? 403 : 401).json({
+        error: isUnconfirmed
+          ? 'Your email address has not been verified yet. Please enter your 6-digit verification code or request a new code.'
+          : msg,
+        code: isUnconfirmed ? 'EMAIL_NOT_CONFIRMED' : 'INVALID_CREDENTIALS',
+      });
       return;
     }
 
@@ -472,24 +520,55 @@ app.post(authLoginPaths, authRateLimit, async (req: Request, res: Response) => {
 
 const authSessionPaths = ['/api/auth/session', '/api/v1/auth/session', '/auth/session', '/api/auth/me', '/auth/me', '/api/auth/user', '/auth/user'];
 app.get(authSessionPaths, async (req: Request, res: Response) => {
-  const user = await resolveRequestUser(req);
-  if (!user) {
-    res.status(401).json({ error: 'No active valid session.' });
+  if (!isSupabaseConfigured()) {
+    res.status(503).json({
+      error: 'Supabase authentication service is not configured.',
+      code: 'SUPABASE_UNCONFIGURED',
+    });
     return;
   }
+
+  const authCtx = await authenticateRequestContext(req);
+  if (!authCtx.user) {
+    res.status(401).json({
+      error: authCtx.tokenInvalid
+        ? 'Invalid or expired authentication token. Please sign in again.'
+        : 'No active valid session.',
+      code: authCtx.tokenInvalid ? 'AUTH_INVALID_TOKEN' : 'AUTH_REQUIRED',
+    });
+    return;
+  }
+
   res.json({
     success: true,
     user: {
-      id: user.id,
-      email: user.email,
-      fullName: user.fullName,
-      verified: user.verified,
+      id: authCtx.user.id,
+      email: authCtx.user.email,
+      fullName: authCtx.user.fullName,
+      verified: authCtx.user.verified,
     },
   });
 });
 
 const authLogoutPaths = ['/api/auth/logout', '/api/v1/auth/logout', '/auth/logout', '/api/logout', '/logout'];
-app.post(authLogoutPaths, (_req: Request, res: Response) => {
+app.post(authLogoutPaths, async (req: Request, res: Response) => {
+  const token = extractRequestToken(req);
+  const supaUrl = (getSupabaseUrl() || '').replace(/\/$/, '');
+  const pubKey = getSupabasePublishableKey() || '';
+
+  if (token && supaUrl && pubKey) {
+    try {
+      await fetch(`${supaUrl}/auth/v1/logout`, {
+        method: 'POST',
+        headers: {
+          apikey: pubKey,
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    } catch {
+      // Cookie clearing below still completes logout cleanly
+    }
+  }
   res.set('Set-Cookie', clearSessionCookie());
   res.json({ success: true, message: 'Logged out successfully.' });
 });
@@ -502,9 +581,12 @@ app.post(authResetPaths, authRateLimit, async (req: Request, res: Response) => {
     return;
   }
 
-  const supaAuth = getSupabaseAuthClient();
+  const supaAuth = isSupabaseConfigured() ? getSupabaseAuthClient() : null;
   if (!supaAuth) {
-    res.status(503).json({ error: 'Authentication service is not configured.' });
+    res.status(503).json({
+      error: 'Supabase authentication service is not configured.',
+      code: 'SUPABASE_UNCONFIGURED',
+    });
     return;
   }
 
@@ -697,16 +779,9 @@ app.post('/api/farms', requireAuth, async (req: AuthenticatedRequest, res: Respo
 });
 
 app.get('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const farm = await getAccessibleFarmById(req.params.id, req.authUser!);
-    if (!farm) {
-      res.status(404).json({ error: 'Farm not found or access denied.' });
-      return;
-    }
-    res.json({ farm });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to retrieve farm.' });
-  }
+  const farm = await requireAccessibleFarm(res, req.params.id, req.authUser!);
+  if (!farm) return;
+  res.json({ farm });
 });
 
 app.patch('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
@@ -718,14 +793,11 @@ app.patch('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: 
 
   const user = req.authUser!;
   const client = req.supabaseUserClient!;
-  const existing = await getAccessibleFarmById(req.params.id, user);
+  const existing = await requireAccessibleFarm(res, req.params.id, user);
+  if (!existing) return;
 
-  if (!existing) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
   if (existing.isDemo || existing.userId !== user.id) {
-    res.status(403).json({ error: 'Only your own registered farm properties can be edited.' });
+    res.status(403).json({ error: 'Only your own registered farm properties can be edited.', code: 'FARM_ACCESS_DENIED' });
     return;
   }
 
@@ -767,14 +839,14 @@ app.patch('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: 
 app.delete('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const user = req.authUser!;
   const client = req.supabaseUserClient!;
-  const existing = await getAccessibleFarmById(req.params.id, user);
+  const existing = await requireAccessibleFarm(res, req.params.id, user);
+  if (!existing) return;
 
-  if (!existing) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
   if (existing.isDemo || existing.userId !== user.id) {
-    res.status(403).json({ error: 'Baseline demonstration farms and farms owned by other users cannot be deleted.' });
+    res.status(403).json({
+      error: 'Baseline demonstration farms and farms owned by other users cannot be deleted.',
+      code: 'FARM_ACCESS_DENIED',
+    });
     return;
   }
 
@@ -802,11 +874,8 @@ app.get('/api/priorities', requireAuth, async (req: AuthenticatedRequest, res: R
   const user = req.authUser!;
   const client = req.supabaseUserClient!;
 
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const farm = await requireAccessibleFarm(res, farmId, user);
+  if (!farm) return;
 
   const { data, error } = await client
     .from('farmer_priorities')
@@ -859,11 +928,8 @@ app.put('/api/priorities', requireAuth, async (req: AuthenticatedRequest, res: R
 
   const user = req.authUser!;
   const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(farmId.trim(), user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const farm = await requireAccessibleFarm(res, farmId.trim(), user);
+  if (!farm) return;
 
   const p = parsedPrio.data;
   const { error } = await client
@@ -900,40 +966,36 @@ app.put('/api/priorities', requireAuth, async (req: AuthenticatedRequest, res: R
 });
 
 /* ==========================================================================
-   6. NASA DATASET INGESTION & OBSERVATION ROUTES (Protected & Ownership Verified)
+   6. NASA DATASET INGESTION & OBSERVATION ROUTES
+      (Authenticated User Farms OR Explicitly Verified Baseline Demo Farms)
    ========================================================================== */
 
-app.get('/api/datasets/status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/datasets/status', async (req: Request, res: Response) => {
   const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
-  const user = req.authUser!;
-  const client = req.supabaseUserClient!;
-
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const auth = await authorizeNasaFarmAccess(req, res, farmId);
+  if (!auth) return;
 
   const [summary, jobsRes] = await Promise.all([
-    getFarmNasaObservationsSummary(client, farm.id),
-    client
+    getFarmNasaObservationsSummary(auth.readClient, auth.farm.id, auth.cacheScope),
+    auth.readClient
       .from('ingestion_jobs')
       .select('*')
-      .eq('farm_id', farm.id)
+      .eq('farm_id', auth.farm.id)
       .order('created_at', { ascending: false })
       .limit(20),
   ]);
 
   res.json({
-    farmId: farm.id,
-    farmName: farm.name,
-    coordinates: farm.coordinates,
+    farmId: auth.farm.id,
+    farmName: auth.farm.name,
+    accessMode: auth.mode,
+    coordinates: auth.farm.coordinates,
     summary,
     recentJobs: jobsRes.data || [],
   });
 });
 
-app.post('/api/datasets/:dataset/sync', requireAuth, nasaSyncRateLimit, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/datasets/:dataset/sync', nasaSyncRateLimit, async (req: Request, res: Response) => {
   const dataset = req.params.dataset as SupportedSyncDataset;
   if (!SUPPORTED_SYNC_DATASETS.includes(dataset)) {
     res.status(400).json({
@@ -948,34 +1010,47 @@ app.post('/api/datasets/:dataset/sync', requireAuth, nasaSyncRateLimit, async (r
     return;
   }
 
-  const user = req.authUser!;
-  const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(parsed.data.farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const auth = await authorizeNasaFarmAccess(req, res, parsed.data.farmId);
+  if (!auth) return;
 
   try {
     if (dataset === 'nasa-power') {
-      const result = await syncNasaPowerForFarm(client, user.id, farm, {
+      const result = await syncNasaPowerForFarm(auth.writeClient, auth.ownerUserId, auth.farm, {
         startDate: parsed.data.startDate,
         endDate: parsed.data.endDate,
         days: parsed.data.days,
         resolution: parsed.data.resolution,
       });
-      res.json({ success: true, ...result });
+      res.json({ success: true, metadataOnly: false, accessMode: auth.mode, ...result });
       return;
     }
 
     if (dataset === 'modis') {
-      const result = await syncModisForFarm(client, user.id, farm);
-      res.json({ success: true, ...result });
+      const result = await syncModisForFarm(auth.writeClient, auth.ownerUserId, auth.farm);
+      const hasNumeric = Number(result.numericPixelCount || 0) > 0;
+      res.json({
+        success: hasNumeric,
+        metadataOnly: !hasNumeric,
+        accessMode: auth.mode,
+        ...result,
+      });
       return;
     }
 
-    const result = await syncEarthdataCmrForFarm(client, user.id, farm, dataset as SupportedCmrDataset);
-    res.json({ success: true, ...result });
+    const result = await syncEarthdataCmrForFarm(
+      auth.writeClient,
+      auth.ownerUserId,
+      auth.farm,
+      dataset as SupportedCmrDataset
+    );
+    res.json({
+      success: false,
+      discoverySuccess: true,
+      metadataOnly: true,
+      numericObservationsPersisted: false,
+      accessMode: auth.mode,
+      ...result,
+    });
   } catch (err: any) {
     const status = err instanceof NasaUpstreamError ? err.status : 502;
     res.status(status).json({
@@ -985,7 +1060,7 @@ app.post('/api/datasets/:dataset/sync', requireAuth, nasaSyncRateLimit, async (r
   }
 });
 
-app.get('/api/datasets/:dataset/observations', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/datasets/:dataset/observations', async (req: Request, res: Response) => {
   const dataset = req.params.dataset as SupportedSyncDataset;
   if (!SUPPORTED_SYNC_DATASETS.includes(dataset)) {
     res.status(400).json({
@@ -1003,18 +1078,13 @@ app.get('/api/datasets/:dataset/observations', requireAuth, async (req: Authenti
   const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
   const offset = Math.max(0, Number(req.query.offset) || 0);
 
-  const user = req.authUser!;
-  const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const auth = await authorizeNasaFarmAccess(req, res, farmId);
+  if (!auth) return;
 
-  const { data, count, error } = await client
+  const { data, count, error } = await auth.readClient
     .from('nasa_observations')
     .select('*', { count: 'exact' })
-    .eq('farm_id', farm.id)
+    .eq('farm_id', auth.farm.id)
     .eq('dataset_id', dataset)
     .order('observed_at', { ascending: false })
     .range(offset, offset + limit - 1);
@@ -1025,8 +1095,9 @@ app.get('/api/datasets/:dataset/observations', requireAuth, async (req: Authenti
   }
 
   res.json({
-    farmId: farm.id,
+    farmId: auth.farm.id,
     dataset,
+    accessMode: auth.mode,
     totalCount: count || 0,
     limit,
     offset,
@@ -1036,8 +1107,8 @@ app.get('/api/datasets/:dataset/observations', requireAuth, async (req: Authenti
 });
 
 // Unified per-farm NASA observation query endpoint with date & dataset filtering
-app.get('/api/nasa/observations/:farmId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  const farmId = req.params.farmId?.trim();
+app.get('/api/nasa/observations/:farmId', async (req: Request, res: Response) => {
+  const farmId = req.params.farmId?.trim() || '';
   if (!farmId) {
     res.status(400).json({ error: 'farmId path parameter is required.' });
     return;
@@ -1058,18 +1129,13 @@ app.get('/api/nasa/observations/:farmId', requireAuth, async (req: Authenticated
   const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
   const offset = Math.max(0, Number(req.query.offset) || 0);
 
-  const user = req.authUser!;
-  const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const auth = await authorizeNasaFarmAccess(req, res, farmId);
+  if (!auth) return;
 
-  let query = client
+  let query = auth.readClient
     .from('nasa_observations')
     .select('*', { count: 'exact' })
-    .eq('farm_id', farm.id)
+    .eq('farm_id', auth.farm.id)
     .order('observed_at', { ascending: false })
     .range(offset, offset + limit - 1);
 
@@ -1084,10 +1150,11 @@ app.get('/api/nasa/observations/:farmId', requireAuth, async (req: Authenticated
     return;
   }
 
-  const geometry = resolveFarmGeometry({ coordinates: farm.coordinates });
+  const geometry = resolveFarmGeometry({ coordinates: auth.farm.coordinates });
   res.json({
-    farmId: farm.id,
-    farmName: farm.name,
+    farmId: auth.farm.id,
+    farmName: auth.farm.name,
+    accessMode: auth.mode,
     geometry,
     totalCount: count || 0,
     limit,
@@ -1097,8 +1164,8 @@ app.get('/api/nasa/observations/:farmId', requireAuth, async (req: Authenticated
 });
 
 // Unified full-ingestion endpoint across NASA POWER, MODIS ORNL DAAC, SMAP, GPM & ECOSTRESS CMR
-app.post('/api/nasa/ingest/:farmId', requireAuth, nasaSyncRateLimit, async (req: AuthenticatedRequest, res: Response) => {
-  const farmId = req.params.farmId?.trim();
+app.post('/api/nasa/ingest/:farmId', nasaSyncRateLimit, async (req: Request, res: Response) => {
+  const farmId = req.params.farmId?.trim() || '';
   if (!farmId) {
     res.status(400).json({ error: 'farmId is required.' });
     return;
@@ -1110,49 +1177,147 @@ app.post('/api/nasa/ingest/:farmId', requireAuth, nasaSyncRateLimit, async (req:
     return;
   }
 
-  const user = req.authUser!;
-  const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
+  const auth = await authorizeNasaFarmAccess(req, res, farmId);
+  if (!auth) return;
+
+  const geometry = resolveFarmGeometry({ coordinates: auth.farm.coordinates });
+  const { data: parentJobRow } = await auth.writeClient
+    .from('ingestion_jobs')
+    .insert({
+      farm_id: auth.farm.id,
+      user_id: auth.ownerUserId,
+      dataset_id: 'all-nasa',
+      source_code: 'NASA MULTI-MISSION INGEST',
+      status: 'running',
+      metadata: {
+        days: daysRaw,
+        latitude: geometry.latitude,
+        longitude: geometry.longitude,
+        spatialMethod: geometry.spatialMethod,
+        accessMode: auth.mode,
+      },
+    })
+    .select('*')
+    .single();
+
+  const outcomes = await ingestAllAvailableForFarm(auth.writeClient, auth.ownerUserId, auth.farm, {
+    days: daysRaw,
+  });
+  const summary = await getFarmNasaObservationsSummary(auth.readClient, auth.farm.id, auth.cacheScope);
+
+  const outcomeList = Object.entries(outcomes);
+  const powerSaved = outcomes['nasa-power']?.ok ? Number(outcomes['nasa-power']?.recordsSaved || 0) : 0;
+  const modisPixels = Number(outcomes.modis?.numericPixelCount || 0);
+  const numericRecordsSaved = powerSaved + modisPixels;
+  const metadataGranulesFound = ['smap', 'gpm', 'modis', 'ecostress'].reduce(
+    (sum, ds) => sum + Number(outcomes[ds]?.granulesFound || 0),
+    0
+  );
+  const totalSaved = outcomeList.reduce((sum, [, v]) => sum + Number(v?.recordsSaved || 0), 0);
+  const totalReceived = outcomeList.reduce((sum, [, v]) => sum + Number(v?.recordsReceived || 0), 0);
+  const failedDatasets = outcomeList
+    .filter(([, v]) => !v?.ok)
+    .map(([k, v]) => ({ dataset: k, status: v?.status || 'failed', error: v?.error || v?.ornlError || 'Sync failed' }));
+  const jobIds = Object.fromEntries(
+    outcomeList.map(([k, v]) => [k, v?.jobId || null])
+  );
+
+  // Never report successful ingestion when only metadata was discovered and zero numeric observations were persisted
+  if (numericRecordsSaved === 0) {
+    const metadataOnly = metadataGranulesFound > 0;
+    const jobStatus = metadataOnly ? 'partial' : 'failed';
+    const errorMessage = metadataOnly
+      ? 'No numeric NASA observations were retrieved; only Earthdata CMR granule metadata was discovered.'
+      : 'All NASA upstream ingestion requests failed.';
+
+    if (parentJobRow?.id) {
+      await auth.writeClient
+        .from('ingestion_jobs')
+        .update({
+          status: jobStatus,
+          records_received: totalReceived,
+          records_saved: totalSaved,
+          error_message: errorMessage,
+          completed_at: new Date().toISOString(),
+          metadata: {
+            days: daysRaw,
+            numericRecordsSaved,
+            metadataGranulesFound,
+            jobIds,
+            failedDatasets,
+          },
+        })
+        .eq('id', parentJobRow.id);
+    }
+
+    res.status(502).json({
+      success: false,
+      metadataOnly,
+      error: errorMessage,
+      code: metadataOnly ? 'NASA_METADATA_ONLY_NO_OBSERVATIONS' : 'NASA_ALL_INGEST_FAILED',
+      farmId: auth.farm.id,
+      farmName: auth.farm.name,
+      accessMode: auth.mode,
+      jobId: parentJobRow?.id || null,
+      jobStatus,
+      jobIds,
+      numericRecordsSaved: 0,
+      metadataGranulesFound,
+      failedDatasets,
+      outcomes,
+      summary,
+    });
     return;
   }
 
-  const outcomes = await ingestAllAvailableForFarm(client, user.id, farm, { days: daysRaw });
-  const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
+  const jobStatus = failedDatasets.length > 0 ? 'partial' : 'completed';
+  if (parentJobRow?.id) {
+    await auth.writeClient
+      .from('ingestion_jobs')
+      .update({
+        status: jobStatus,
+        records_received: totalReceived,
+        records_saved: totalSaved,
+        error_message: failedDatasets.length > 0 ? failedDatasets.map((d) => `${d.dataset}: ${d.error}`).join('; ') : null,
+        completed_at: new Date().toISOString(),
+        metadata: {
+          days: daysRaw,
+          numericRecordsSaved,
+          metadataGranulesFound,
+          jobIds,
+          failedDatasets,
+        },
+      })
+      .eq('id', parentJobRow.id);
+  }
 
   res.json({
     success: true,
-    farmId: farm.id,
-    farmName: farm.name,
-    geometry: resolveFarmGeometry({ coordinates: farm.coordinates }),
+    metadataOnly: false,
+    farmId: auth.farm.id,
+    farmName: auth.farm.name,
+    accessMode: auth.mode,
+    geometry,
+    jobId: parentJobRow?.id || null,
+    jobStatus,
+    jobIds,
+    numericRecordsSaved,
+    metadataGranulesFound,
+    partialFailures: failedDatasets,
     outcomes,
     summary,
   });
 });
 
-app.get('/api/nasa/ingestion/:jobId', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  const jobId = req.params.jobId?.trim();
-  if (!jobId) {
-    res.status(400).json({ error: 'jobId is required.' });
-    return;
-  }
-  const client = req.supabaseUserClient!;
-  const { data, error } = await client
-    .from('ingestion_jobs')
-    .select('*')
-    .eq('id', jobId)
-    .maybeSingle();
-
-  if (error || !data) {
-    res.status(404).json({ error: 'Ingestion job not found or access denied.' });
-    return;
-  }
-  res.json({ job: data });
+app.get('/api/nasa/ingestion/:jobId', async (req: Request, res: Response) => {
+  const jobId = req.params.jobId?.trim() || '';
+  const job = await getAuthorizedIngestionJob(req, res, jobId);
+  if (!job) return;
+  res.json({ job });
 });
 
 // Provider-specific NASA endpoints (POWER daily/monthly, MODIS live NDVI/EVI/LST, GPM, SMAP, ECOSTRESS)
-app.get('/api/nasa/power', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/nasa/power', async (req: Request, res: Response) => {
   const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
   const resolution = req.query.resolution === 'monthly' ? 'monthly' : 'daily';
   const startDate = typeof req.query.startDate === 'string' ? req.query.startDate.trim() : undefined;
@@ -1168,35 +1333,36 @@ app.get('/api/nasa/power', requireAuth, async (req: AuthenticatedRequest, res: R
     }
   }
 
-  const user = req.authUser!;
-  const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const auth = await authorizeNasaFarmAccess(req, res, farmId);
+  if (!auth) return;
 
   try {
     let syncMeta: any = null;
     if (refresh) {
-      syncMeta = await syncNasaPowerForFarm(client, user.id, farm, { resolution, startDate, endDate, days });
+      syncMeta = await syncNasaPowerForFarm(auth.writeClient, auth.ownerUserId, auth.farm, {
+        resolution,
+        startDate,
+        endDate,
+        days,
+      });
     }
 
-    const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
-    const { data: powerRows } = await client
+    const summary = await getFarmNasaObservationsSummary(auth.readClient, auth.farm.id, auth.cacheScope);
+    const { data: powerRows } = await auth.readClient
       .from('nasa_observations')
       .select('*')
-      .eq('farm_id', farm.id)
+      .eq('farm_id', auth.farm.id)
       .eq('dataset_id', 'nasa-power')
       .eq('product_id', resolution === 'monthly' ? 'NASA_POWER_AG_MONTHLY' : 'NASA_POWER_AG_DAILY')
       .order('observed_at', { ascending: false })
       .limit(200);
 
     res.json({
-      farmId: farm.id,
-      farmName: farm.name,
+      farmId: auth.farm.id,
+      farmName: auth.farm.name,
+      accessMode: auth.mode,
       resolution,
-      geometry: resolveFarmGeometry({ coordinates: farm.coordinates }),
+      geometry: resolveFarmGeometry({ coordinates: auth.farm.coordinates }),
       capability: getNasaIntegrationCapabilities()['nasa-power'],
       syncMeta,
       metrics: {
@@ -1218,31 +1384,26 @@ app.get('/api/nasa/power', requireAuth, async (req: AuthenticatedRequest, res: R
   }
 });
 
-app.get('/api/nasa/:provider(modis|gpm|smap|ecostress)', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/nasa/:provider(modis|gpm|smap|ecostress)', async (req: Request, res: Response) => {
   const provider = req.params.provider as SupportedCmrDataset;
   const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
   const refresh = req.query.refresh === 'true';
 
-  const user = req.authUser!;
-  const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const auth = await authorizeNasaFarmAccess(req, res, farmId);
+  if (!auth) return;
 
   try {
     let syncMeta: any = null;
     if (refresh) {
       syncMeta = provider === 'modis'
-        ? await syncModisForFarm(client, user.id, farm)
-        : await syncEarthdataCmrForFarm(client, user.id, farm, provider);
+        ? await syncModisForFarm(auth.writeClient, auth.ownerUserId, auth.farm)
+        : await syncEarthdataCmrForFarm(auth.writeClient, auth.ownerUserId, auth.farm, provider);
     }
 
-    const { data: rows, error } = await client
+    const { data: rows, error } = await auth.readClient
       .from('nasa_observations')
       .select('*')
-      .eq('farm_id', farm.id)
+      .eq('farm_id', auth.farm.id)
       .eq('dataset_id', provider)
       .order('observed_at', { ascending: false })
       .limit(60);
@@ -1253,19 +1414,21 @@ app.get('/api/nasa/:provider(modis|gpm|smap|ecostress)', requireAuth, async (req
     }
 
     const capabilities = getNasaIntegrationCapabilities();
-    const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
+    const summary = await getFarmNasaObservationsSummary(auth.readClient, auth.farm.id, auth.cacheScope);
 
     res.json({
-      farmId: farm.id,
-      farmName: farm.name,
+      farmId: auth.farm.id,
+      farmName: auth.farm.name,
+      accessMode: auth.mode,
       provider,
-      geometry: resolveFarmGeometry({ coordinates: farm.coordinates }),
+      geometry: resolveFarmGeometry({ coordinates: auth.farm.coordinates }),
       capability: capabilities[provider],
       syncMeta,
       numericSummary:
         provider === 'modis'
           ? {
               hasModisNumericData: summary.hasModisNumericData,
+              hasModisMaskedOnly: summary.hasModisMaskedOnly,
               latestNdvi: summary.latestModisNdvi,
               latestEvi: summary.latestModisEvi,
               latestNdviDate: summary.latestModisNdviDate,
@@ -1273,6 +1436,10 @@ app.get('/api/nasa/:provider(modis|gpm|smap|ecostress)', requireAuth, async (req
               latestTile: summary.latestModisTile,
               latestLstC: summary.latestModisLstC,
               latestLstDate: summary.latestModisLstDate,
+              latestMaskedDate: summary.latestModisMaskedDate,
+              latestMaskedQuality: summary.latestModisMaskedQuality,
+              latestJobStatus: summary.latestModisJobStatus,
+              latestJobError: summary.latestModisJobError,
             }
           : {
               pixelValuesAvailable: false,
@@ -1290,27 +1457,90 @@ app.get('/api/nasa/:provider(modis|gpm|smap|ecostress)', requireAuth, async (req
 });
 
 // Dashboard compatibility observation & climate routes (Real persisted data — NO fake static numbers)
-app.get('/api/nasa/observations', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/nasa/observations', async (req: Request, res: Response) => {
   const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
-  const user = req.authUser!;
-  const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const auth = await authorizeNasaFarmAccess(req, res, farmId);
+  if (!auth) return;
 
-  const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
-  const geometry = resolveFarmGeometry({ coordinates: farm.coordinates });
+  const summary = await getFarmNasaObservationsSummary(auth.readClient, auth.farm.id, auth.cacheScope);
+  const geometry = resolveFarmGeometry({ coordinates: auth.farm.coordinates });
   const smap = summary.cmrGranulesByDataset.smap;
   const gpm = summary.cmrGranulesByDataset.gpm;
   const modis = summary.cmrGranulesByDataset.modis;
   const ecostress = summary.cmrGranulesByDataset.ecostress;
 
+  const vegetationNDVI = summary.hasModisNumericData
+    ? {
+        status: 'synced',
+        currentNDVI: summary.latestModisNdvi,
+        currentEVI: summary.latestModisEvi,
+        lstDayC: summary.latestModisLstC,
+        lstDate: summary.latestModisLstDate,
+        observedAt: summary.latestModisNdviDate,
+        retrievedAt: summary.latestModisRetrievedAt,
+        tile: summary.latestModisTile,
+        qualityStatus: summary.latestModisQuality,
+        spatialResolution: '250 m NDVI/EVI & 1 km LST',
+        latestGranuleId: modis?.latestGranuleId || null,
+        granuleTimestamp: modis?.latestTimeStart || null,
+        sensor: 'MODIS MOD13Q1 (250m) & MOD11A2 (1km) via NASA ORNL DAAC',
+      }
+    : summary.hasModisMaskedOnly
+    ? {
+        status: 'quality_masked',
+        currentNDVI: null,
+        currentEVI: null,
+        lstDayC: summary.latestModisLstC,
+        lstDate: summary.latestModisLstDate,
+        observedAt: summary.latestModisMaskedDate,
+        tile: summary.latestModisTile,
+        qualityStatus: summary.latestModisMaskedQuality,
+        latestGranuleId: modis?.latestGranuleId || null,
+        granuleTimestamp: modis?.latestTimeStart || null,
+        sensor: 'MODIS MOD13Q1 (250m) via NASA ORNL DAAC',
+        notice: `ORNL DAAC composites retrieved (${summary.latestModisMaskedDate}), but pixels were quality-masked (${summary.latestModisMaskedQuality}).`,
+      }
+    : modis?.latestGranuleId
+    ? {
+        status: 'granule_metadata_only',
+        currentNDVI: null,
+        currentEVI: null,
+        lstDayC: null,
+        latestGranuleId: modis.latestGranuleId,
+        granuleTimestamp: modis.latestTimeStart || null,
+        ornlError: summary.latestModisJobError || null,
+        sensor: 'MODIS MOD13Q1 (250m)',
+        notice: summary.latestModisJobError
+          ? `Earthdata CMR granule indexed; ORNL DAAC pixel subset unavailable (${summary.latestModisJobError}).`
+          : 'Earthdata CMR granule indexed. Run Sync MODIS 250m to retrieve ORNL DAAC numeric NDVI pixels.',
+      }
+    : summary.latestModisJobStatus === 'failed'
+    ? {
+        status: 'ingestion_failed',
+        currentNDVI: null,
+        currentEVI: null,
+        lstDayC: null,
+        latestGranuleId: null,
+        error: summary.latestModisJobError || 'MODIS ORNL DAAC upstream request failed.',
+        sensor: 'MODIS MOD13Q1 (250m)',
+        notice: summary.latestModisJobError || 'MODIS ingestion failed during last sync attempt.',
+      }
+    : {
+        status: 'not_synced',
+        currentNDVI: null,
+        currentEVI: null,
+        lstDayC: null,
+        latestGranuleId: null,
+        granuleTimestamp: null,
+        sensor: 'MODIS MOD13Q1 (250m)',
+        notice: 'Click "Sync MODIS & CMR" or "Ingest All NASA Data" to retrieve live ORNL DAAC NDVI, EVI & pixel reliability.',
+      };
+
   res.json({
-    farmId: farm.id,
-    farmName: farm.name,
-    coordinates: farm.coordinates,
+    farmId: auth.farm.id,
+    farmName: auth.farm.name,
+    accessMode: auth.mode,
+    coordinates: auth.farm.coordinates,
     geometry,
     capabilities: getNasaIntegrationCapabilities(),
     catalog: nasaHarmonizedRoadmap,
@@ -1358,32 +1588,7 @@ app.get('/api/nasa/observations', requireAuth, async (req: AuthenticatedRequest,
         sensor: summary.hasPowerData ? 'NASA POWER PRECTOTCORR + GPM CMR' : 'GPM IMERG Late (0.1°)',
         timestamp: summary.powerLastRetrievedAt || gpm?.retrievedAt || null,
       },
-      vegetationNDVI: summary.hasModisNumericData
-        ? {
-            status: 'synced',
-            currentNDVI: summary.latestModisNdvi,
-            currentEVI: summary.latestModisEvi,
-            lstDayC: summary.latestModisLstC,
-            lstDate: summary.latestModisLstDate,
-            observedAt: summary.latestModisNdviDate,
-            retrievedAt: summary.latestModisRetrievedAt,
-            tile: summary.latestModisTile,
-            qualityStatus: summary.latestModisQuality,
-            spatialResolution: '250 m NDVI/EVI & 1 km LST',
-            latestGranuleId: modis?.latestGranuleId || null,
-            granuleTimestamp: modis?.latestTimeStart || null,
-            sensor: 'MODIS MOD13Q1 (250m) & MOD11A2 (1km) via NASA ORNL DAAC',
-          }
-        : {
-            status: modis?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
-            currentNDVI: null,
-            currentEVI: null,
-            lstDayC: null,
-            latestGranuleId: modis?.latestGranuleId || null,
-            granuleTimestamp: modis?.latestTimeStart || null,
-            sensor: 'MODIS MOD13Q1 (250m)',
-            notice: 'Click "Sync MODIS 250m" or "Ingest All NASA Data" to retrieve live ORNL DAAC NDVI, EVI & pixel reliability.',
-          },
+      vegetationNDVI,
       evapotranspirationECOSTRESS: {
         status: ecostress?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
         waterStressIndex: null,
@@ -1396,21 +1601,17 @@ app.get('/api/nasa/observations', requireAuth, async (req: AuthenticatedRequest,
   });
 });
 
-app.get('/api/climate/timeline', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/climate/timeline', async (req: Request, res: Response) => {
   const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
-  const user = req.authUser!;
-  const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const auth = await authorizeNasaFarmAccess(req, res, farmId);
+  if (!auth) return;
 
-  const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
+  const summary = await getFarmNasaObservationsSummary(auth.readClient, auth.farm.id, auth.cacheScope);
 
   res.json({
-    farmId: farm.id,
-    farmName: farm.name,
+    farmId: auth.farm.id,
+    farmName: auth.farm.name,
+    accessMode: auth.mode,
     hasLivePowerData: summary.hasPowerData,
     lastRetrievedAt: summary.powerLastRetrievedAt,
     timeline: summary.dailyTimeline.map((d) => ({
@@ -1432,11 +1633,8 @@ app.get('/api/climate/timeline', requireAuth, async (req: AuthenticatedRequest, 
 app.get('/api/soil/profiles', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
   const user = req.authUser!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const farm = await requireAccessibleFarm(res, farmId, user);
+  if (!farm) return;
 
   res.json({
     farmId: farm.id,
@@ -1462,13 +1660,10 @@ app.get('/api/risk/field-analysis', requireAuth, async (req: AuthenticatedReques
   const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
   const user = req.authUser!;
   const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const farm = await requireAccessibleFarm(res, farmId, user);
+  if (!farm) return;
 
-  const summary = await getFarmNasaObservationsSummary(client, farm.id);
+  const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
   const indicators = [];
 
   if (summary.hasPowerData && summary.maxTempC !== null) {
@@ -1561,13 +1756,10 @@ app.get('/api/analysis/bare-field', requireAuth, async (req: AuthenticatedReques
   const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
   const user = req.authUser!;
   const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const farm = await requireAccessibleFarm(res, farmId, user);
+  if (!farm) return;
 
-  const summary = await getFarmNasaObservationsSummary(client, farm.id);
+  const summary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
   res.json({
     farmId: farm.id,
     farmName: farm.name,
@@ -1580,11 +1772,8 @@ app.get('/api/analysis/bare-field', requireAuth, async (req: AuthenticatedReques
 app.get('/api/analysis/pest-cycles', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
   const user = req.authUser!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const farm = await requireAccessibleFarm(res, farmId, user);
+  if (!farm) return;
 
   res.json({
     farmId: farm.id,
@@ -1635,15 +1824,12 @@ app.post('/api/rotations', requireAuth, async (req: AuthenticatedRequest, res: R
 
   const user = req.authUser!;
   const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(parsed.data.farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const farm = await requireAccessibleFarm(res, parsed.data.farmId, user);
+  if (!farm) return;
 
   const effectivePriorities = parsed.data.priorities || DEFAULT_PRIORITIES;
   const scenario = parsed.data.scenario || null;
-  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id);
+  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
   const evaluation = calculateStrategyEvaluations(farm, effectivePriorities, scenario, nasaSummary);
 
   const { data: scenarioRow, error: scenErr } = await client
@@ -1697,13 +1883,10 @@ app.get('/api/rotations/strategies', requireAuth, async (req: AuthenticatedReque
   const farmId = typeof req.query.farmId === 'string' && req.query.farmId.trim() ? req.query.farmId.trim() : 'farm-1';
   const user = req.authUser!;
   const client = req.supabaseUserClient!;
-  const farm = await getAccessibleFarmById(farmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const farm = await requireAccessibleFarm(res, farmId, user);
+  if (!farm) return;
 
-  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id);
+  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
   const evaluation = calculateStrategyEvaluations(farm, DEFAULT_PRIORITIES, null, nasaSummary);
 
   res.json({
@@ -1741,11 +1924,8 @@ app.post(['/api/rotations/recalculate', '/api/rotations/compare', '/api/rotation
   const user = req.authUser!;
   const client = req.supabaseUserClient!;
 
-  const farm = await getAccessibleFarmById(targetFarmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const farm = await requireAccessibleFarm(res, targetFarmId, user);
+  if (!farm) return;
 
   const parsedPrio = priorities ? parseBody(prioritiesSchema, priorities) : { ok: true as const, data: DEFAULT_PRIORITIES };
   if (!parsedPrio.ok) {
@@ -1763,7 +1943,7 @@ app.post(['/api/rotations/recalculate', '/api/rotations/compare', '/api/rotation
     parsedScen = sRes.data;
   }
 
-  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id);
+  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
   const evaluation = calculateStrategyEvaluations(farm, parsedPrio.data, parsedScen, nasaSummary);
 
   let savedAssessmentId: string | null = null;
@@ -1824,13 +2004,10 @@ app.post(['/api/ai/advisor', '/api/gemini/advisor', '/api/advisor'], requireAuth
   const client = req.supabaseUserClient!;
   const targetFarmId = parsed.data.farmId || 'farm-1';
 
-  const farm = await getAccessibleFarmById(targetFarmId, user);
-  if (!farm) {
-    res.status(404).json({ error: 'Farm not found or access denied.' });
-    return;
-  }
+  const farm = await requireAccessibleFarm(res, targetFarmId, user);
+  if (!farm) return;
 
-  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id);
+  const nasaSummary = await getFarmNasaObservationsSummary(client, farm.id, user.id);
   const result = await runGroundedAdvisor({
     farm,
     prompt: parsed.data.prompt,

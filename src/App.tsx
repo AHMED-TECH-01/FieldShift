@@ -173,6 +173,12 @@ export default function App() {
         setAuthChecked(true);
       });
 
+    const handleAuthExpired = () => {
+      setCurrentUser(null);
+      setAuthChecked(true);
+    };
+    window.addEventListener('fieldshift:auth-expired', handleAuthExpired);
+
     const authSubscription = supabase?.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
         localStorage.removeItem('fieldshift_token');
@@ -182,24 +188,33 @@ export default function App() {
       }
       if (session?.user) {
         const email = session.user.email || '';
-        const metaName = session.user.user_metadata?.full_name;
+        const metaName = session.user.user_metadata?.full_name || session.user.user_metadata?.name;
         const mappedUser: User = {
           email,
           fullName:
             typeof metaName === 'string' && metaName.trim()
               ? metaName.trim()
               : email.split('@')[0] || 'Farmer',
-          verified: !!session.user.email_confirmed_at || true,
+          verified: Boolean(session.user.email_confirmed_at || (session.user as any).confirmed_at),
         };
         localStorage.setItem('fieldshift_token', session.access_token);
         localStorage.setItem('fieldshift_user', JSON.stringify(mappedUser));
         setCurrentUser(mappedUser);
         setAuthChecked(true);
+
+        if (window.location.search.includes('code=') || window.location.hash.includes('access_token=')) {
+          window.history.replaceState({}, '', window.location.pathname || '/dashboard');
+        }
+        if (window.location.pathname === '/auth/sign-in' || window.location.pathname === '/auth/sign-up') {
+          setCurrentPath('/dashboard');
+          window.history.replaceState({}, '', '/dashboard');
+        }
       }
     });
 
     return () => {
       window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('fieldshift:auth-expired', handleAuthExpired);
       authSubscription?.data?.subscription?.unsubscribe();
     };
   }, []);

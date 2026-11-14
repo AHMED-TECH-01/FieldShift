@@ -64,13 +64,16 @@ async function main() {
     assert.equal(methodNotAllowedRes.status, 405);
     record('GET /api/auth/login 405', 'PASS', 'Returned HTTP 405');
 
-    // 3. Unauthenticated route enforcement
+    // 3. Unauthenticated route enforcement (including verified demo farm farm-1)
     const protectedChecks: Array<[string, string, any?]> = [
       ['GET', '/api/profile'],
       ['GET', '/api/farms'],
       ['GET', '/api/rotations'],
       ['GET', '/api/ai/history'],
       ['POST', '/api/datasets/nasa-power/sync', { farmId: 'farm-1' }],
+      ['POST', '/api/nasa/ingest/farm-1', { days: 7 }],
+      ['GET', '/api/nasa/observations/farm-1'],
+      ['POST', '/api/nasa/ingest/farm-private-check', {}],
       ['POST', '/api/ai/advisor', { prompt: 'Test', farmId: 'farm-1' }],
     ];
     for (const [method, path, body] of protectedChecks) {
@@ -190,24 +193,45 @@ async function main() {
     assert.equal(patchFarmRes.status, 200);
     assert.equal(((await patchFarmRes.json()) as any).farm.acreage, 340);
 
-    // Cross-user isolation checks (User B must NEVER read/update/delete User A's farm)
+    // Cross-user isolation checks (User B must NEVER read/update/delete User A's farm -> 403)
     const bGet = await fetch(`${baseUrl}/api/farms/${farmId}`, { headers: authHeadersB });
-    assert.equal(bGet.status, 404);
+    assert.equal(bGet.status, 403);
     const bPatch = await fetch(`${baseUrl}/api/farms/${farmId}`, {
       method: 'PATCH',
       headers: authHeadersB,
       body: JSON.stringify({ acreage: 999 }),
     });
-    assert.equal(bPatch.status, 404);
+    assert.equal(bPatch.status, 403);
     const bDelete = await fetch(`${baseUrl}/api/farms/${farmId}`, { method: 'DELETE', headers: authHeadersB });
-    assert.equal(bDelete.status, 404);
+    assert.equal(bDelete.status, 403);
     const bSync = await fetch(`${baseUrl}/api/datasets/nasa-power/sync`, {
       method: 'POST',
       headers: authHeadersB,
       body: JSON.stringify({ farmId, days: 5 }),
     });
-    assert.equal(bSync.status, 404);
-    record('Farms CRUD & Cross-User RLS', 'PASS', `Created/updated farm ${farmId}; User B blocked (404) on read/edit/delete/sync`);
+    assert.equal(bSync.status, 403);
+
+    const bMissing = await fetch(`${baseUrl}/api/farms/nonexistent-farm-check`, { headers: authHeadersB });
+    assert.equal(bMissing.status, 404);
+    record('Farms CRUD & Cross-User RLS', 'PASS', `Created/updated farm ${farmId}; User B blocked (403) on read/edit/delete/sync and 404 on missing farm`);
+
+    // 6b. Authenticated User A ingestion on Verified Demo Farm (farm-1) scoped via RLS
+    const demoIngestRes = await fetch(`${baseUrl}/api/nasa/ingest/farm-1`, {
+      method: 'POST',
+      headers: authHeadersA,
+      body: JSON.stringify({ days: 7 }),
+    });
+    assert.equal(demoIngestRes.status, 200, 'Authenticated User A ingestion on farm-1 must return 200');
+    const demoIngestJson: any = await demoIngestRes.json();
+    assert.equal(demoIngestJson.accessMode, 'authenticated_demo');
+    assert.ok(demoIngestJson.jobId, 'Parent ingestion jobId must be returned');
+    assert.equal(demoIngestJson.summary.hasPowerData, true);
+
+    const demoObsRes = await fetch(`${baseUrl}/api/nasa/observations/farm-1`, { headers: authHeadersA });
+    assert.equal(demoObsRes.status, 200);
+    const demoObsJson: any = await demoObsRes.json();
+    assert.ok(Array.isArray(demoObsJson.observations) && demoObsJson.observations.length > 0);
+    record('Authenticated Demo Farm NASA Ingest (farm-1)', 'PASS', `User A scoped ingestion persisted ${demoObsJson.observations.length} observations (job ${demoIngestJson.jobId})`);
 
     // 7. Priorities upsert
     const putPrio = await fetch(`${baseUrl}/api/priorities`, {

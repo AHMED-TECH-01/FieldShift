@@ -126,7 +126,7 @@ export function resolvePowerDateRange(options?: { startDate?: string; endDate?: 
 
 export async function fetchNasaPowerSeries(params: {
   farmId: string;
-  userId: string;
+  userId: string | null;
   longitude: number;
   latitude: number;
   resolution?: 'daily' | 'monthly';
@@ -196,7 +196,7 @@ export async function fetchNasaPowerSeries(params: {
       rawRows.push({
         farm_id: params.farmId,
         user_id: params.userId,
-        scope_owner_id: params.userId,
+        scope_owner_id: params.userId || 'public',
         provider: 'NASA Langley Research Center (LaRC)',
         dataset_id: 'nasa-power',
         dataset_name:
@@ -245,7 +245,7 @@ export async function fetchNasaPowerSeries(params: {
 
 export async function fetchModisOrnlData(params: {
   farmId: string;
-  userId: string;
+  userId: string | null;
   longitude: number;
   latitude: number;
   maxComposites?: number;
@@ -257,15 +257,15 @@ export async function fetchModisOrnlData(params: {
     throw new NasaUpstreamError(coord.error || 'Invalid coordinates', 400, 'INVALID_COORDINATES', false);
   }
 
-  const maxComposites = Math.min(8, Math.max(1, params.maxComposites || 4));
+  const maxComposites = Math.min(10, Math.max(1, params.maxComposites || 8));
   const retrievedAt = new Date().toISOString();
   const rows: DbObservationInsertRow[] = [];
 
   // 1. Fetch MOD13Q1 (250m 16-day NDVI, EVI & Pixel Reliability) from open NASA ORNL DAAC Subsets REST API
   const datesUrl = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/dates?latitude=${coord.latitude}&longitude=${coord.longitude}`;
   const datesPayload = await fetchNasaJson<any>(datesUrl, {
-    timeoutMs: 12000,
-    maxRetries: 2,
+    timeoutMs: 8500,
+    maxRetries: 1,
     fetchImpl: params.fetchImpl,
   });
 
@@ -285,9 +285,9 @@ export async function fetchModisOrnlData(params: {
       `&startDate=${encodeURIComponent(startModis)}&endDate=${encodeURIComponent(endModis)}&kmAboveBelow=0&kmLeftRight=0`;
 
     const [ndviRes, eviRes, relRes] = await Promise.all([
-      fetchNasaJson<any>(`${subsetBase}&band=250m_16_days_NDVI`, { timeoutMs: 12000, maxRetries: 2, fetchImpl: params.fetchImpl }),
-      fetchNasaJson<any>(`${subsetBase}&band=250m_16_days_EVI`, { timeoutMs: 12000, maxRetries: 2, fetchImpl: params.fetchImpl }),
-      fetchNasaJson<any>(`${subsetBase}&band=250m_16_days_pixel_reliability`, { timeoutMs: 12000, maxRetries: 2, fetchImpl: params.fetchImpl }),
+      fetchNasaJson<any>(`${subsetBase}&band=250m_16_days_NDVI`, { timeoutMs: 8500, maxRetries: 1, fetchImpl: params.fetchImpl }),
+      fetchNasaJson<any>(`${subsetBase}&band=250m_16_days_EVI`, { timeoutMs: 8500, maxRetries: 1, fetchImpl: params.fetchImpl }),
+      fetchNasaJson<any>(`${subsetBase}&band=250m_16_days_pixel_reliability`, { timeoutMs: 8500, maxRetries: 1, fetchImpl: params.fetchImpl }),
     ]);
 
     cellSizeMeters = typeof ndviRes?.cellsize === 'number' ? Number(ndviRes.cellsize.toFixed(2)) : cellSizeMeters;
@@ -314,7 +314,7 @@ export async function fetchModisOrnlData(params: {
         rows.push({
           farm_id: params.farmId,
           user_id: params.userId,
-          scope_owner_id: params.userId,
+          scope_owner_id: params.userId || 'public',
           provider: 'NASA LP DAAC / ORNL DAAC',
           dataset_id: 'modis',
           dataset_name: 'MODIS/Terra Vegetation Indices 16-Day L3 Global 250m (MOD13Q1)',
@@ -373,7 +373,7 @@ export async function fetchModisOrnlData(params: {
         rows.push({
           farm_id: params.farmId,
           user_id: params.userId,
-          scope_owner_id: params.userId,
+          scope_owner_id: params.userId || 'public',
           provider: 'NASA LP DAAC / ORNL DAAC',
           dataset_id: 'modis',
           dataset_name: 'MODIS/Terra Land Surface Temperature 8-Day L3 Global 1 km (MOD11A2)',
@@ -418,7 +418,7 @@ export async function fetchModisOrnlData(params: {
 
 export async function fetchEarthdataCmrGranules(params: {
   farmId: string;
-  userId: string;
+  userId: string | null;
   longitude: number;
   latitude: number;
   dataset: SupportedCmrDataset;
@@ -471,7 +471,7 @@ export async function fetchEarthdataCmrGranules(params: {
     return {
       farm_id: params.farmId,
       user_id: params.userId,
-      scope_owner_id: params.userId,
+      scope_owner_id: params.userId || 'public',
       provider: cfg.provider,
       dataset_id: params.dataset,
       dataset_name: cfg.datasetName,
