@@ -1,3 +1,4 @@
+import { getModisTimeoutMs } from '../env.js';
 import {
   DbObservationInsertRow,
   deduplicateObservationRows,
@@ -249,23 +250,62 @@ export async function fetchModisOrnlData(params: {
   longitude: number;
   latitude: number;
   maxComposites?: number;
+  startDate?: string;
+  endDate?: string;
+  requestedWindowKey?: string;
+  timeoutMs?: number;
+  maxRetries?: number;
+  baseBackoffMs?: number;
   spatialMethod?: 'point_centroid_approximation' | 'polygon_boundary';
   fetchImpl?: typeof globalThis.fetch;
 }) {
   const coord = validateCoordinates(params.longitude, params.latitude);
   if (!coord.valid) {
-    throw new NasaUpstreamError(coord.error || 'Invalid coordinates', 400, 'INVALID_COORDINATES', false);
+    throw new NasaUpstreamError(coord.error || 'Invalid coordinates', 400, 'INVALID_COORDINATES', false, {
+      category: 'validation',
+    });
   }
 
+  if (params.startDate || params.endDate) {
+    const check = validateDateRange(params.startDate, params.endDate, 730);
+    if (!check.valid) {
+      throw new NasaUpstreamError(check.error || 'Invalid MODIS date range', 400, 'INVALID_DATE_RANGE', false, {
+        category: 'validation',
+      });
+    }
+  }
+
+  const startedAt = Date.now();
+  const timeoutMs =
+    typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) && params.timeoutMs > 0
+      ? Math.floor(params.timeoutMs)
+      : getModisTimeoutMs();
+  const maxRetries = Math.min(2, Math.max(0, params.maxRetries ?? 2));
   const maxComposites = Math.min(10, Math.max(1, params.maxComposites || 8));
+  const spatialMethod = params.spatialMethod || 'point_centroid_approximation';
+  const spatialDisclosure =
+    spatialMethod === 'polygon_boundary'
+      ? 'Derived from surveyed GeoJSON field polygon centroid against 250 m / 1 km MODIS sinusoidal pixel.'
+      : 'Point-centroid coordinate approximation (250 m / 1 km pixel centered on parcel point; not a polygon-wide zonal mean).';
+  const requestedWindowKey =
+    params.requestedWindowKey ||
+    (params.startDate && params.endDate ? `${params.startDate}_${params.endDate}` : `latest_${maxComposites}`);
+
   const retrievedAt = new Date().toISOString();
   const rows: DbObservationInsertRow[] = [];
+
+  // Verified NASA LP DAAC / ORNL DAAC product scaling constants
+  const MOD13Q1_SCALE_FACTOR = 0.0001;
+  const MOD13Q1_FILL_VALUE = -3000;
+  const MOD11A2_SCALE_FACTOR = 0.02;
+  const MOD11A2_FILL_VALUE = 0;
 
   // 1. Fetch MOD13Q1 (250m 16-day NDVI, EVI & Pixel Reliability) from open NASA ORNL DAAC Subsets REST API
   const datesUrl = `https://modis.ornl.gov/rst/api/v1/MOD13Q1/dates?latitude=${coord.latitude}&longitude=${coord.longitude}`;
   const datesPayload = await fetchNasaJson<any>(datesUrl, {
-    timeoutMs: 8500,
-    maxRetries: 1,
+    timeoutMs,
+    maxRetries,
+    baseBackoffMs: params.baseBackoffMs,
     fetchImpl: params.fetchImpl,
   });
 
@@ -275,19 +315,31 @@ export async function fetchModisOrnlData(params: {
 
   let latestTile: string | null = null;
   let cellSizeMeters: number | null = 231.66;
+  let subsetUrls: string[] = [];
 
-  if (availableDates.length > 0) {
-    const windowDates = availableDates.slice(-maxComposites);
-    const startModis = windowDates[0].modis_date;
-    const endModis = windowDates[windowDates.length - 1].modis_date;
+  const selectedDates =
+    params.startDate && params.endDate
+      ? availableDates
+          .filter((d) => d.calendar_date >= params.startDate! && d.calendar_date <= params.endDate!)
+          .slice(-maxComposites)
+      : availableDates.slice(-maxComposites);
+
+  if (selectedDates.length > 0) {
+    const startModis = selectedDates[0].modis_date;
+    const endModis = selectedDates[selectedDates.length - 1].modis_date;
     const subsetBase =
       `https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?latitude=${coord.latitude}&longitude=${coord.longitude}` +
       `&startDate=${encodeURIComponent(startModis)}&endDate=${encodeURIComponent(endModis)}&kmAboveBelow=0&kmLeftRight=0`;
 
+    const ndviUrl = `${subsetBase}&band=250m_16_days_NDVI`;
+    const eviUrl = `${subsetBase}&band=250m_16_days_EVI`;
+    const relUrl = `${subsetBase}&band=250m_16_days_pixel_reliability`;
+    subsetUrls = [ndviUrl, eviUrl, relUrl];
+
     const [ndviRes, eviRes, relRes] = await Promise.all([
-      fetchNasaJson<any>(`${subsetBase}&band=250m_16_days_NDVI`, { timeoutMs: 8500, maxRetries: 1, fetchImpl: params.fetchImpl }),
-      fetchNasaJson<any>(`${subsetBase}&band=250m_16_days_EVI`, { timeoutMs: 8500, maxRetries: 1, fetchImpl: params.fetchImpl }),
-      fetchNasaJson<any>(`${subsetBase}&band=250m_16_days_pixel_reliability`, { timeoutMs: 8500, maxRetries: 1, fetchImpl: params.fetchImpl }),
+      fetchNasaJson<any>(ndviUrl, { timeoutMs, maxRetries, baseBackoffMs: params.baseBackoffMs, fetchImpl: params.fetchImpl }),
+      fetchNasaJson<any>(eviUrl, { timeoutMs, maxRetries, baseBackoffMs: params.baseBackoffMs, fetchImpl: params.fetchImpl }),
+      fetchNasaJson<any>(relUrl, { timeoutMs, maxRetries, baseBackoffMs: params.baseBackoffMs, fetchImpl: params.fetchImpl }),
     ]);
 
     cellSizeMeters = typeof ndviRes?.cellsize === 'number' ? Number(ndviRes.cellsize.toFixed(2)) : cellSizeMeters;
@@ -309,7 +361,7 @@ export async function fetchModisOrnlData(params: {
         if (!latestTile && item.tile) latestTile = String(item.tile);
         const relCode = reliabilityByDate.get(item.calendar_date);
         const rawVal = Array.isArray(item.data) ? item.data[0] : undefined;
-        const norm = normalizeModisScaledIndex(rawVal, relCode, -3000, 0.0001);
+        const norm = normalizeModisScaledIndex(rawVal, relCode, MOD13Q1_FILL_VALUE, MOD13Q1_SCALE_FACTOR);
 
         rows.push({
           farm_id: params.farmId,
@@ -340,9 +392,12 @@ export async function fetchModisOrnlData(params: {
             tile: item.tile || null,
             procDate: item.proc_date || null,
             pixelReliabilityCode: relCode ?? null,
+            scaleFactor: MOD13Q1_SCALE_FACTOR,
+            fillValue: MOD13Q1_FILL_VALUE,
+            requestedWindowKey,
             qualityStatus: norm.qualityStatus,
-            spatialMethod: params.spatialMethod || 'point_centroid_approximation',
-            uncertainty: '250 m composite may blend adjacent crop fields; cloud-contaminated pixels are excluded.',
+            spatialMethod,
+            uncertainty: `${spatialDisclosure} Adjacent field edges may blend; cloud/snow/fill pixels are masked.`,
           },
         });
       }
@@ -353,23 +408,33 @@ export async function fetchModisOrnlData(params: {
   try {
     const lstDatesUrl = `https://modis.ornl.gov/rst/api/v1/MOD11A2/dates?latitude=${coord.latitude}&longitude=${coord.longitude}`;
     const lstDatesPayload = await fetchNasaJson<any>(lstDatesUrl, {
-      timeoutMs: 10000,
-      maxRetries: 1,
+      timeoutMs,
+      maxRetries: Math.min(1, maxRetries),
+      baseBackoffMs: params.baseBackoffMs,
       fetchImpl: params.fetchImpl,
     });
     const lstDates: Array<{ modis_date: string; calendar_date: string }> = Array.isArray(lstDatesPayload?.dates)
       ? lstDatesPayload.dates
       : [];
-    if (lstDates.length > 0) {
-      const win = lstDates.slice(-3);
+    const selectedLstDates =
+      params.startDate && params.endDate
+        ? lstDates.filter((d) => d.calendar_date >= params.startDate! && d.calendar_date <= params.endDate!).slice(-3)
+        : lstDates.slice(-3);
+
+    if (selectedLstDates.length > 0) {
       const lstUrl =
         `https://modis.ornl.gov/rst/api/v1/MOD11A2/subset?latitude=${coord.latitude}&longitude=${coord.longitude}` +
-        `&startDate=${encodeURIComponent(win[0].modis_date)}&endDate=${encodeURIComponent(win[win.length - 1].modis_date)}&band=LST_Day_1km&kmAboveBelow=0&kmLeftRight=0`;
-      const lstRes = await fetchNasaJson<any>(lstUrl, { timeoutMs: 10000, maxRetries: 1, fetchImpl: params.fetchImpl });
+        `&startDate=${encodeURIComponent(selectedLstDates[0].modis_date)}&endDate=${encodeURIComponent(selectedLstDates[selectedLstDates.length - 1].modis_date)}&band=LST_Day_1km&kmAboveBelow=0&kmLeftRight=0`;
+      const lstRes = await fetchNasaJson<any>(lstUrl, {
+        timeoutMs,
+        maxRetries: Math.min(1, maxRetries),
+        baseBackoffMs: params.baseBackoffMs,
+        fetchImpl: params.fetchImpl,
+      });
       for (const item of Array.isArray(lstRes?.subset) ? lstRes.subset : []) {
         if (!item?.calendar_date) continue;
         const rawVal = Array.isArray(item.data) ? item.data[0] : undefined;
-        const norm = normalizeModisLstCelsius(rawVal, 0, 0.02);
+        const norm = normalizeModisLstCelsius(rawVal, MOD11A2_FILL_VALUE, MOD11A2_SCALE_FACTOR);
         rows.push({
           farm_id: params.farmId,
           user_id: params.userId,
@@ -397,9 +462,12 @@ export async function fetchModisOrnlData(params: {
             bandLabel: 'MOD11A2 Daytime Land Surface Temperature',
             modisDate: item.modis_date,
             tile: item.tile || null,
+            scaleFactor: MOD11A2_SCALE_FACTOR,
+            fillValue: MOD11A2_FILL_VALUE,
+            requestedWindowKey,
             qualityStatus: norm.qualityStatus,
-            spatialMethod: params.spatialMethod || 'point_centroid_approximation',
-            uncertainty: '1 km thermal skin temperature; reflects composite clear-sky surface temperature, not 2m air temp.',
+            spatialMethod,
+            uncertainty: `1 km thermal skin temperature (${spatialMethod === 'polygon_boundary' ? 'polygon centroid' : 'point-centroid approximation'}); reflects composite clear-sky surface temperature, not 2m air temp.`,
           },
         });
       }
@@ -408,11 +476,32 @@ export async function fetchModisOrnlData(params: {
     // MOD11A2 optional enrichment must never fail MOD13Q1 ingestion
   }
 
+  const dedupedRows = deduplicateObservationRows(rows);
+  const validNumericCount = dedupedRows.filter((r) => !r.is_missing && r.value !== null).length;
+  const maskedCount = dedupedRows.length - validNumericCount;
+  const latestObservedDate = dedupedRows
+    .filter((r) => !r.is_missing && r.value !== null)
+    .map((r) => r.observed_at.slice(0, 10))
+    .sort()
+    .pop() || null;
+
   return {
     retrievedAt,
     latestTile,
     cellSizeMeters,
-    rows: deduplicateObservationRows(rows),
+    rows: dedupedRows,
+    validNumericCount,
+    maskedCount,
+    latestObservedDate,
+    requestedWindowKey,
+    diagnostics: {
+      timeoutMs,
+      maxRetries,
+      durationMs: Date.now() - startedAt,
+      datesUrl,
+      subsetUrls,
+      compositesFound: selectedDates.length,
+    },
   };
 }
 

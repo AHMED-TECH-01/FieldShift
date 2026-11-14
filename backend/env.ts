@@ -20,12 +20,18 @@ export interface ServerEnvironmentSummary {
   supabaseAdminConfigured: boolean;
   geminiConfigured: boolean;
   geminiTimeoutMs: number;
+  modisTimeoutMs: number;
   nasaApiKeyConfigured: boolean;
   earthdataTokenConfigured: boolean;
   appUrl: string | null;
 }
 
 let bootLogged = false;
+
+export function getModisTimeoutMs(): number {
+  const raw = Number(process.env.MODIS_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 25000;
+}
 
 export function getServerEnv(): ServerEnvironmentSummary {
   const supabaseUrl = (
@@ -57,6 +63,7 @@ export function getServerEnv(): ServerEnvironmentSummary {
     supabaseAdminConfigured: Boolean(supabaseUrl && supabaseSecretKey),
     geminiConfigured: Boolean(geminiKey),
     geminiTimeoutMs: Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 25000,
+    modisTimeoutMs: getModisTimeoutMs(),
     nasaApiKeyConfigured: Boolean(nasaApiKey),
     earthdataTokenConfigured: Boolean(earthdataToken),
     appUrl: (process.env.APP_URL || process.env.APP_URI || '').trim() || null,
@@ -70,6 +77,7 @@ export function getServerEnv(): ServerEnvironmentSummary {
       supabaseConfigured: summary.supabaseConfigured,
       supabaseAdminConfigured: summary.supabaseAdminConfigured,
       geminiConfigured: summary.geminiConfigured,
+      modisTimeoutMs: summary.modisTimeoutMs,
       nasaApiKeyConfigured: summary.nasaApiKeyConfigured,
       earthdataTokenConfigured: summary.earthdataTokenConfigured,
     });

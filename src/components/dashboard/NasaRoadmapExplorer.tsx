@@ -76,6 +76,7 @@ export const NasaRoadmapExplorer: React.FC<NasaRoadmapExplorerProps> = ({ farmId
     try {
       const res = await apiClient.post(`/api/datasets/${datasetId}/sync`, { farmId, days: 30 });
       const isPartialModis = datasetId === 'modis' && res.status === 'partial';
+      const isCachedModis = datasetId === 'modis' && Boolean(res.cacheHit);
       setSyncNotice({
         type: isPartialModis ? 'error' : 'success',
         message:
@@ -83,8 +84,10 @@ export const NasaRoadmapExplorer: React.FC<NasaRoadmapExplorerProps> = ({ farmId
             ? `Synced ${res.recordsSaved || 0} live NASA POWER agroclimatology records (${res.startDate} to ${res.endDate}).`
             : datasetId === 'modis'
             ? isPartialModis
-              ? `Indexed ${res.granulesFound ?? 0} Earthdata CMR granules for MODIS, but ORNL DAAC numeric pixel API failed (${res.ornlError || 'upstream timeout'}).`
-              : `Synced ${res.numericPixelCount || 0} live MODIS 250m/1km pixel records + ${res.granulesFound ?? 0} Earthdata CMR granules.`
+              ? `Granule Indexed (${res.granulesFound ?? 0} CMR), Pixel Retrieval Failed: ${res.failureExplanation || res.ornlError || 'ORNL DAAC timeout'}`
+              : isCachedModis
+              ? `Reused ${res.numericPixelCount || 0} persisted MODIS pixels from Supabase cache (last obs: ${res.lastSuccessfulObservedAt || 'latest'}).`
+              : `Pixels Extracted & Persisted: ${res.numericPixelCount || 0} live MODIS 250m/1km pixel records + ${res.granulesFound ?? 0} CMR granules.`
             : `Discovered ${res.granulesFound ?? res.recordsSaved ?? 0} Earthdata CMR granule metadata entries for ${datasetId.toUpperCase()} (metadata-only; numeric raster extraction unavailable).`,
       });
       await fetchSyncStatus();

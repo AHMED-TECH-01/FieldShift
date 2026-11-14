@@ -151,15 +151,15 @@ export const InteractiveFarmMap: React.FC<InteractiveFarmMapProps> = ({ farm }) 
                   <div>
                     <span className="text-xs font-mono uppercase text-white/80 block">Active Ingestion</span>
                     <span className="font-display text-base sm:text-lg font-bold text-white">
-                      {farm.soilType} Zone
+                      {farm.soilType ? `${farm.soilType} Zone` : `${farm.currentCrop} Parcel`}
                     </span>
                   </div>
                 )}
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-white/70 z-10 border-t border-white/20 pt-2">
-                <span>SLOPE: 2.3% CONTOUR</span>
-                <span>DRAINAGE: {farm.drainage.toUpperCase()}</span>
+                <span>AREA: {farm.area} {farm.areaUnit.toUpperCase()}</span>
+                <span>DRAINAGE: {(farm.drainage || 'NOT PROVIDED').toUpperCase()}</span>
               </div>
             </div>
 

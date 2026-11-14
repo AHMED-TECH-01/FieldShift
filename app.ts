@@ -56,6 +56,7 @@ import {
   mpsToMph,
   nasaHarmonizedRoadmap,
   resolveFarmGeometry,
+  summarizeModisFailureReason,
   SUPPORTED_SYNC_DATASETS,
   SupportedSyncDataset,
   syncEarthdataCmrForFarm,
@@ -220,6 +221,7 @@ app.get('/api/nasa/health', async (_req: Request, res: Response) => {
       geminiConfigured: envSummary.geminiConfigured,
       nasaApiKeyConfigured: envSummary.nasaApiKeyConfigured,
       earthdataTokenConfigured: envSummary.earthdataTokenConfigured,
+      modisTimeoutMs: envSummary.modisTimeoutMs,
     },
     missingOptionalCredentials: missingCredentials,
     timestamp: new Date().toISOString(),
@@ -723,52 +725,228 @@ app.get('/api/farms', requireAuth, async (req: AuthenticatedRequest, res: Respon
   }
 });
 
+const ACRES_PER_HECTARE = 2.47105381;
+
+function resolveNormalizedCoordinates(input: {
+  latitude?: number;
+  longitude?: number;
+  coordinates?: [number, number];
+}): { latitude: number; longitude: number; coordinates: [number, number] } | null {
+  if (typeof input.latitude === 'number' && typeof input.longitude === 'number') {
+    return {
+      latitude: input.latitude,
+      longitude: input.longitude,
+      coordinates: [input.longitude, input.latitude],
+    };
+  }
+  if (Array.isArray(input.coordinates) && input.coordinates.length === 2) {
+    return {
+      latitude: input.coordinates[1],
+      longitude: input.coordinates[0],
+      coordinates: [input.coordinates[0], input.coordinates[1]],
+    };
+  }
+  return null;
+}
+
+function resolveNormalizedArea(input: {
+  area?: number;
+  acreage?: number;
+  areaUnit?: 'acres' | 'hectares';
+}): { area: number; areaUnit: 'acres' | 'hectares'; acreage: number } | null {
+  const unit: 'acres' | 'hectares' = input.areaUnit === 'hectares' ? 'hectares' : 'acres';
+  const rawValue = typeof input.area === 'number' ? input.area : input.acreage;
+  if (typeof rawValue !== 'number' || !Number.isFinite(rawValue) || rawValue <= 0) {
+    return null;
+  }
+  const acreage =
+    unit === 'hectares' ? Number((rawValue * ACRES_PER_HECTARE).toFixed(2)) : Number(rawValue.toFixed(2));
+  return { area: rawValue, areaUnit: unit, acreage };
+}
+
+function composeLocationString(input: {
+  city?: string;
+  state?: string;
+  country?: string;
+  location?: string;
+}): string {
+  const parts = [input.city, input.state, input.country]
+    .map((v) => (typeof v === 'string' ? v.trim() : ''))
+    .filter(Boolean);
+  if (parts.length > 0) return parts.join(', ');
+  return (input.location || '').trim();
+}
+
 app.post('/api/farms', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const parsed = parseBody(createFarmSchema, req.body);
   if (!parsed.ok) {
-    res.status(400).json({ error: parsed.error });
+    res.status(400).json({ error: parsed.error, code: 'VALIDATION_ERROR' });
+    return;
+  }
+
+  const payload = parsed.data;
+  const resolvedCoords = resolveNormalizedCoordinates(payload);
+  const resolvedArea = resolveNormalizedArea(payload);
+  const resolvedLocation = composeLocationString(payload);
+  const primaryCrop = (payload.currentCrop || payload.primaryCrop || '').trim();
+
+  if (!resolvedCoords || !resolvedArea || !resolvedLocation || !primaryCrop) {
+    res.status(400).json({
+      error: 'Valid farm name, geographic location, coordinates, positive area, and primary crop are required.',
+      code: 'VALIDATION_ERROR',
+    });
     return;
   }
 
   const user = req.authUser!;
   const client = req.supabaseUserClient!;
+  const normalizedName = payload.name.trim().toLowerCase();
+
+  // Prevent duplicate private farm names for the same owner
+  const { data: existingOwned } = await client
+    .from('farms')
+    .select('id, name')
+    .eq('user_id', user.id)
+    .eq('is_demo', false);
+
+  if (
+    Array.isArray(existingOwned) &&
+    existingOwned.some((row: any) => String(row.name || '').trim().toLowerCase() === normalizedName)
+  ) {
+    res.status(409).json({
+      error: `You already have a registered farm named "${payload.name.trim()}". Please choose a distinct name.`,
+      code: 'FARM_DUPLICATE_NAME',
+    });
+    return;
+  }
+
   const farmId = `farm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const nowIso = new Date().toISOString();
-  const payload = parsed.data;
+
+  const rotationHistory =
+    payload.rotationHistory && payload.rotationHistory.length > 0
+      ? payload.rotationHistory
+      : payload.previousCrop
+      ? [payload.previousCrop, primaryCrop]
+      : [primaryCrop];
+
+  const insertRow: Record<string, unknown> = {
+    id: farmId,
+    // Always enforce authenticated owner and non-demo status server-side
+    user_id: user.id,
+    is_demo: false,
+    name: payload.name.trim(),
+    description: payload.description ?? null,
+    location: resolvedLocation,
+    country: payload.country?.trim() || null,
+    state: payload.state?.trim() || null,
+    city: payload.city?.trim() || null,
+    latitude: resolvedCoords.latitude,
+    longitude: resolvedCoords.longitude,
+    coordinates: resolvedCoords.coordinates,
+    area: resolvedArea.area,
+    area_unit: resolvedArea.areaUnit,
+    acreage: resolvedArea.acreage,
+    farm_type: payload.farmType ?? null,
+    operating_status: payload.operatingStatus ?? 'Active',
+    current_crop: primaryCrop,
+    previous_crop: payload.previousCrop ?? null,
+    irrigation_type: payload.irrigationType ?? null,
+    planting_season: payload.plantingSeason || 'Spring 2026',
+    harvest_season: payload.harvestSeason ?? null,
+    rotation_history: rotationHistory,
+    soil_type: payload.soilType ?? null,
+    soil_ph: payload.soilPH ?? null,
+    organic_matter: payload.organicMatter ?? null,
+    nitrogen: payload.nitrogen ?? null,
+    phosphorus: payload.phosphorus ?? null,
+    potassium: payload.potassium ?? null,
+    drainage: payload.drainage ?? null,
+    last_soil_test: payload.lastSoilTest ?? null,
+    farmer_priorities: payload.farmerPriorities ?? null,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
 
   const { data, error } = await client
     .from('farms')
-    .insert({
-      id: farmId,
-      user_id: user.id,
-      is_demo: false,
-      name: payload.name,
-      location: payload.location,
-      coordinates: payload.coordinates || [-93.62, 42.03],
-      acreage: payload.acreage,
-      current_crop: payload.currentCrop,
-      planting_season: payload.plantingSeason,
-      rotation_history: payload.rotationHistory && payload.rotationHistory.length > 0
-        ? payload.rotationHistory
-        : [payload.currentCrop],
-      soil_type: payload.soilType,
-      soil_ph: payload.soilPH,
-      organic_matter: payload.organicMatter,
-      nitrogen: payload.nitrogen,
-      phosphorus: payload.phosphorus,
-      potassium: payload.potassium,
-      drainage: payload.drainage,
-      last_soil_test: payload.lastSoilTest || nowIso.slice(0, 10),
-      created_at: nowIso,
-      updated_at: nowIso,
-    })
+    .insert(insertRow)
     .select('*')
     .single();
 
   if (error || !data) {
-    logEvent('Farms', 'FARM_CREATE_ERROR', { error: error?.message });
+    logEvent('Farms', 'FARM_CREATE_ERROR', { code: error?.code, error: error?.message });
+    if (error?.code === '23505') {
+      res.status(409).json({
+        error: `A farm property named "${payload.name.trim()}" already exists in your account.`,
+        code: 'FARM_DUPLICATE_NAME',
+      });
+      return;
+    }
+    if (error?.code === '42703' || error?.code === 'PGRST204') {
+      res.status(500).json({
+        error: 'Database schema is missing Add Farm columns. Please apply supabase/migrations/004_farm_management_expansion.sql.',
+        code: 'MIGRATION_REQUIRED',
+      });
+      return;
+    }
     res.status(500).json({ error: 'Failed to persist farm property.' });
     return;
+  }
+
+  // Persist initial farmer priorities in normalized table if provided during farm creation
+  if (payload.farmerPriorities) {
+    const p = payload.farmerPriorities;
+    const { error: prioErr } = await client.from('farmer_priorities').upsert(
+      {
+        farm_id: farmId,
+        user_id: user.id,
+        owner_scope: user.id,
+        water_conservation: p.waterConservation,
+        profitability: p.profitability,
+        forage_value: p.forageValue,
+        nitrogen_fixing: p.nitrogenFixing,
+        soil_organic_matter: p.soilOrganicMatter,
+        erosion_reduction: p.erosionReduction,
+        soil_infiltration: p.soilInfiltration,
+        market_suitability: p.marketSuitability,
+        drought_resilience: p.droughtResilience,
+        crop_diversity: p.cropDiversity,
+        equipment_compatibility: p.equipmentCompatibility,
+        planting_harvest_constraints: p.plantingHarvestConstraints,
+        updated_at: nowIso,
+      },
+      { onConflict: 'farm_id,owner_scope' }
+    );
+    if (prioErr) {
+      logEvent('Farms', 'INITIAL_PRIORITIES_WARN', { farmId, error: prioErr.message });
+    }
+  }
+
+  // Record optional farmer-entered soil sample with explicit provenance when provided
+  const hasSoilSample =
+    payload.soilType ||
+    (payload.soilPH !== undefined && payload.soilPH !== null) ||
+    (payload.organicMatter !== undefined && payload.organicMatter !== null);
+  if (hasSoilSample) {
+    try {
+      await client.from('soil_records').insert({
+        farm_id: farmId,
+        user_id: user.id,
+        sample_date: payload.lastSoilTest || nowIso.slice(0, 10),
+        soil_type: payload.soilType || 'Farmer-specified soil',
+        soil_ph: payload.soilPH ?? null,
+        organic_matter: payload.organicMatter ?? null,
+        nitrogen: payload.nitrogen ?? null,
+        phosphorus: payload.phosphorus ?? null,
+        potassium: payload.potassium ?? null,
+        drainage_class: payload.drainage ?? null,
+        source_type: 'farmer_estimate',
+        notes: 'Entered during farm registration (farmer-provided baseline, not NASA satellite measurement).',
+      });
+    } catch {
+      // Non-fatal if optional soil_records log insert fails
+    }
   }
 
   res.status(201).json({
@@ -787,7 +965,7 @@ app.get('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: Re
 app.patch('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   const parsed = parseBody(updateFarmSchema, req.body);
   if (!parsed.ok) {
-    res.status(400).json({ error: parsed.error });
+    res.status(400).json({ error: parsed.error, code: 'VALIDATION_ERROR' });
     return;
   }
 
@@ -797,18 +975,85 @@ app.patch('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: 
   if (!existing) return;
 
   if (existing.isDemo || existing.userId !== user.id) {
-    res.status(403).json({ error: 'Only your own registered farm properties can be edited.', code: 'FARM_ACCESS_DENIED' });
+    res.status(403).json({
+      error: 'Baseline demonstration farms and farms owned by other users cannot be edited.',
+      code: 'FARM_ACCESS_DENIED',
+    });
     return;
   }
 
   const p = parsed.data;
-  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  if (p.name !== undefined) updates.name = p.name;
-  if (p.location !== undefined) updates.location = p.location;
-  if (p.coordinates !== undefined) updates.coordinates = p.coordinates;
-  if (p.acreage !== undefined) updates.acreage = p.acreage;
-  if (p.currentCrop !== undefined) updates.current_crop = p.currentCrop;
-  if (p.plantingSeason !== undefined) updates.planting_season = p.plantingSeason;
+  const nowIso = new Date().toISOString();
+  const updates: Record<string, unknown> = { updated_at: nowIso };
+
+  if (p.name !== undefined) {
+    const normalizedName = p.name.trim().toLowerCase();
+    const { data: existingOwned } = await client
+      .from('farms')
+      .select('id, name')
+      .eq('user_id', user.id)
+      .eq('is_demo', false);
+    if (
+      Array.isArray(existingOwned) &&
+      existingOwned.some(
+        (row: any) => row.id !== existing.id && String(row.name || '').trim().toLowerCase() === normalizedName
+      )
+    ) {
+      res.status(409).json({
+        error: `You already have another farm named "${p.name.trim()}".`,
+        code: 'FARM_DUPLICATE_NAME',
+      });
+      return;
+    }
+    updates.name = p.name.trim();
+  }
+
+  if (p.description !== undefined) updates.description = p.description;
+  if (p.country !== undefined) updates.country = p.country;
+  if (p.state !== undefined) updates.state = p.state;
+  if (p.city !== undefined) updates.city = p.city;
+
+  if (p.country !== undefined || p.state !== undefined || p.city !== undefined || p.location !== undefined) {
+    const composed = composeLocationString({
+      city: p.city ?? existing.city ?? undefined,
+      state: p.state ?? existing.state ?? undefined,
+      country: p.country ?? existing.country ?? undefined,
+      location: p.location ?? existing.location,
+    });
+    if (composed) updates.location = composed;
+  }
+
+  if (p.latitude !== undefined && p.longitude !== undefined) {
+    updates.latitude = p.latitude;
+    updates.longitude = p.longitude;
+    updates.coordinates = [p.longitude, p.latitude];
+  } else if (p.coordinates !== undefined) {
+    updates.longitude = p.coordinates[0];
+    updates.latitude = p.coordinates[1];
+    updates.coordinates = p.coordinates;
+  }
+
+  if (p.area !== undefined || p.acreage !== undefined || p.areaUnit !== undefined) {
+    const unit: 'acres' | 'hectares' =
+      p.areaUnit === 'hectares' ? 'hectares' : p.areaUnit === 'acres' ? 'acres' : existing.areaUnit || 'acres';
+    const rawVal = typeof p.area === 'number' ? p.area : typeof p.acreage === 'number' ? p.acreage : existing.area;
+    if (typeof rawVal === 'number' && Number.isFinite(rawVal) && rawVal > 0) {
+      updates.area = rawVal;
+      updates.area_unit = unit;
+      updates.acreage =
+        unit === 'hectares' ? Number((rawVal * ACRES_PER_HECTARE).toFixed(2)) : Number(rawVal.toFixed(2));
+    }
+  }
+
+  if (p.farmType !== undefined) updates.farm_type = p.farmType;
+  if (p.operatingStatus !== undefined) updates.operating_status = p.operatingStatus;
+  if (p.currentCrop !== undefined || p.primaryCrop !== undefined) {
+    updates.current_crop = (p.currentCrop || p.primaryCrop || existing.currentCrop).trim();
+  }
+  if (p.previousCrop !== undefined) updates.previous_crop = p.previousCrop;
+  if (p.irrigationType !== undefined) updates.irrigation_type = p.irrigationType;
+  if (p.plantingSeason !== undefined) updates.planting_season = p.plantingSeason || 'Spring 2026';
+  if (p.harvestSeason !== undefined) updates.harvest_season = p.harvestSeason;
   if (p.rotationHistory !== undefined) updates.rotation_history = p.rotationHistory;
   if (p.soilType !== undefined) updates.soil_type = p.soilType;
   if (p.soilPH !== undefined) updates.soil_ph = p.soilPH;
@@ -818,19 +1063,44 @@ app.patch('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res: 
   if (p.potassium !== undefined) updates.potassium = p.potassium;
   if (p.drainage !== undefined) updates.drainage = p.drainage;
   if (p.lastSoilTest !== undefined) updates.last_soil_test = p.lastSoilTest;
+  if (p.farmerPriorities !== undefined) updates.farmer_priorities = p.farmerPriorities;
 
   const { data, error } = await client
     .from('farms')
     .update(updates)
-    .eq('id', req.params.id)
+    .eq('id', existing.id)
     .eq('user_id', user.id)
     .select('*')
     .single();
 
   if (error || !data) {
-    logEvent('Farms', 'FARM_UPDATE_ERROR', { farmId: req.params.id, error: error?.message });
+    logEvent('Farms', 'FARM_UPDATE_ERROR', { farmId: existing.id, error: error?.message });
     res.status(500).json({ error: 'Failed to update farm property.' });
     return;
+  }
+
+  if (p.farmerPriorities) {
+    await client.from('farmer_priorities').upsert(
+      {
+        farm_id: existing.id,
+        user_id: user.id,
+        owner_scope: user.id,
+        water_conservation: p.farmerPriorities.waterConservation,
+        profitability: p.farmerPriorities.profitability,
+        forage_value: p.farmerPriorities.forageValue,
+        nitrogen_fixing: p.farmerPriorities.nitrogenFixing,
+        soil_organic_matter: p.farmerPriorities.soilOrganicMatter,
+        erosion_reduction: p.farmerPriorities.erosionReduction,
+        soil_infiltration: p.farmerPriorities.soilInfiltration,
+        market_suitability: p.farmerPriorities.marketSuitability,
+        drought_resilience: p.farmerPriorities.droughtResilience,
+        crop_diversity: p.farmerPriorities.cropDiversity,
+        equipment_compatibility: p.farmerPriorities.equipmentCompatibility,
+        planting_harvest_constraints: p.farmerPriorities.plantingHarvestConstraints,
+        updated_at: nowIso,
+      },
+      { onConflict: 'farm_id,owner_scope' }
+    );
   }
 
   res.json({ success: true, farm: mapDbFarmRow(data) });
@@ -850,19 +1120,34 @@ app.delete('/api/farms/:id', requireAuth, async (req: AuthenticatedRequest, res:
     return;
   }
 
+  // Delete relies on PostgreSQL ON DELETE CASCADE for farmer_priorities, soil_records,
+  // nasa_observations, ingestion_jobs, rotation_scenarios, crop_rotation_assessments, and ai_advisor_messages.
   const { error } = await client
     .from('farms')
     .delete()
-    .eq('id', req.params.id)
+    .eq('id', existing.id)
     .eq('user_id', user.id);
 
   if (error) {
-    logEvent('Farms', 'FARM_DELETE_ERROR', { farmId: req.params.id, error: error.message });
+    logEvent('Farms', 'FARM_DELETE_ERROR', { farmId: existing.id, error: error.message });
     res.status(500).json({ error: 'Failed to delete farm property.' });
     return;
   }
 
-  res.json({ success: true, id: req.params.id });
+  res.json({
+    success: true,
+    id: existing.id,
+    deletedFarmName: existing.name,
+    cascadeScope: [
+      'farmer_priorities',
+      'soil_records',
+      'nasa_observations',
+      'ingestion_jobs',
+      'rotation_scenarios',
+      'crop_rotation_assessments',
+      'ai_advisor_messages',
+    ],
+  });
 });
 
 /* ==========================================================================
@@ -1026,12 +1311,22 @@ app.post('/api/datasets/:dataset/sync', nasaSyncRateLimit, async (req: Request, 
     }
 
     if (dataset === 'modis') {
-      const result = await syncModisForFarm(auth.writeClient, auth.ownerUserId, auth.farm);
+      const result = await syncModisForFarm(auth.writeClient, auth.ownerUserId, auth.farm, {
+        startDate: parsed.data.startDate,
+        endDate: parsed.data.endDate,
+        maxComposites: parsed.data.maxComposites,
+        forceRefresh: parsed.data.force,
+      });
       const hasNumeric = Number(result.numericPixelCount || 0) > 0;
+      const failureExplanation = summarizeModisFailureReason(
+        result.ornlError,
+        result.stages?.persistence?.status === 'failed'
+      );
       res.json({
         success: hasNumeric,
         metadataOnly: !hasNumeric,
         accessMode: auth.mode,
+        failureExplanation,
         ...result,
       });
       return;
@@ -1053,9 +1348,14 @@ app.post('/api/datasets/:dataset/sync', nasaSyncRateLimit, async (req: Request, 
     });
   } catch (err: any) {
     const status = err instanceof NasaUpstreamError ? err.status : 502;
+    const isPersistenceErr = err instanceof NasaUpstreamError && err.code === 'SUPABASE_PERSISTENCE_FAILED';
     res.status(status).json({
       error: `Failed to sync ${dataset}: ${err?.message || 'Upstream NASA request failed'}`,
       code: err instanceof NasaUpstreamError ? err.code : 'NASA_SYNC_FAILED',
+      persisted: false,
+      stages: err instanceof NasaUpstreamError ? err.details?.stages || null : null,
+      failureExplanation:
+        dataset === 'modis' ? summarizeModisFailureReason(err?.message, isPersistenceErr) : undefined,
     });
   }
 });
@@ -1395,8 +1695,15 @@ app.get('/api/nasa/:provider(modis|gpm|smap|ecostress)', async (req: Request, re
   try {
     let syncMeta: any = null;
     if (refresh) {
+      const startDate = typeof req.query.startDate === 'string' ? req.query.startDate.trim() : undefined;
+      const endDate = typeof req.query.endDate === 'string' ? req.query.endDate.trim() : undefined;
+      const forceRefresh = req.query.force === 'true' ? true : undefined;
       syncMeta = provider === 'modis'
-        ? await syncModisForFarm(auth.writeClient, auth.ownerUserId, auth.farm)
+        ? await syncModisForFarm(auth.writeClient, auth.ownerUserId, auth.farm, {
+            startDate,
+            endDate,
+            forceRefresh,
+          })
         : await syncEarthdataCmrForFarm(auth.writeClient, auth.ownerUserId, auth.farm, provider);
     }
 
@@ -1429,6 +1736,8 @@ app.get('/api/nasa/:provider(modis|gpm|smap|ecostress)', async (req: Request, re
           ? {
               hasModisNumericData: summary.hasModisNumericData,
               hasModisMaskedOnly: summary.hasModisMaskedOnly,
+              validPixelCount: summary.modisValidPixelCount,
+              maskedPixelCount: summary.modisMaskedPixelCount,
               latestNdvi: summary.latestModisNdvi,
               latestEvi: summary.latestModisEvi,
               latestNdviDate: summary.latestModisNdviDate,
@@ -1440,6 +1749,9 @@ app.get('/api/nasa/:provider(modis|gpm|smap|ecostress)', async (req: Request, re
               latestMaskedQuality: summary.latestModisMaskedQuality,
               latestJobStatus: summary.latestModisJobStatus,
               latestJobError: summary.latestModisJobError,
+              failureExplanation: summary.latestModisFailureExplanation,
+              persisted: summary.modisStages.persisted,
+              stages: summary.modisStages,
             }
           : {
               pixelValuesAvailable: false,
@@ -1452,7 +1764,12 @@ app.get('/api/nasa/:provider(modis|gpm|smap|ecostress)', async (req: Request, re
     });
   } catch (err: any) {
     const status = err instanceof NasaUpstreamError ? err.status : 502;
-    res.status(status).json({ error: err?.message || `Failed to query ${provider.toUpperCase()} data.` });
+    res.status(status).json({
+      error: err?.message || `Failed to query ${provider.toUpperCase()} data.`,
+      code: err instanceof NasaUpstreamError ? err.code : 'NASA_PROVIDER_ERROR',
+      persisted: false,
+      stages: err instanceof NasaUpstreamError ? err.details?.stages || null : null,
+    });
   }
 });
 
@@ -1469,72 +1786,98 @@ app.get('/api/nasa/observations', async (req: Request, res: Response) => {
   const modis = summary.cmrGranulesByDataset.modis;
   const ecostress = summary.cmrGranulesByDataset.ecostress;
 
-  const vegetationNDVI = summary.hasModisNumericData
-    ? {
-        status: 'synced',
-        currentNDVI: summary.latestModisNdvi,
-        currentEVI: summary.latestModisEvi,
-        lstDayC: summary.latestModisLstC,
-        lstDate: summary.latestModisLstDate,
-        observedAt: summary.latestModisNdviDate,
-        retrievedAt: summary.latestModisRetrievedAt,
-        tile: summary.latestModisTile,
-        qualityStatus: summary.latestModisQuality,
-        spatialResolution: '250 m NDVI/EVI & 1 km LST',
-        latestGranuleId: modis?.latestGranuleId || null,
-        granuleTimestamp: modis?.latestTimeStart || null,
-        sensor: 'MODIS MOD13Q1 (250m) & MOD11A2 (1km) via NASA ORNL DAAC',
-      }
-    : summary.hasModisMaskedOnly
-    ? {
-        status: 'quality_masked',
-        currentNDVI: null,
-        currentEVI: null,
-        lstDayC: summary.latestModisLstC,
-        lstDate: summary.latestModisLstDate,
-        observedAt: summary.latestModisMaskedDate,
-        tile: summary.latestModisTile,
-        qualityStatus: summary.latestModisMaskedQuality,
-        latestGranuleId: modis?.latestGranuleId || null,
-        granuleTimestamp: modis?.latestTimeStart || null,
-        sensor: 'MODIS MOD13Q1 (250m) via NASA ORNL DAAC',
-        notice: `ORNL DAAC composites retrieved (${summary.latestModisMaskedDate}), but pixels were quality-masked (${summary.latestModisMaskedQuality}).`,
-      }
-    : modis?.latestGranuleId
-    ? {
-        status: 'granule_metadata_only',
-        currentNDVI: null,
-        currentEVI: null,
-        lstDayC: null,
-        latestGranuleId: modis.latestGranuleId,
-        granuleTimestamp: modis.latestTimeStart || null,
-        ornlError: summary.latestModisJobError || null,
-        sensor: 'MODIS MOD13Q1 (250m)',
-        notice: summary.latestModisJobError
-          ? `Earthdata CMR granule indexed; ORNL DAAC pixel subset unavailable (${summary.latestModisJobError}).`
-          : 'Earthdata CMR granule indexed. Run Sync MODIS 250m to retrieve ORNL DAAC numeric NDVI pixels.',
-      }
-    : summary.latestModisJobStatus === 'failed'
-    ? {
-        status: 'ingestion_failed',
-        currentNDVI: null,
-        currentEVI: null,
-        lstDayC: null,
-        latestGranuleId: null,
-        error: summary.latestModisJobError || 'MODIS ORNL DAAC upstream request failed.',
-        sensor: 'MODIS MOD13Q1 (250m)',
-        notice: summary.latestModisJobError || 'MODIS ingestion failed during last sync attempt.',
-      }
-    : {
-        status: 'not_synced',
-        currentNDVI: null,
-        currentEVI: null,
-        lstDayC: null,
-        latestGranuleId: null,
-        granuleTimestamp: null,
-        sensor: 'MODIS MOD13Q1 (250m)',
-        notice: 'Click "Sync MODIS & CMR" or "Ingest All NASA Data" to retrieve live ORNL DAAC NDVI, EVI & pixel reliability.',
-      };
+  const modisStageFields = {
+    granuleIndexed: summary.modisStages.granuleIndexed,
+    pixelRetrievalStatus: summary.modisStages.pixelRetrievalStatus,
+    pixelsExtracted: summary.modisStages.pixelsExtracted,
+    persisted: summary.modisStages.persisted,
+    validPixelCount: summary.modisValidPixelCount,
+    maskedPixelCount: summary.modisMaskedPixelCount,
+    lastSuccessfulObservationDate: summary.modisStages.lastSuccessfulObservationDate,
+    failureExplanation: summary.latestModisFailureExplanation,
+    spatialMethod: geometry.spatialMethod,
+    spatialDisclosure: geometry.disclosure,
+    stages: summary.modisStages,
+  };
+
+  const vegetationNDVI =
+    summary.hasModisNumericData && summary.modisStages.persisted
+      ? {
+          status: 'synced',
+          currentNDVI: summary.latestModisNdvi,
+          currentEVI: summary.latestModisEvi,
+          lstDayC: summary.latestModisLstC,
+          lstDate: summary.latestModisLstDate,
+          observedAt: summary.latestModisNdviDate,
+          retrievedAt: summary.latestModisRetrievedAt,
+          tile: summary.latestModisTile,
+          qualityStatus: summary.latestModisQuality,
+          spatialResolution: '250 m NDVI/EVI & 1 km LST',
+          latestGranuleId: modis?.latestGranuleId || null,
+          granuleTimestamp: modis?.latestTimeStart || null,
+          sensor: 'MODIS MOD13Q1 (250m) & MOD11A2 (1km) via NASA ORNL DAAC',
+          ...modisStageFields,
+        }
+      : summary.hasModisMaskedOnly
+      ? {
+          status: 'quality_masked',
+          currentNDVI: null,
+          currentEVI: null,
+          lstDayC: summary.latestModisLstC,
+          lstDate: summary.latestModisLstDate,
+          observedAt: summary.latestModisMaskedDate,
+          tile: summary.latestModisTile,
+          qualityStatus: summary.latestModisMaskedQuality,
+          latestGranuleId: modis?.latestGranuleId || null,
+          granuleTimestamp: modis?.latestTimeStart || null,
+          sensor: 'MODIS MOD13Q1 (250m) via NASA ORNL DAAC',
+          notice: `ORNL DAAC composites retrieved (${summary.latestModisMaskedDate}), but pixels were quality-masked (${summary.latestModisMaskedQuality}).`,
+          ...modisStageFields,
+        }
+      : modis?.latestGranuleId
+      ? {
+          status: 'granule_metadata_only',
+          currentNDVI: null,
+          currentEVI: null,
+          lstDayC: null,
+          latestGranuleId: modis.latestGranuleId,
+          granuleTimestamp: modis.latestTimeStart || null,
+          ornlError: summary.latestModisJobError || null,
+          sensor: 'MODIS MOD13Q1 (250m)',
+          notice: summary.latestModisFailureExplanation
+            ? `Earthdata CMR granule indexed; ${summary.latestModisFailureExplanation}`
+            : 'Earthdata CMR granule indexed. Run Sync MODIS 250m to retrieve ORNL DAAC numeric NDVI pixels.',
+          ...modisStageFields,
+          persisted: false,
+        }
+      : summary.latestModisJobStatus === 'failed' || summary.modisStages.latestPersistenceFailed
+      ? {
+          status: 'ingestion_failed',
+          currentNDVI: null,
+          currentEVI: null,
+          lstDayC: null,
+          latestGranuleId: null,
+          error: summary.latestModisJobError || 'MODIS ORNL DAAC upstream request failed.',
+          sensor: 'MODIS MOD13Q1 (250m)',
+          notice:
+            summary.latestModisFailureExplanation ||
+            summary.latestModisJobError ||
+            'MODIS ingestion failed during last sync attempt.',
+          ...modisStageFields,
+          persisted: false,
+        }
+      : {
+          status: 'not_synced',
+          currentNDVI: null,
+          currentEVI: null,
+          lstDayC: null,
+          latestGranuleId: null,
+          granuleTimestamp: null,
+          sensor: 'MODIS MOD13Q1 (250m)',
+          notice: 'Click "Sync MODIS & CMR" or "Ingest All NASA Data" to retrieve live ORNL DAAC NDVI, EVI & pixel reliability.',
+          ...modisStageFields,
+          persisted: false,
+        };
 
   res.json({
     farmId: auth.farm.id,
@@ -1636,19 +1979,32 @@ app.get('/api/soil/profiles', requireAuth, async (req: AuthenticatedRequest, res
   const farm = await requireAccessibleFarm(res, farmId, user);
   if (!farm) return;
 
+  const hasPH = farm.soilPH !== null && farm.soilPH !== undefined;
+  const hasOM = farm.organicMatter !== null && farm.organicMatter !== undefined;
+
   res.json({
     farmId: farm.id,
     soilType: farm.soilType,
     metrics: {
-      pH: { value: farm.soilPH, targetRange: '6.2 - 6.8', status: farm.soilPH >= 6.0 && farm.soilPH <= 7.2 ? 'Optimal' : 'Needs Calibration' },
-      organicMatter: { value: farm.organicMatter, unit: '%', status: farm.organicMatter >= 3.5 ? 'Good' : 'Building' },
+      pH: {
+        value: farm.soilPH,
+        targetRange: '6.2 - 6.8',
+        status: !hasPH ? 'Not Provided' : farm.soilPH! >= 6.0 && farm.soilPH! <= 7.2 ? 'Optimal' : 'Needs Calibration',
+      },
+      organicMatter: {
+        value: farm.organicMatter,
+        unit: '%',
+        status: !hasOM ? 'Not Provided' : farm.organicMatter! >= 3.5 ? 'Good' : 'Building',
+      },
       nitrogen: { value: farm.nitrogen, recommendation: 'Supplement with winter legume green manure if below 20 ppm' },
       phosphorus: { value: farm.phosphorus, recommendation: 'Verify banded P fertility rates with local soil lab' },
       potassium: { value: farm.potassium, recommendation: 'Monitor K removal under high-biomass forage harvests' },
       drainageClass: farm.drainage,
       lastTestDate: farm.lastSoilTest,
     },
-    provenance: 'Farmer-entered & laboratory soil test record (segregated from satellite data)',
+    provenance:
+      farm.soilProvenance ||
+      'No farmer or laboratory soil record entered yet (NASA satellites do not measure soil pH, OM %, or N-P-K).',
     limitations: [
       'Satellite radiometry (SMAP 9km) cannot measure soil pH, phosphorus, potassium, or field-tile drainage.',
       'Periodic laboratory soil cores remain mandatory for nutrient prescription accuracy.',
@@ -1734,13 +2090,26 @@ app.get('/api/risk/field-analysis', requireAuth, async (req: AuthenticatedReques
     });
   }
 
-  indicators.push({
-    name: 'Organic Matter Moisture Buffer',
-    level: farm.organicMatter < 2.5 ? 'HIGH' : farm.organicMatter < 3.5 ? 'MODERATE' : 'LOW',
-    score: farm.organicMatter < 2.5 ? 68 : farm.organicMatter < 3.5 ? 42 : 22,
-    dataSource: `Persisted Farm Soil Record (${farm.soilType})`,
-    observation: `Measured soil organic matter of ${farm.organicMatter}% with ${farm.drainage} hydrology.`,
-  });
+  if (farm.organicMatter !== null && farm.organicMatter !== undefined) {
+    indicators.push({
+      name: 'Organic Matter Moisture Buffer',
+      level: farm.organicMatter < 2.5 ? 'HIGH' : farm.organicMatter < 3.5 ? 'MODERATE' : 'LOW',
+      score: farm.organicMatter < 2.5 ? 68 : farm.organicMatter < 3.5 ? 42 : 22,
+      dataSource: `Farmer Soil Record (${farm.soilType || 'Lab Entry'})`,
+      observation: `Farmer-reported soil organic matter of ${farm.organicMatter}%${
+        farm.drainage ? ` with ${farm.drainage} hydrology` : ''
+      }.`,
+    });
+  } else {
+    indicators.push({
+      name: 'Organic Matter Moisture Buffer',
+      level: 'MODERATE',
+      score: null,
+      dataSource: 'Farmer Soil Record (Not Provided)',
+      observation:
+        'Soil organic matter % was not entered for this farm. Add optional soil lab metrics in Farm Properties to assess moisture buffering.',
+    });
+  }
 
   res.json({
     farmId: farm.id,

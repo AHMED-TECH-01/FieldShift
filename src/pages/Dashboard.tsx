@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import {
   Farm,
+  FarmAreaUnit,
   CropRotationStrategy,
   FieldRiskIndicator,
   User,
@@ -54,7 +55,23 @@ import { ExplainabilityExplorer } from '../components/dashboard/ExplainabilityEx
 import { InteractiveFarmMap } from '../components/dashboard/InteractiveFarmMap';
 import { SupplementalIncomeModal } from '../components/dashboard/SupplementalIncomeModal';
 import { NasaRoadmapExplorer } from '../components/dashboard/NasaRoadmapExplorer';
+import { AddFarmModal } from '../components/dashboard/AddFarmModal';
 import { apiClient } from '../services/apiClient';
+
+const DEFAULT_FARMER_PRIORITIES: FarmerPriorities = {
+  waterConservation: 4,
+  profitability: 4,
+  forageValue: 2,
+  nitrogenFixing: 5,
+  soilOrganicMatter: 5,
+  erosionReduction: 4,
+  soilInfiltration: 4,
+  marketSuitability: 4,
+  droughtResilience: 4,
+  cropDiversity: 3,
+  equipmentCompatibility: 3,
+  plantingHarvestConstraints: 3,
+};
 
 interface DashboardProps {
   currentUser: User;
@@ -78,20 +95,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [recalculating, setRecalculating] = useState<boolean>(false);
 
   // Farmer Priorities state
-  const [priorities, setPriorities] = useState<FarmerPriorities>({
-    waterConservation: 4,
-    profitability: 4,
-    forageValue: 2,
-    nitrogenFixing: 5,
-    soilOrganicMatter: 5,
-    erosionReduction: 4,
-    soilInfiltration: 4,
-    marketSuitability: 4,
-    droughtResilience: 4,
-    cropDiversity: 3,
-    equipmentCompatibility: 3,
-    plantingHarvestConstraints: 3,
-  });
+  const [priorities, setPriorities] = useState<FarmerPriorities>(DEFAULT_FARMER_PRIORITIES);
 
   // What-If Scenario state
   const [activeScenario, setActiveScenario] = useState<WhatIfScenario | null>(null);
@@ -100,11 +104,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [strategies, setStrategies] = useState<CropRotationStrategy[]>([]);
   const [rankingExplanation, setRankingExplanation] = useState<string>('');
 
-  // Supplemental Income Modal state
+  // Supplemental Income Modal & Add Farm Modal state
   const [incomeModalOpen, setIncomeModalOpen] = useState(false);
+  const [addFarmModalOpen, setAddFarmModalOpen] = useState(false);
 
   // Non-blocking status banners
-  const [farmCreateStatus, setFarmCreateStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [farmCreateStatus, setFarmCreateStatus] = useState<{ type: 'success' | 'error'; message: string; farmId?: string } | null>(null);
   const [reportFeedback, setReportFeedback] = useState<string | null>(null);
 
   // Mobile Dashboard Drawer state
@@ -125,27 +130,29 @@ export const Dashboard: React.FC<DashboardProps> = ({
     };
   }, [mobileMenuOpen]);
 
-  // New Farm form state
-  const [newFarmName, setNewFarmName] = useState('');
-  const [newFarmLocation, setNewFarmLocation] = useState('');
-  const [newFarmLat, setNewFarmLat] = useState('');
-  const [newFarmLon, setNewFarmLon] = useState('');
-  const [newFarmAcreage, setNewFarmAcreage] = useState('320');
-  const [newFarmCrop, setNewFarmCrop] = useState('Corn (Maize)');
-  const [newFarmSoilType, setNewFarmSoilType] = useState('Silt Loam');
-  const [newFarmPH, setNewFarmPH] = useState('6.5');
-  const [newFarmOM, setNewFarmOM] = useState('3.4');
-
   // Edit / Delete Farm state
   const [editingFarmId, setEditingFarmId] = useState<string | null>(null);
   const [editFarmName, setEditFarmName] = useState('');
-  const [editFarmLocation, setEditFarmLocation] = useState('');
-  const [editFarmAcreage, setEditFarmAcreage] = useState('');
+  const [editFarmCountry, setEditFarmCountry] = useState('');
+  const [editFarmState, setEditFarmState] = useState('');
+  const [editFarmCity, setEditFarmCity] = useState('');
+  const [editFarmLat, setEditFarmLat] = useState('');
+  const [editFarmLon, setEditFarmLon] = useState('');
+  const [editFarmArea, setEditFarmArea] = useState('');
+  const [editFarmAreaUnit, setEditFarmAreaUnit] = useState<FarmAreaUnit>('acres');
+  const [editFarmType, setEditFarmType] = useState('');
+  const [editFarmStatus, setEditFarmStatus] = useState('');
   const [editFarmCrop, setEditFarmCrop] = useState('');
+  const [editFarmPrevCrop, setEditFarmPrevCrop] = useState('');
+  const [editFarmIrrigation, setEditFarmIrrigation] = useState('');
+  const [editFarmSoilType, setEditFarmSoilType] = useState('');
   const [editFarmPH, setEditFarmPH] = useState('');
   const [editFarmOM, setEditFarmOM] = useState('');
+  const [editFarmDrainage, setEditFarmDrainage] = useState('');
   const [savingEditFarm, setSavingEditFarm] = useState(false);
-  const [confirmDeleteFarmId, setConfirmDeleteFarmId] = useState<string | null>(null);
+  const [deleteTargetFarm, setDeleteTargetFarm] = useState<Farm | null>(null);
+  const [deletingFarm, setDeletingFarm] = useState(false);
+  const analyticsSeqRef = React.useRef(0);
 
   // Real NASA Telemetry, Climate, Soil, Risk & Rotation Assessments state
   const [nasaTelemetry, setNasaTelemetry] = useState<any>(null);
@@ -214,6 +221,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const fetchNasaAndFarmAnalytics = async (farmId: string) => {
+    const seq = ++analyticsSeqRef.current;
     setNasaLoading(true);
     setNasaError(null);
     try {
@@ -225,6 +233,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         apiClient.get('/api/rotations', { params: { farmId } }),
         apiClient.get('/api/ai/history', { params: { farmId } }),
       ]);
+
+      if (seq !== analyticsSeqRef.current) return;
 
       if (obsRes.status === 'fulfilled') {
         setNasaTelemetry(obsRes.value);
@@ -242,24 +252,35 @@ export const Dashboard: React.FC<DashboardProps> = ({
       if (climateRes.status === 'fulfilled') {
         setClimateTimeline(Array.isArray(climateRes.value.timeline) ? climateRes.value.timeline : []);
         setClimateProvenance(climateRes.value.provenance || '');
+      } else {
+        setClimateTimeline([]);
+        setClimateProvenance('');
       }
 
       if (soilRes.status === 'fulfilled') {
         setSoilProfileData(soilRes.value);
+      } else {
+        setSoilProfileData(null);
       }
 
       if (riskRes.status === 'fulfilled') {
         setFieldRiskIndicators(Array.isArray(riskRes.value.indicators) ? riskRes.value.indicators : []);
         setFieldRiskNotice(riskRes.value.scientificNotice || '');
+      } else {
+        setFieldRiskIndicators([]);
+        setFieldRiskNotice('');
       }
 
       if (rotRes.status === 'fulfilled') {
         setSavedRotations(Array.isArray(rotRes.value.rotations) ? rotRes.value.rotations : []);
+      } else {
+        setSavedRotations([]);
       }
 
+      const farmObj = farms.find((f) => f.id === farmId);
       if (aiHistRes.status === 'fulfilled' && Array.isArray(aiHistRes.value.history)) {
         const persisted = [...aiHistRes.value.history].reverse();
-        const turns: typeof aiChatHistory = [buildWelcomeMessage()];
+        const turns: typeof aiChatHistory = [buildWelcomeMessage(farmObj?.name)];
         for (const item of persisted) {
           if (item.prompt) turns.push({ sender: 'user', text: item.prompt });
           if (item.reply) {
@@ -275,27 +296,43 @@ export const Dashboard: React.FC<DashboardProps> = ({
           }
         }
         setAiChatHistory(turns);
+      } else {
+        setAiChatHistory([buildWelcomeMessage(farmObj?.name)]);
       }
     } finally {
-      setNasaLoading(false);
+      if (seq === analyticsSeqRef.current) {
+        setNasaLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     let active = true;
+    const farmForSwitch = farms.find((f) => f.id === selectedFarmId);
+
+    // Clear stale analytics from previously selected farm immediately
+    setNasaTelemetry(null);
+    setClimateTimeline([]);
+    setSoilProfileData(null);
+    setFieldRiskIndicators([]);
+    setSavedRotations([]);
+    setNasaError(null);
+    setSyncBanner(null);
+
     const syncFarmPrioritiesAndStrategies = async () => {
-      let effectivePriorities = priorities;
+      let effectivePriorities: FarmerPriorities =
+        farmForSwitch?.farmerPriorities || DEFAULT_FARMER_PRIORITIES;
       try {
         const res = await apiClient.get('/api/priorities', { params: { farmId: selectedFarmId } });
         if (active && res?.priorities) {
           effectivePriorities = res.priorities;
-          setPriorities(res.priorities);
         }
       } catch {
-        // Keep current priorities if endpoint unavailable
+        // Fall back to farm-saved or default priorities
       }
       if (active) {
-        recalculateStrategies(effectivePriorities, activeScenario);
+        setPriorities(effectivePriorities);
+        recalculateStrategies(effectivePriorities, activeScenario, selectedFarmId);
         fetchNasaAndFarmAnalytics(selectedFarmId);
       }
     };
@@ -385,8 +422,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
           totalGranules += Number(r.value.granulesFound ?? r.value.recordsSaved ?? 0);
           if (ds === 'modis') {
             modisNumeric = Number(r.value.numericPixelCount || 0);
-            if (r.value.status === 'partial' && r.value.ornlError) {
-              warnings.push(`MODIS pixels unavailable (${r.value.ornlError}); CMR granules indexed`);
+            if (r.value.status === 'partial' && (r.value.failureExplanation || r.value.ornlError)) {
+              warnings.push(
+                `MODIS CMR granule indexed; pixel retrieval failed (${r.value.failureExplanation || r.value.ornlError})`
+              );
             }
           }
         } else {
@@ -424,11 +463,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  const handleIngestAllNasa = async () => {
+  const handleIngestAllNasa = async (farmIdOverride?: string) => {
+    const targetFarmId = farmIdOverride || selectedFarmId;
     setSyncingAll(true);
     setSyncBanner(null);
     try {
-      const res = await apiClient.post(`/api/nasa/ingest/${selectedFarmId}`, { days: 30 });
+      const res = await apiClient.post(`/api/nasa/ingest/${targetFarmId}`, { days: 30 });
       const outcomes = res?.outcomes || {};
       const powerOutcome = outcomes['nasa-power'];
       const modisOutcome = outcomes.modis;
@@ -462,26 +502,31 @@ export const Dashboard: React.FC<DashboardProps> = ({
             ? `Ingested ${powerSaved} NASA POWER rows, ${modisPixels} MODIS pixel rows, and ${cmrTotal} CMR granules. Note: ${partialIssues.join('; ')}.`
             : `Ingested ${powerSaved} NASA POWER rows, ${modisPixels} MODIS 250m/1km pixel records, and ${cmrTotal} Earthdata CMR granule metadata entries.`,
       });
-      await fetchNasaAndFarmAnalytics(selectedFarmId);
-      await recalculateStrategies(priorities, activeScenario);
+      await fetchNasaAndFarmAnalytics(targetFarmId);
+      await recalculateStrategies(priorities, activeScenario, targetFarmId);
     } catch (err: any) {
       setSyncBanner({
         type: 'error',
         message: formatNasaSyncError(err, 'Failed to ingest NASA Earth observation feeds.'),
       });
       if (err?.data?.metadataOnly) {
-        await fetchNasaAndFarmAnalytics(selectedFarmId);
+        await fetchNasaAndFarmAnalytics(targetFarmId);
       }
     } finally {
       setSyncingAll(false);
     }
   };
 
-  const recalculateStrategies = async (prio: FarmerPriorities, scen?: WhatIfScenario | null) => {
+  const recalculateStrategies = async (
+    prio: FarmerPriorities,
+    scen?: WhatIfScenario | null,
+    farmIdOverride?: string
+  ) => {
+    const targetFarmId = farmIdOverride || selectedFarmId;
     setRecalculating(true);
     try {
       const data = await apiClient.post('/api/rotations/recalculate', {
-        farmId: selectedFarmId,
+        farmId: targetFarmId,
         priorities: prio,
         scenario: scen || null,
       });
@@ -526,89 +571,107 @@ export const Dashboard: React.FC<DashboardProps> = ({
     apiClient.put('/api/priorities', { farmId: selectedFarmId, priorities: newPrio }).catch((err) => {
       console.warn('Could not persist priorities:', err);
     });
-    recalculateStrategies(newPrio, activeScenario);
+    recalculateStrategies(newPrio, activeScenario, selectedFarmId);
   };
 
   const handleApplyScenario = (scenario: WhatIfScenario) => {
     setActiveScenario(scenario);
-    recalculateStrategies(priorities, scenario);
+    recalculateStrategies(priorities, scenario, selectedFarmId);
   };
 
   const handleResetScenario = () => {
     setActiveScenario(null);
-    recalculateStrategies(priorities, null);
+    recalculateStrategies(priorities, null, selectedFarmId);
   };
 
-  const handleCreateFarm = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newFarmName.trim() || !newFarmLocation.trim()) {
-      setFarmCreateStatus({ type: 'error', message: 'Please enter both a farm property name and location.' });
-      return;
-    }
-
-    const latParsed = newFarmLat.trim() ? Number(newFarmLat) : 42.03;
-    const lonParsed = newFarmLon.trim() ? Number(newFarmLon) : -93.62;
-    if (!Number.isFinite(latParsed) || latParsed < -90 || latParsed > 90 || !Number.isFinite(lonParsed) || lonParsed < -180 || lonParsed > 180) {
-      setFarmCreateStatus({ type: 'error', message: 'Coordinates must be valid Latitude (-90..90) and Longitude (-180..180).' });
-      return;
-    }
-
-    try {
-      const data = await apiClient.post('/api/farms', {
-        name: newFarmName.trim(),
-        location: newFarmLocation.trim(),
-        coordinates: [lonParsed, latParsed],
-        acreage: Number(newFarmAcreage) || 320,
-        currentCrop: newFarmCrop,
-        soilType: newFarmSoilType,
-        soilPH: Number(newFarmPH) || 6.5,
-        organicMatter: Number(newFarmOM) || 3.4,
-      });
-      if (data.success && data.farm) {
-        setFarms((prev) => [data.farm, ...prev]);
-        setSelectedFarmId(data.farm.id);
-        setNewFarmName('');
-        setNewFarmLocation('');
-        setNewFarmLat('');
-        setNewFarmLon('');
-        setFarmCreateStatus({
-          type: 'success',
-          message: `${data.farm.name} has been registered in Supabase PostgreSQL and set as your active farm.`,
-        });
-        onNavigate('/dashboard/farms');
-      }
-    } catch (e: any) {
-      console.error('Failed to create farm', e);
-      setFarmCreateStatus({ type: 'error', message: e?.message || 'Could not save farm property right now. Please try again.' });
-    }
+  const handleFarmCreated = async (newFarm: Farm) => {
+    setAddFarmModalOpen(false);
+    setFarms((prev) => [newFarm, ...prev.filter((f) => f.id !== newFarm.id)]);
+    setSelectedFarmId(newFarm.id);
+    setFarmCreateStatus({
+      type: 'success',
+      farmId: newFarm.id,
+      message: `${newFarm.name} has been registered (${newFarm.latitude.toFixed(4)}°, ${newFarm.longitude.toFixed(4)}°) and selected as your active farm.`,
+    });
+    onNavigate('/dashboard/farms');
+    // Refresh from authoritative GET /api/farms so server ordering and fields stay synchronized
+    fetchFarms();
   };
 
   const startEditFarm = (farm: Farm) => {
     setEditingFarmId(farm.id);
     setEditFarmName(farm.name);
-    setEditFarmLocation(farm.location);
-    setEditFarmAcreage(String(farm.acreage));
+    setEditFarmCountry(farm.country || '');
+    setEditFarmState(farm.state || '');
+    setEditFarmCity(farm.city || farm.location || '');
+    setEditFarmLat(String(farm.latitude ?? farm.coordinates[1]));
+    setEditFarmLon(String(farm.longitude ?? farm.coordinates[0]));
+    setEditFarmArea(String(farm.area ?? farm.acreage));
+    setEditFarmAreaUnit(farm.areaUnit === 'hectares' ? 'hectares' : 'acres');
+    setEditFarmType(farm.farmType || 'Row Crop Commercial');
+    setEditFarmStatus(farm.operatingStatus || 'Active');
     setEditFarmCrop(farm.currentCrop);
-    setEditFarmPH(String(farm.soilPH));
-    setEditFarmOM(String(farm.organicMatter));
+    setEditFarmPrevCrop(farm.previousCrop || '');
+    setEditFarmIrrigation(farm.irrigationType || '');
+    setEditFarmSoilType(farm.soilType || '');
+    setEditFarmPH(farm.soilPH !== null && farm.soilPH !== undefined ? String(farm.soilPH) : '');
+    setEditFarmOM(farm.organicMatter !== null && farm.organicMatter !== undefined ? String(farm.organicMatter) : '');
+    setEditFarmDrainage(farm.drainage || '');
   };
 
   const handleSaveEditFarm = async (farmId: string) => {
+    const parsedArea = Number(editFarmArea);
+    const parsedLat = Number(editFarmLat);
+    const parsedLon = Number(editFarmLon);
+
+    if (!editFarmName.trim() || !editFarmCity.trim()) {
+      setFarmCreateStatus({ type: 'error', message: 'Farm name and city/location are required.' });
+      return;
+    }
+    if (!Number.isFinite(parsedArea) || parsedArea <= 0) {
+      setFarmCreateStatus({ type: 'error', message: 'Area must be greater than 0.' });
+      return;
+    }
+    if (!Number.isFinite(parsedLat) || parsedLat < -90 || parsedLat > 90 || !Number.isFinite(parsedLon) || parsedLon < -180 || parsedLon > 180) {
+      setFarmCreateStatus({ type: 'error', message: 'Coordinates must have Latitude (-90..90) and Longitude (-180..180).' });
+      return;
+    }
+
     setSavingEditFarm(true);
     setFarmCreateStatus(null);
     try {
+      const composedLocation = [editFarmCity.trim(), editFarmState.trim(), editFarmCountry.trim()]
+        .filter(Boolean)
+        .join(', ');
       const res = await apiClient.patch(`/api/farms/${farmId}`, {
         name: editFarmName.trim(),
-        location: editFarmLocation.trim(),
-        acreage: Number(editFarmAcreage) || 100,
+        country: editFarmCountry.trim() || undefined,
+        state: editFarmState.trim() || undefined,
+        city: editFarmCity.trim(),
+        location: composedLocation,
+        latitude: parsedLat,
+        longitude: parsedLon,
+        coordinates: [parsedLon, parsedLat],
+        area: parsedArea,
+        areaUnit: editFarmAreaUnit,
+        farmType: editFarmType.trim() || null,
+        operatingStatus: editFarmStatus.trim() || null,
         currentCrop: editFarmCrop.trim(),
-        soilPH: Number(editFarmPH) || 6.5,
-        organicMatter: Number(editFarmOM) || 3.0,
+        previousCrop: editFarmPrevCrop.trim() || null,
+        irrigationType: editFarmIrrigation.trim() || null,
+        soilType: editFarmSoilType.trim() || null,
+        soilPH: editFarmPH.trim() !== '' ? Number(editFarmPH) : null,
+        organicMatter: editFarmOM.trim() !== '' ? Number(editFarmOM) : null,
+        drainage: editFarmDrainage.trim() || null,
       });
       if (res?.farm) {
         setFarms((prev) => prev.map((f) => (f.id === farmId ? res.farm : f)));
         setEditingFarmId(null);
         setFarmCreateStatus({ type: 'success', message: `Updated ${res.farm.name}.` });
+        if (selectedFarmId === farmId) {
+          recalculateStrategies(priorities, activeScenario, farmId);
+          fetchNasaAndFarmAnalytics(farmId);
+        }
       }
     } catch (err: any) {
       setFarmCreateStatus({ type: 'error', message: err?.message || 'Failed to update farm property.' });
@@ -617,19 +680,29 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  const handleDeleteFarm = async (farmId: string) => {
+  const handleConfirmDeleteFarm = async () => {
+    if (!deleteTargetFarm || deletingFarm) return;
+    setDeletingFarm(true);
     setFarmCreateStatus(null);
+    const targetId = deleteTargetFarm.id;
+    const targetName = deleteTargetFarm.name;
     try {
-      await apiClient.delete(`/api/farms/${farmId}`);
-      const remaining = farms.filter((f) => f.id !== farmId);
+      await apiClient.delete(`/api/farms/${targetId}`);
+      const remaining = farms.filter((f) => f.id !== targetId);
       setFarms(remaining);
-      setConfirmDeleteFarmId(null);
-      if (selectedFarmId === farmId && remaining.length > 0) {
+      setDeleteTargetFarm(null);
+      if (selectedFarmId === targetId && remaining.length > 0) {
         setSelectedFarmId(remaining[0].id);
       }
-      setFarmCreateStatus({ type: 'success', message: 'Farm property removed.' });
+      setFarmCreateStatus({
+        type: 'success',
+        message: `${targetName} and its linked priorities, soil records, saved assessments, and NASA observations have been permanently deleted.`,
+      });
     } catch (err: any) {
       setFarmCreateStatus({ type: 'error', message: err?.message || 'Unable to delete farm property.' });
+      setDeleteTargetFarm(null);
+    } finally {
+      setDeletingFarm(false);
     }
   };
 
@@ -747,11 +820,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  const activeFarm = farms.find((f) => f.id === selectedFarmId) || farms[0] || {
+  const activeFarm: Farm = farms.find((f) => f.id === selectedFarmId) || farms[0] || {
     id: 'farm-1',
     name: 'Prairie Ridge Valley Farm',
-    location: 'Ames, Iowa',
+    location: 'Ames, Story County, Iowa, USA',
+    latitude: 42.03,
+    longitude: -93.62,
     coordinates: [-93.62, 42.03],
+    area: 480,
+    areaUnit: 'acres',
     acreage: 480,
     currentCrop: 'Corn (Maize)',
     plantingSeason: 'Spring 2026',
@@ -765,6 +842,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     drainage: 'Moderately Well Drained',
     lastSoilTest: '2025-10-15',
     createdAt: new Date().toISOString(),
+    isDemo: true,
   };
 
   const navItems = [
@@ -908,10 +986,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
 
           {/* Active Farm Selector inside Drawer */}
-          <div className="p-3.5 border-b border-white/10 flex-shrink-0">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[#9BD85A] block mb-1.5">
-              Active Farm Property
-            </span>
+          <div className="p-3.5 border-b border-white/10 flex-shrink-0 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#9BD85A]">
+                Active Farm Property
+              </span>
+              <span className="text-[10px] text-white/60 tabular-nums">{farms.length}</span>
+            </div>
             <select
               value={selectedFarmId}
               onChange={(e) => {
@@ -922,10 +1003,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
             >
               {farms.map((f) => (
                 <option key={f.id} value={f.id} className="bg-[#073D2B] text-white">
-                  {f.name} ({f.acreage} ac)
+                  {f.name} ({f.area} {f.areaUnit === 'hectares' ? 'ha' : 'ac'})
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                setAddFarmModalOpen(true);
+              }}
+              className="w-full min-h-[40px] px-3 py-1.5 rounded-xl bg-[#76B93F] hover:bg-[#89CA50] text-[#073D2B] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Farm</span>
+            </button>
           </div>
 
           {/* Navigation Links inside Drawer */}
@@ -1012,10 +1104,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
 
           {/* Active Farm Selector */}
-          <div className="p-4 border-b border-white/10 flex-shrink-0">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[#9BD85A] block mb-1.5">
-              Active Registered Farm
-            </span>
+          <div className="p-4 border-b border-white/10 flex-shrink-0 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#9BD85A]">
+                Active Registered Farm
+              </span>
+              <span className="text-[10px] text-white/60 tabular-nums">{farms.length}</span>
+            </div>
             <select
               value={selectedFarmId}
               onChange={(e) => setSelectedFarmId(e.target.value)}
@@ -1023,10 +1118,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
             >
               {farms.map((f) => (
                 <option key={f.id} value={f.id} className="bg-[#073D2B] text-white">
-                  {f.name} ({f.acreage} ac)
+                  {f.name} ({f.area} {f.areaUnit === 'hectares' ? 'ha' : 'ac'})
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              onClick={() => setAddFarmModalOpen(true)}
+              className="w-full min-h-[38px] px-3 py-1.5 rounded-xl bg-[#76B93F] hover:bg-[#89CA50] text-[#073D2B] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Farm</span>
+            </button>
           </div>
 
           {/* Navigation Links */}
@@ -1089,8 +1192,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
               <span className="text-xs font-semibold text-[#527367]">Current Operation:</span>
               <span className="text-sm font-bold text-[#073D2B] break-words">{activeFarm.name}</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EAF5DF] text-[#145C3D] shrink-0">
-                {activeFarm.acreage} Acres
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EAF5DF] text-[#145C3D] shrink-0 tabular-nums">
+                {activeFarm.area} {activeFarm.areaUnit === 'hectares' ? 'Hectares' : 'Acres'}
               </span>
               {activeScenario && (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 shrink-0">
@@ -1100,7 +1203,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <p className="text-xs text-[#527367] mt-0.5 flex items-center gap-1 min-w-0">
               <MapPin className="w-3 h-3 text-[#76B93F] shrink-0" />
-              <span className="truncate">{activeFarm.location} (Soil: {activeFarm.soilType})</span>
+              <span className="truncate">
+                {activeFarm.location} (Soil: {activeFarm.soilType || 'Not provided'})
+              </span>
             </p>
           </div>
 
@@ -1162,17 +1267,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-[#527367] mt-0.5">
-                    {power?.status === 'synced' || modis?.status === 'synced' || modis?.status === 'granule_metadata_only' || modis?.status === 'quality_masked'
+                    {power?.status === 'synced' ||
+                    modis?.status === 'synced' ||
+                    modis?.status === 'granule_metadata_only' ||
+                    modis?.status === 'quality_masked' ||
+                    modis?.status === 'ingestion_failed'
                       ? `${power?.status === 'synced' ? `POWER ${power.daysObserved}d synced` : 'POWER not synced'} • ${
-                          modis?.status === 'synced'
-                            ? `MODIS 250m NDVI (${modis.observedAt})`
+                          modis?.status === 'synced' && modis?.persisted
+                            ? `MODIS Pixels Extracted & Persisted (${modis.observedAt})`
                             : modis?.status === 'quality_masked'
-                            ? `MODIS cloud/snow masked (${modis.observedAt})`
-                            : modis?.status === 'granule_metadata_only'
-                            ? 'MODIS CMR granule indexed'
+                            ? `MODIS Quality Masked (${modis.observedAt})`
+                            : modis?.granuleIndexed || modis?.status === 'granule_metadata_only'
+                            ? modis?.pixelRetrievalStatus === 'failed'
+                              ? 'MODIS Granule Indexed • Pixel Retrieval Failed'
+                              : 'MODIS Granule Indexed • Pixel Retrieval Pending'
                             : modis?.status === 'ingestion_failed'
-                            ? 'MODIS upstream failed'
-                            : 'MODIS not synced'
+                            ? 'MODIS Pixel Retrieval Failed'
+                            : 'MODIS Pixel Retrieval Pending'
                         }.`
                       : 'Ingest live NASA POWER agroclimatology, MODIS 250m vegetation indices, and Earthdata CMR granule metadata.'}
                   </p>
@@ -1181,7 +1292,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <button
                     type="button"
                     disabled={syncingPower || syncingCmr || syncingAll}
-                    onClick={handleIngestAllNasa}
+                    onClick={() => handleIngestAllNasa()}
                     className="min-h-[42px] px-4 py-2 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold inline-flex items-center gap-1.5 transition-all disabled:opacity-50 shadow-xs"
                   >
                     <CloudDownload className={`w-3.5 h-3.5 text-[#76B93F] ${syncingAll ? 'animate-pulse' : ''}`} />
@@ -1333,7 +1444,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
 
                 {/* Card 4: NASA MODIS 250m Live NDVI / EVI / LST */}
-                <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
+                <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-2">
                   <div className="flex items-center justify-between text-xs text-[#527367]">
                     <span className="flex items-center gap-1">
                       <Sprout className="w-3.5 h-3.5 text-emerald-600" />
@@ -1341,47 +1452,102 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     </span>
                     <span
                       className={`text-[10px] font-mono font-bold ${
-                        modis?.status === 'ingestion_failed'
+                        modis?.pixelRetrievalStatus === 'failed' || modis?.status === 'ingestion_failed'
                           ? 'text-rose-700'
                           : modis?.status === 'quality_masked'
                           ? 'text-amber-700'
-                          : 'text-emerald-700'
+                          : modis?.persisted
+                          ? 'text-emerald-700'
+                          : 'text-[#527367]'
                       }`}
                     >
-                      {modis?.status === 'synced'
-                        ? 'LIVE 250m'
+                      {modis?.persisted && modis?.status === 'synced'
+                        ? 'PERSISTED 250m'
                         : modis?.status === 'quality_masked'
                         ? 'CLOUD/SNOW'
-                        : modis?.latestGranuleId
-                        ? '250m CMR'
-                        : modis?.status === 'ingestion_failed'
-                        ? 'SYNC FAILED'
-                        : 'NOT SYNCED'}
+                        : modis?.pixelRetrievalStatus === 'failed' || modis?.status === 'ingestion_failed'
+                        ? 'PIXEL FAILED'
+                        : modis?.granuleIndexed || modis?.latestGranuleId
+                        ? 'CMR ONLY'
+                        : 'PENDING'}
                     </span>
                   </div>
                   <div className="font-display text-xl sm:text-2xl font-bold text-[#073D2B]">
                     {nasaLoading
                       ? 'Loading...'
-                      : modis?.status === 'synced' && modis?.currentNDVI !== null && modis?.currentNDVI !== undefined
+                      : modis?.persisted && modis?.status === 'synced' && modis?.currentNDVI !== null && modis?.currentNDVI !== undefined
                       ? `${modis.currentNDVI} NDVI`
                       : modis?.status === 'quality_masked'
                       ? 'Quality Masked'
-                      : modis?.latestGranuleId
-                      ? 'Granule Only'
-                      : modis?.status === 'ingestion_failed'
-                      ? 'API Unavailable'
-                      : 'Not Synced'}
+                      : modis?.granuleIndexed || modis?.latestGranuleId
+                      ? 'Granule Indexed'
+                      : modis?.pixelRetrievalStatus === 'failed' || modis?.status === 'ingestion_failed'
+                      ? 'Pixel Retrieval Failed'
+                      : 'Pixel Retrieval Pending'}
                   </div>
+
+                  {/* Independent Pipeline Stage Indicators */}
+                  {!nasaLoading && (
+                    <div className="grid grid-cols-2 gap-1 text-[10px] font-mono pt-0.5">
+                      <div
+                        className={`px-1.5 py-0.5 rounded border ${
+                          modis?.granuleIndexed || modis?.latestGranuleId
+                            ? 'bg-[#FAFDF8] border-[#D5E5CA] text-[#145C3D]'
+                            : 'bg-slate-50 border-slate-200 text-slate-500'
+                        }`}
+                      >
+                        {modis?.granuleIndexed || modis?.latestGranuleId ? 'Granule Indexed' : 'No CMR Granule'}
+                      </div>
+                      <div
+                        className={`px-1.5 py-0.5 rounded border ${
+                          modis?.pixelsExtracted
+                            ? 'bg-[#EAF5DF] border-[#76B93F]/60 text-[#073D2B] font-semibold'
+                            : modis?.pixelRetrievalStatus === 'failed' || modis?.status === 'ingestion_failed'
+                            ? 'bg-rose-50 border-rose-200 text-rose-700 font-semibold'
+                            : modis?.status === 'quality_masked'
+                            ? 'bg-amber-50 border-amber-200 text-amber-800'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {syncingCmr || syncingAll
+                          ? 'Pixel Retrieval Pending'
+                          : modis?.pixelsExtracted
+                          ? 'Pixels Extracted'
+                          : modis?.pixelRetrievalStatus === 'failed' || modis?.status === 'ingestion_failed'
+                          ? 'Pixel Retrieval Failed'
+                          : modis?.status === 'quality_masked'
+                          ? 'Quality Masked'
+                          : 'Pixel Retrieval Pending'}
+                      </div>
+                      <div
+                        className={`col-span-2 px-1.5 py-0.5 rounded border flex items-center justify-between ${
+                          modis?.persisted
+                            ? 'bg-[#EAF5DF] border-[#76B93F]/60 text-[#073D2B] font-semibold'
+                            : 'bg-[#FAFDF8] border-[#E2E8DE] text-[#527367]'
+                        }`}
+                      >
+                        <span>{modis?.persisted ? 'Persisted (Supabase)' : 'Not Persisted'}</span>
+                        <span>
+                          {modis?.lastSuccessfulObservationDate || modis?.observedAt
+                            ? `Obs: ${modis.lastSuccessfulObservationDate || modis.observedAt}`
+                            : 'No Obs Yet'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                   <p className="text-[11px] text-[#2A4D3E] break-words">
-                    {modis?.status === 'synced'
-                      ? `EVI: ${modis.currentEVI ?? '—'}${modis.lstDayC !== null && modis.lstDayC !== undefined ? ` • LST: ${modis.lstDayC}°C` : ''} • ${modis.observedAt}`
+                    {modis?.persisted && modis?.status === 'synced'
+                      ? `EVI: ${modis.currentEVI ?? '—'}${modis.lstDayC !== null && modis.lstDayC !== undefined ? ` • LST: ${modis.lstDayC}°C` : ''} • ${
+                          modis?.spatialMethod === 'polygon_boundary' ? 'Polygon boundary' : 'Point-centroid approx.'
+                        }`
                       : modis?.status === 'quality_masked'
                       ? `${modis.qualityStatus || 'Cloud/Snow obscured'} (${modis.observedAt || 'latest composite'})`
-                      : modis?.latestGranuleId
-                      ? `Granule indexed (${modis.granuleTimestamp ? new Date(modis.granuleTimestamp).toLocaleDateString() : 'CMR'})${modis.ornlError ? ' • ORNL pixel API timed out' : ' • Run Sync MODIS for pixel NDVI'}`
-                      : modis?.status === 'ingestion_failed'
-                      ? `${modis.error || 'MODIS ORNL DAAC upstream unavailable'}`
-                      : 'Ingest MODIS 250m to retrieve live ORNL DAAC NDVI, EVI & quality flag'}
+                      : modis?.failureExplanation || modis?.ornlError || modis?.error
+                      ? `${modis.failureExplanation || modis.ornlError || modis.error}`
+                      : modis?.granuleIndexed || modis?.latestGranuleId
+                      ? 'CMR granule indexed only (NOT live pixel NDVI). Run Sync MODIS & CMR to extract ORNL DAAC pixels.'
+                      : 'Ingest MODIS 250m to retrieve live ORNL DAAC NDVI, EVI & pixel reliability.'}
                   </p>
                 </div>
 
@@ -1399,7 +1565,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </h3>
                   <p className="text-xs sm:text-sm text-[#527367] leading-relaxed">
                     {topStrategy?.explainability?.whySuggested ||
-                      `By introducing a winter cover sequence following ${activeFarm.currentCrop}, this strategy aligns with your active farmer priorities and soil parameters (${activeFarm.soilType}, OM ${activeFarm.organicMatter}%).`}
+                      `By introducing a winter cover sequence following ${activeFarm.currentCrop}, this strategy aligns with your active farmer priorities${
+                        activeFarm.soilType ? ` (${activeFarm.soilType}` : ''
+                      }${activeFarm.organicMatter !== null ? `, OM ${activeFarm.organicMatter}%` : ''}${
+                        activeFarm.soilType ? ')' : ''
+                      }.`}
                   </p>
                   <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2.5 sm:gap-3 pt-2">
                     <button
@@ -1527,369 +1697,378 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       Registered Farm Properties
                     </h2>
                     <p className="text-xs text-[#527367] mt-1">
-                      Select an active farm parcel for NASA telemetry binding or register a new field property below.
+                      Select an active farm parcel for NASA telemetry binding or add a private farm property with custom coordinates.
                     </p>
                   </div>
-                  <span className="self-start sm:self-auto px-3 py-1 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold">
-                    {farms.length} Active {farms.length === 1 ? 'Property' : 'Properties'}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {farms.map((farm) => {
-                    const isSelected = farm.id === activeFarm.id;
-                    const isEditingThis = editingFarmId === farm.id;
-                    const canManage = !farm.isDemo;
-                    return (
-                      <div
-                        key={farm.id}
-                        className={`p-4 sm:p-5 rounded-2xl border transition-all space-y-3 ${
-                          isSelected
-                            ? 'bg-[#F4F9EE] border-[#76B93F] ring-2 ring-[#76B93F]/20 shadow-xs'
-                            : 'bg-[#FAFDF8] border-[#E2E8DE]'
-                        }`}
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="font-bold text-base text-[#073D2B]">{farm.name}</h3>
-                              {isSelected && (
-                                <span className="px-2 py-0.5 rounded-full bg-[#073D2B] text-[#9BD85A] text-[10px] font-bold">
-                                  ACTIVE
-                                </span>
-                              )}
-                              {farm.isDemo && (
-                                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold">
-                                  DEMO PARCEL
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-xs text-[#527367] flex items-center gap-1 mt-0.5">
-                              <MapPin className="w-3.5 h-3.5 text-[#76B93F] flex-shrink-0" />
-                              <span>{farm.location} ({farm.coordinates[1].toFixed(2)}°, {farm.coordinates[0].toFixed(2)}°)</span>
-                            </p>
-                          </div>
-                          <span className="px-2.5 py-1 rounded-lg bg-white border border-[#D5E5CA] text-xs font-bold text-[#073D2B]">
-                            {farm.acreage} ac
-                          </span>
-                        </div>
-
-                        {isEditingThis ? (
-                          <div className="p-3 bg-white rounded-xl border border-[#76B93F]/50 space-y-3 text-xs">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                              <div>
-                                <label className="block font-bold text-[#073D2B] mb-1">Name</label>
-                                <input
-                                  type="text"
-                                  value={editFarmName}
-                                  onChange={(e) => setEditFarmName(e.target.value)}
-                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
-                                />
-                              </div>
-                              <div>
-                                <label className="block font-bold text-[#073D2B] mb-1">Location</label>
-                                <input
-                                  type="text"
-                                  value={editFarmLocation}
-                                  onChange={(e) => setEditFarmLocation(e.target.value)}
-                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
-                                />
-                              </div>
-                              <div>
-                                <label className="block font-bold text-[#073D2B] mb-1">Acreage</label>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  value={editFarmAcreage}
-                                  onChange={(e) => setEditFarmAcreage(e.target.value)}
-                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
-                                />
-                              </div>
-                              <div>
-                                <label className="block font-bold text-[#073D2B] mb-1">Current Crop</label>
-                                <input
-                                  type="text"
-                                  value={editFarmCrop}
-                                  onChange={(e) => setEditFarmCrop(e.target.value)}
-                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
-                                />
-                              </div>
-                              <div>
-                                <label className="block font-bold text-[#073D2B] mb-1">Soil pH</label>
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  value={editFarmPH}
-                                  onChange={(e) => setEditFarmPH(e.target.value)}
-                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
-                                />
-                              </div>
-                              <div>
-                                <label className="block font-bold text-[#073D2B] mb-1">OM %</label>
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  value={editFarmOM}
-                                  onChange={(e) => setEditFarmOM(e.target.value)}
-                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
-                                />
-                              </div>
-                            </div>
-                            <div className="flex flex-wrap justify-end gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setEditingFarmId(null)}
-                                className="px-3.5 py-1.5 rounded-full border border-[#D5E5CA] text-xs font-bold text-[#527367]"
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                type="button"
-                                disabled={savingEditFarm}
-                                onClick={() => handleSaveEditFarm(farm.id)}
-                                className="px-4 py-1.5 rounded-full bg-[#073D2B] text-white text-xs font-bold disabled:opacity-50"
-                              >
-                                {savingEditFarm ? 'Saving...' : 'Save Changes'}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                            <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
-                              <span className="text-[10px] text-[#527367] block">Current Crop</span>
-                              <span className="font-bold text-[#073D2B]">{farm.currentCrop}</span>
-                            </div>
-                            <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
-                              <span className="text-[10px] text-[#527367] block">Soil Series</span>
-                              <span className="font-bold text-[#073D2B]">{farm.soilType}</span>
-                            </div>
-                            <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
-                              <span className="text-[10px] text-[#527367] block">Soil pH</span>
-                              <span className="font-bold text-[#073D2B]">{farm.soilPH}</span>
-                            </div>
-                            <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
-                              <span className="text-[10px] text-[#527367] block">Organic Matter</span>
-                              <span className="font-bold text-[#073D2B]">{farm.organicMatter}%</span>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-[#E2E8DE]">
-                          <span className="text-[11px] text-[#527367]">
-                            Drainage: <strong className="text-[#073D2B]">{farm.drainage}</strong>
-                          </span>
-                          <div className="flex flex-wrap items-center gap-2">
-                            {canManage && !isEditingThis && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => startEditFarm(farm)}
-                                  className="min-h-[40px] px-3 py-1.5 rounded-full border border-[#D5E5CA] bg-white hover:bg-[#F0F5EE] text-[#073D2B] text-xs font-bold inline-flex items-center gap-1"
-                                >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                  <span>Edit</span>
-                                </button>
-                                {confirmDeleteFarmId === farm.id ? (
-                                  <div className="flex items-center gap-1.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteFarm(farm.id)}
-                                      className="min-h-[40px] px-3 py-1.5 rounded-full bg-rose-700 text-white text-xs font-bold"
-                                    >
-                                      Confirm Delete
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setConfirmDeleteFarmId(null)}
-                                      className="min-h-[40px] px-3 py-1.5 rounded-full border border-[#D5E5CA] text-xs font-bold text-[#527367]"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmDeleteFarmId(farm.id)}
-                                    className="min-h-[40px] px-3 py-1.5 rounded-full border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold inline-flex items-center gap-1"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                    <span>Delete</span>
-                                  </button>
-                                )}
-                              </>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => setSelectedFarmId(farm.id)}
-                              disabled={isSelected}
-                              className={`min-h-[42px] px-4 py-2 rounded-full text-xs font-bold transition-all ${
-                                isSelected
-                                  ? 'bg-[#EAF5DF] text-[#145C3D] cursor-default'
-                                  : 'bg-[#073D2B] hover:bg-[#145C3D] text-white'
-                              }`}
-                            >
-                              {isSelected ? 'Selected Active Farm' : 'Set as Active Farm'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Register New Farm Property Form */}
-              <form
-                onSubmit={handleCreateFarm}
-                className="bg-white rounded-3xl p-4 sm:p-8 border border-[#D5E5CA] shadow-sm space-y-5"
-              >
-                <div>
-                  <h3 className="font-display text-xl font-bold text-[#073D2B] flex items-center gap-2">
-                    <Plus className="w-5 h-5 text-[#76B93F]" />
-                    Register New Farm Property
-                  </h3>
-                  <p className="text-xs text-[#527367] mt-1">
-                    Add parcel coordinates and baseline soil lab attributes for live NASA ingestion &amp; rotation simulation.
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+                    <span className="px-3 py-1.5 rounded-full bg-[#EAF5DF] text-[#145C3D] text-xs font-bold tabular-nums">
+                      {farms.length} Active {farms.length === 1 ? 'Property' : 'Properties'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setAddFarmModalOpen(true)}
+                      className="min-h-[42px] px-4 py-2 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-xs transition-all"
+                    >
+                      <Plus className="w-4 h-4 text-[#76B93F]" />
+                      <span>Add Farm</span>
+                    </button>
+                  </div>
                 </div>
 
                 {farmCreateStatus && (
                   <div
-                    className={`p-3 rounded-xl text-xs font-medium flex items-center gap-2 border ${
+                    role="status"
+                    className={`p-3.5 rounded-2xl text-xs font-medium flex flex-col sm:flex-row sm:items-center justify-between gap-3 border ${
                       farmCreateStatus.type === 'success'
                         ? 'bg-[#EAF5DF] border-[#76B93F] text-[#073D2B]'
                         : 'bg-rose-50 border-rose-200 text-rose-800'
                     }`}
                   >
-                    <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-                    <span>{farmCreateStatus.message}</span>
+                    <div className="flex items-start gap-2">
+                      {farmCreateStatus.type === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-[#145C3D] shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      )}
+                      <span>{farmCreateStatus.message}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {farmCreateStatus.farmId && (
+                        <button
+                          type="button"
+                          disabled={syncingAll}
+                          onClick={() => handleIngestAllNasa(farmCreateStatus.farmId)}
+                          className="min-h-[36px] px-3.5 py-1.5 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-[11px] font-bold inline-flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                          <CloudDownload className="w-3.5 h-3.5 text-[#76B93F]" />
+                          <span>{syncingAll ? 'Fetching NASA Data...' : 'Fetch NASA Data'}</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setFarmCreateStatus(null)}
+                        aria-label="Dismiss farm message"
+                        className="w-7 h-7 rounded-lg hover:bg-black/5 flex items-center justify-center"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
-                  <div>
-                    <label className="block font-bold text-[#073D2B] mb-1">Property Name *</label>
-                    <input
-                      type="text"
-                      required
-                      value={newFarmName}
-                      onChange={(e) => setNewFarmName(e.target.value)}
-                      placeholder="e.g., North Creek Loam Field"
-                      className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-[#D5E5CA] text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
-                    />
+                {loading ? (
+                  <div className="p-8 rounded-2xl bg-[#FAFDF8] border border-[#E2E8DE] text-center text-xs text-[#527367]">
+                    Loading registered farm properties...
                   </div>
-                  <div>
-                    <label className="block font-bold text-[#073D2B] mb-1">Location (City, State) *</label>
-                    <input
-                      type="text"
-                      required
-                      value={newFarmLocation}
-                      onChange={(e) => setNewFarmLocation(e.target.value)}
-                      placeholder="e.g., Boone, Iowa"
-                      className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-[#D5E5CA] text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-bold text-[#073D2B] mb-1">Acreage</label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={newFarmAcreage}
-                      onChange={(e) => setNewFarmAcreage(e.target.value)}
-                      className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-[#D5E5CA] text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-bold text-[#073D2B] mb-1">Current Standing Crop</label>
-                    <select
-                      value={newFarmCrop}
-                      onChange={(e) => setNewFarmCrop(e.target.value)}
-                      className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-[#D5E5CA] bg-white text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
+                ) : farms.length === 0 ? (
+                  <div className="p-8 rounded-2xl bg-[#FAFDF8] border border-[#E2E8DE] text-center space-y-3">
+                    <p className="text-sm font-bold text-[#073D2B]">No Farms Available</p>
+                    <p className="text-xs text-[#527367] max-w-md mx-auto">
+                      Register your first farm parcel with exact WGS84 coordinates to enable live NASA telemetry and crop rotation modeling.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setAddFarmModalOpen(true)}
+                      className="min-h-[42px] px-5 py-2 rounded-full bg-[#073D2B] text-white text-xs font-bold inline-flex items-center gap-1.5"
                     >
-                      <option value="Corn (Maize)">Corn (Maize)</option>
-                      <option value="Soybeans">Soybeans</option>
-                      <option value="Grain Sorghum">Grain Sorghum</option>
-                      <option value="Winter Wheat / Rye">Winter Wheat / Rye</option>
-                      <option value="Alfalfa Forage">Alfalfa Forage</option>
-                    </select>
+                      <Plus className="w-4 h-4 text-[#76B93F]" />
+                      <span>Add Your First Farm</span>
+                    </button>
                   </div>
-                  <div>
-                    <label className="block font-bold text-[#073D2B] mb-1">Soil Texture Class</label>
-                    <select
-                      value={newFarmSoilType}
-                      onChange={(e) => setNewFarmSoilType(e.target.value)}
-                      className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-[#D5E5CA] bg-white text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
-                    >
-                      <option value="Silt Loam">Silt Loam</option>
-                      <option value="Clarion-Nicollet Loam">Clarion-Nicollet Loam</option>
-                      <option value="Clay Loam">Clay Loam</option>
-                      <option value="Sandy Loam">Sandy Loam</option>
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block font-bold text-[#073D2B] mb-1">Soil pH</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="4.0"
-                        max="9.0"
-                        value={newFarmPH}
-                        onChange={(e) => setNewFarmPH(e.target.value)}
-                        className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-[#D5E5CA] text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
-                      />
-                    </div>
-                    <div>
-                      <label className="block font-bold text-[#073D2B] mb-1">OM %</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0.5"
-                        max="15.0"
-                        value={newFarmOM}
-                        onChange={(e) => setNewFarmOM(e.target.value)}
-                        className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-[#D5E5CA] text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block font-bold text-[#073D2B] mb-1">Latitude (Optional)</label>
-                    <input
-                      type="number"
-                      step="0.0001"
-                      min="-90"
-                      max="90"
-                      value={newFarmLat}
-                      onChange={(e) => setNewFarmLat(e.target.value)}
-                      placeholder="42.0300"
-                      className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-[#D5E5CA] text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-bold text-[#073D2B] mb-1">Longitude (Optional)</label>
-                    <input
-                      type="number"
-                      step="0.0001"
-                      min="-180"
-                      max="180"
-                      value={newFarmLon}
-                      onChange={(e) => setNewFarmLon(e.target.value)}
-                      placeholder="-93.6200"
-                      className="w-full min-h-[44px] px-3.5 py-2 rounded-xl border border-[#D5E5CA] text-sm sm:text-xs text-[#073D2B] focus:ring-2 focus:ring-[#76B93F] focus:outline-hidden"
-                    />
-                  </div>
-                </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {farms.map((farm) => {
+                      const isSelected = farm.id === activeFarm.id;
+                      const isEditingThis = editingFarmId === farm.id;
+                      const canManage = !farm.isDemo;
+                      return (
+                        <div
+                          key={farm.id}
+                          className={`p-4 sm:p-5 rounded-2xl border transition-all space-y-3 ${
+                            isSelected
+                              ? 'bg-[#F4F9EE] border-[#76B93F] ring-2 ring-[#76B93F]/20 shadow-xs'
+                              : 'bg-[#FAFDF8] border-[#E2E8DE]'
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="font-bold text-base text-[#073D2B]">{farm.name}</h3>
+                                {isSelected && (
+                                  <span className="px-2 py-0.5 rounded-full bg-[#073D2B] text-[#9BD85A] text-[10px] font-bold">
+                                    ACTIVE
+                                  </span>
+                                )}
+                                {farm.isDemo ? (
+                                  <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold">
+                                    DEMO PARCEL
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full bg-[#EAF5DF] text-[#145C3D] text-[10px] font-bold">
+                                    PRIVATE FARM
+                                  </span>
+                                )}
+                                {farm.operatingStatus && !farm.isDemo && (
+                                  <span className="px-2 py-0.5 rounded-full bg-white border border-[#D5E5CA] text-[#527367] text-[10px] font-semibold">
+                                    {farm.operatingStatus}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-[#527367] flex items-center gap-1 mt-0.5 tabular-nums">
+                                <MapPin className="w-3.5 h-3.5 text-[#76B93F] flex-shrink-0" />
+                                <span>
+                                  {farm.location} ({farm.latitude.toFixed(4)}°, {farm.longitude.toFixed(4)}°)
+                                </span>
+                              </p>
+                              {farm.description && (
+                                <p className="text-[11px] text-[#527367] mt-1 line-clamp-2">{farm.description}</p>
+                              )}
+                            </div>
+                            <span className="px-2.5 py-1 rounded-lg bg-white border border-[#D5E5CA] text-xs font-bold text-[#073D2B] tabular-nums">
+                              {farm.area} {farm.areaUnit === 'hectares' ? 'ha' : 'ac'}
+                            </span>
+                          </div>
 
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    className="w-full sm:w-auto min-h-[44px] px-6 py-2.5 rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-sm"
-                  >
-                    <Plus className="w-4 h-4 text-[#76B93F]" />
-                    <span>Register Farm Property</span>
-                  </button>
-                </div>
-              </form>
+                          {isEditingThis ? (
+                            <div className="p-3.5 bg-white rounded-xl border border-[#76B93F]/50 space-y-3 text-xs">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                <div className="sm:col-span-2">
+                                  <label className="block font-bold text-[#073D2B] mb-1">Farm Name *</label>
+                                  <input
+                                    type="text"
+                                    value={editFarmName}
+                                    onChange={(e) => setEditFarmName(e.target.value)}
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">Country</label>
+                                  <input
+                                    type="text"
+                                    value={editFarmCountry}
+                                    onChange={(e) => setEditFarmCountry(e.target.value)}
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">State / Province</label>
+                                  <input
+                                    type="text"
+                                    value={editFarmState}
+                                    onChange={(e) => setEditFarmState(e.target.value)}
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">City / Town *</label>
+                                  <input
+                                    type="text"
+                                    value={editFarmCity}
+                                    onChange={(e) => setEditFarmCity(e.target.value)}
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">Area &amp; Unit *</label>
+                                  <div className="flex gap-1.5">
+                                    <input
+                                      type="number"
+                                      min={0.1}
+                                      step="0.1"
+                                      value={editFarmArea}
+                                      onChange={(e) => setEditFarmArea(e.target.value)}
+                                      className="flex-1 min-w-0 min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B] tabular-nums"
+                                    />
+                                    <select
+                                      value={editFarmAreaUnit}
+                                      onChange={(e) => setEditFarmAreaUnit(e.target.value as FarmAreaUnit)}
+                                      className="min-h-[38px] px-2 rounded-lg border border-[#D5E5CA] bg-white text-xs text-[#073D2B]"
+                                    >
+                                      <option value="acres">ac</option>
+                                      <option value="hectares">ha</option>
+                                    </select>
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">Latitude *</label>
+                                  <input
+                                    type="number"
+                                    step="0.0001"
+                                    min="-90"
+                                    max="90"
+                                    value={editFarmLat}
+                                    onChange={(e) => setEditFarmLat(e.target.value)}
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B] tabular-nums"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">Longitude *</label>
+                                  <input
+                                    type="number"
+                                    step="0.0001"
+                                    min="-180"
+                                    max="180"
+                                    value={editFarmLon}
+                                    onChange={(e) => setEditFarmLon(e.target.value)}
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B] tabular-nums"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">Primary Crop *</label>
+                                  <input
+                                    type="text"
+                                    value={editFarmCrop}
+                                    onChange={(e) => setEditFarmCrop(e.target.value)}
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">Operating Status</label>
+                                  <input
+                                    type="text"
+                                    value={editFarmStatus}
+                                    onChange={(e) => setEditFarmStatus(e.target.value)}
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">Soil Type (Optional)</label>
+                                  <input
+                                    type="text"
+                                    value={editFarmSoilType}
+                                    onChange={(e) => setEditFarmSoilType(e.target.value)}
+                                    placeholder="Not provided"
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">Drainage (Optional)</label>
+                                  <input
+                                    type="text"
+                                    value={editFarmDrainage}
+                                    onChange={(e) => setEditFarmDrainage(e.target.value)}
+                                    placeholder="Not provided"
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B]"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">Soil pH (Optional)</label>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    min="0"
+                                    max="14"
+                                    value={editFarmPH}
+                                    onChange={(e) => setEditFarmPH(e.target.value)}
+                                    placeholder="Not provided"
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B] tabular-nums"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block font-bold text-[#073D2B] mb-1">OM % (Optional)</label>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    min="0"
+                                    max="100"
+                                    value={editFarmOM}
+                                    onChange={(e) => setEditFarmOM(e.target.value)}
+                                    placeholder="Not provided"
+                                    className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-[#D5E5CA] text-xs text-[#073D2B] tabular-nums"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap justify-end gap-2 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingFarmId(null)}
+                                  className="px-3.5 py-1.5 rounded-full border border-[#D5E5CA] text-xs font-bold text-[#527367]"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={savingEditFarm}
+                                  onClick={() => handleSaveEditFarm(farm.id)}
+                                  className="px-4 py-1.5 rounded-full bg-[#073D2B] text-white text-xs font-bold disabled:opacity-50"
+                                >
+                                  {savingEditFarm ? 'Saving...' : 'Save Changes'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                              <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
+                                <span className="text-[10px] text-[#527367] block">Primary Crop</span>
+                                <span className="font-bold text-[#073D2B]">{farm.currentCrop}</span>
+                              </div>
+                              <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
+                                <span className="text-[10px] text-[#527367] block">Soil Series</span>
+                                <span className="font-bold text-[#073D2B]">{farm.soilType || 'Not provided'}</span>
+                              </div>
+                              <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
+                                <span className="text-[10px] text-[#527367] block">Soil pH</span>
+                                <span className="font-bold text-[#073D2B] tabular-nums">
+                                  {farm.soilPH !== null && farm.soilPH !== undefined ? farm.soilPH : 'Not provided'}
+                                </span>
+                              </div>
+                              <div className="p-2.5 bg-white rounded-xl border border-[#E2E8DE]">
+                                <span className="text-[10px] text-[#527367] block">Organic Matter</span>
+                                <span className="font-bold text-[#073D2B] tabular-nums">
+                                  {farm.organicMatter !== null && farm.organicMatter !== undefined
+                                    ? `${farm.organicMatter}%`
+                                    : 'Not provided'}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-[#E2E8DE]">
+                            <span className="text-[11px] text-[#527367]">
+                              Drainage: <strong className="text-[#073D2B]">{farm.drainage || 'Not provided'}</strong>
+                              {farm.irrigationType ? ` • ${farm.irrigationType}` : ''}
+                            </span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {canManage && !isEditingThis && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditFarm(farm)}
+                                    className="min-h-[40px] px-3 py-1.5 rounded-full border border-[#D5E5CA] bg-white hover:bg-[#F0F5EE] text-[#073D2B] text-xs font-bold inline-flex items-center gap-1"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                    <span>Edit</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDeleteTargetFarm(farm)}
+                                    className="min-h-[40px] px-3 py-1.5 rounded-full border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold inline-flex items-center gap-1"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>Delete</span>
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setSelectedFarmId(farm.id)}
+                                disabled={isSelected}
+                                className={`min-h-[42px] px-4 py-2 rounded-full text-xs font-bold transition-all ${
+                                  isSelected
+                                    ? 'bg-[#EAF5DF] text-[#145C3D] cursor-default'
+                                    : 'bg-[#073D2B] hover:bg-[#145C3D] text-white'
+                                }`}
+                              >
+                                {isSelected ? 'Selected Active Farm' : 'Set as Active Farm'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -2140,27 +2319,37 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
                 <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
                   <span className="text-xs font-bold text-[#145C3D] uppercase">Soil pH Index</span>
-                  <div className="font-display text-3xl font-extrabold text-[#073D2B]">{activeFarm.soilPH}</div>
+                  <div className="font-display text-2xl sm:text-3xl font-extrabold text-[#073D2B] tabular-nums">
+                    {activeFarm.soilPH !== null && activeFarm.soilPH !== undefined ? activeFarm.soilPH : 'Not provided'}
+                  </div>
                   <p className="text-xs text-[#527367]">
-                    Target band: 6.2 – 6.8. Favorable for legume nodulation and phosphorus uptake.
+                    {activeFarm.soilPH !== null && activeFarm.soilPH !== undefined
+                      ? 'Target band: 6.2 – 6.8. Favorable for legume nodulation and phosphorus uptake.'
+                      : 'Enter laboratory soil pH in Farm Properties to assess nutrient availability.'}
                   </p>
                 </div>
 
                 <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
                   <span className="text-xs font-bold text-[#145C3D] uppercase">Soil Organic Matter</span>
-                  <div className="font-display text-3xl font-extrabold text-[#073D2B]">{activeFarm.organicMatter}%</div>
+                  <div className="font-display text-2xl sm:text-3xl font-extrabold text-[#073D2B] tabular-nums">
+                    {activeFarm.organicMatter !== null && activeFarm.organicMatter !== undefined
+                      ? `${activeFarm.organicMatter}%`
+                      : 'Not provided'}
+                  </div>
                   <p className="text-xs text-[#527367]">
-                    Holds an estimated 80,000+ gallons of available pore water per acre.
+                    {activeFarm.organicMatter !== null && activeFarm.organicMatter !== undefined
+                      ? 'Higher organic matter increases plant-available root-zone water retention.'
+                      : 'Add optional lab organic matter % in Farm Properties to calibrate water buffering.'}
                   </p>
                 </div>
 
                 <div className="bg-white p-5 sm:p-6 rounded-3xl border border-[#D5E5CA] shadow-2xs space-y-3">
                   <span className="text-xs font-bold text-[#145C3D] uppercase">Nutrient Balance</span>
                   <div className="font-display text-lg font-bold text-[#073D2B]">
-                    N: {activeFarm.nitrogen}
+                    N: {activeFarm.nitrogen || 'Not provided'}
                   </div>
                   <p className="text-xs text-[#527367] break-words">
-                    P: {activeFarm.phosphorus} | K: {activeFarm.potassium}
+                    P: {activeFarm.phosphorus || 'Not provided'} | K: {activeFarm.potassium || 'Not provided'}
                   </p>
                 </div>
               </div>
@@ -2182,7 +2371,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   ))}
                   <li className="flex items-start gap-2">
                     <CheckCircle2 className="w-4 h-4 text-[#76B93F] flex-shrink-0 mt-0.5" />
-                    <span>Last Laboratory Soil Test: <strong>{activeFarm.lastSoilTest}</strong> &bull; Drainage: <strong>{activeFarm.drainage}</strong></span>
+                    <span>
+                      Last Laboratory Soil Test: <strong>{activeFarm.lastSoilTest || 'Not provided'}</strong> &bull; Drainage:{' '}
+                      <strong>{activeFarm.drainage || 'Not provided'}</strong>
+                    </span>
                   </li>
                 </ul>
               </div>
@@ -2262,7 +2454,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </p>
                   <div className="space-y-2 text-xs text-[#2A4D3E]">
                     <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
-                      <strong>Winter Living Cover:</strong> Strategy B cereal rye + hairy vetch reduces winter runoff and improves spring infiltration in {activeFarm.soilType}.
+                      <strong>Winter Living Cover:</strong> Strategy B cereal rye + hairy vetch reduces winter runoff and improves spring infiltration
+                      {activeFarm.soilType ? ` in ${activeFarm.soilType}` : ''}.
                     </div>
                     <div className="p-3 bg-amber-50 rounded-xl border border-amber-200">
                       <strong>Staggered Pollination Window:</strong> Diversifying planting maturities spreads heat exposure across July-August reproductive stages.
@@ -2669,6 +2862,69 @@ export const Dashboard: React.FC<DashboardProps> = ({
         isOpen={incomeModalOpen}
         onClose={() => setIncomeModalOpen(false)}
       />
+
+      {/* Add Farm Modal */}
+      <AddFarmModal
+        isOpen={addFarmModalOpen}
+        onClose={() => setAddFarmModalOpen(false)}
+        onFarmCreated={handleFarmCreated}
+        defaultAreaUnit={measurementUnits === 'metric' ? 'hectares' : 'acres'}
+      />
+
+      {/* Delete Farm Confirmation Modal */}
+      {deleteTargetFarm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-farm-title"
+        >
+          <div className="bg-white rounded-3xl max-w-md w-full border border-[#D5E5CA] shadow-2xl p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 id="delete-farm-title" className="font-display text-lg font-bold text-[#073D2B]">
+                  Delete Farm Property?
+                </h3>
+                <p className="text-xs text-[#527367] mt-1">
+                  You are about to permanently delete <strong className="text-[#073D2B]">{deleteTargetFarm.name}</strong> ({deleteTargetFarm.location}).
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-rose-50/70 border border-rose-200 text-xs text-rose-900 space-y-1.5">
+              <p className="font-bold">This action cascades across linked records:</p>
+              <ul className="list-disc pl-4 space-y-0.5 text-[11px]">
+                <li>Farmer priority weights saved for this farm</li>
+                <li>Soil test entries and laboratory baseline records</li>
+                <li>Saved crop rotation assessments &amp; scenarios</li>
+                <li>Persisted NASA POWER / MODIS observations &amp; AI advisor history</li>
+              </ul>
+            </div>
+
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={deletingFarm}
+                onClick={() => setDeleteTargetFarm(null)}
+                className="min-h-[42px] px-4 py-2 rounded-full border border-[#D5E5CA] text-xs font-bold text-[#527367] hover:bg-[#FAFDF8] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deletingFarm}
+                onClick={handleConfirmDeleteFarm}
+                className="min-h-[42px] px-5 py-2 rounded-full bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold disabled:opacity-50"
+              >
+                {deletingFarm ? 'Deleting Farm...' : 'Permanently Delete Farm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

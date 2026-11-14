@@ -140,14 +140,26 @@ Strict Scientific Integrity Rules:
     .map((s) => `- Strategy ${s.code} (${s.title}): Score ${s.score}% | Sequence: ${s.cropSequence.join(' -> ')}`)
     .join('\n');
 
+  const soilSummaryLine = [
+    farm.soilType || 'Soil texture not specified',
+    farm.soilPH !== null ? `pH ${farm.soilPH}` : 'pH not provided',
+    farm.organicMatter !== null ? `Organic Matter ${farm.organicMatter}%` : 'Organic Matter not provided',
+    `Drainage: ${farm.drainage || 'Not provided'}`,
+  ].join(' | ');
+
+  const nutrientsLine =
+    farm.nitrogen || farm.phosphorus || farm.potassium
+      ? `N=${farm.nitrogen || 'Not provided'}, P=${farm.phosphorus || 'Not provided'}, K=${farm.potassium || 'Not provided'} (Last Soil Test: ${farm.lastSoilTest || 'Not provided'})`
+      : 'Not provided (no laboratory N-P-K test entered)';
+
   const farmContextString = `
 GROUNDED FARM & OBSERVATION CONTEXT:
-1. Farmer & Soil Record (User/Lab Data):
+1. Farmer & Soil Record (User/Lab Data — NOT NASA Satellite Measurements):
    - Farm: ${farm.name} (${farm.location}, coordinates Lon ${farm.coordinates[0]}, Lat ${farm.coordinates[1]})
-   - Acreage: ${farm.acreage} acres | Current Crop: ${farm.currentCrop} | Season: ${farm.plantingSeason}
+   - Area: ${farm.area} ${farm.areaUnit} (${farm.acreage} acres) | Primary Crop: ${farm.currentCrop} | Previous Crop: ${farm.previousCrop || 'Not specified'} | Irrigation: ${farm.irrigationType || 'Not specified'} | Season: ${farm.plantingSeason}
    - Rotation History: ${farm.rotationHistory.join(' -> ') || 'Not specified'}
-   - Soil: ${farm.soilType} | pH ${farm.soilPH} | Organic Matter ${farm.organicMatter}% | Drainage: ${farm.drainage}
-   - Reported Nutrients: N=${farm.nitrogen}, P=${farm.phosphorus}, K=${farm.potassium} (Last Soil Test: ${farm.lastSoilTest})
+   - Soil (Farmer/Lab Provided): ${soilSummaryLine}
+   - Reported Nutrients: ${nutrientsLine}
 
 2. Persisted NASA Earth Observations:
 ${powerBlock}
@@ -175,7 +187,11 @@ ${strategyBlock}
       nasaSummary.hasPowerData
         ? `* **NASA POWER (${nasaSummary.dailyTimeline.length} synced days):** Mean temperature **${nasaSummary.meanTempC}°C**, cumulative precipitation **${nasaSummary.precipTotalMm} mm**, mean solar flux **${nasaSummary.meanSolarRadiationMj} MJ/m²/day**.`
         : `* **NASA POWER:** Not yet synced for this parcel. Run a NASA POWER sync in the NASA Data Explorer to bind parcel-coordinate weather observations.`,
-      `* **Soil Profile (Farmer/Lab Record):** ${farm.soilType} at **pH ${farm.soilPH}** with **${farm.organicMatter}% organic matter** and **${farm.drainage}** drainage.`,
+      `* **Soil Profile (Farmer/Lab Record):** ${
+        farm.soilType || 'Soil texture not provided'
+      } | ${farm.soilPH !== null ? `pH **${farm.soilPH}**` : 'pH **Not provided**'} | ${
+        farm.organicMatter !== null ? `**${farm.organicMatter}%** organic matter` : 'Organic matter **Not provided**'
+      } | Drainage: **${farm.drainage || 'Not provided'}**.`,
       ``,
       `#### 2. Deterministic Rotation Strategy Ranking`,
       ...evalResult.strategies.map(

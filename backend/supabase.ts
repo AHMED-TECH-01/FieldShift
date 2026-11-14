@@ -49,6 +49,12 @@ let cachedAuthClient: SupabaseClient | null = null;
 let cachedPublicClient: SupabaseClient | null = null;
 let cachedAdminClient: SupabaseClient | null = null;
 
+export function resetSupabaseClientsForTesting(): void {
+  cachedAuthClient = null;
+  cachedPublicClient = null;
+  cachedAdminClient = null;
+}
+
 /**
  * Public Supabase client using publishable/anon key (no session persistence).
  * Used for auth endpoints (signInWithPassword, signUp, verifyOtp, resetPasswordForEmail)
@@ -229,29 +235,97 @@ export interface DbFarmRecord extends Farm {
 }
 
 export function mapDbFarmRow(row: any): DbFarmRecord {
-  const coords = Array.isArray(row.coordinates) && row.coordinates.length === 2
-    ? [Number(row.coordinates[0]), Number(row.coordinates[1])] as [number, number]
-    : [-93.62, 42.03] as [number, number];
+  const tupleLon =
+    Array.isArray(row.coordinates) && row.coordinates.length === 2 && Number.isFinite(Number(row.coordinates[0]))
+      ? Number(row.coordinates[0])
+      : null;
+  const tupleLat =
+    Array.isArray(row.coordinates) && row.coordinates.length === 2 && Number.isFinite(Number(row.coordinates[1]))
+      ? Number(row.coordinates[1])
+      : null;
+
+  const longitude =
+    row.longitude !== null && row.longitude !== undefined && Number.isFinite(Number(row.longitude))
+      ? Number(row.longitude)
+      : tupleLon ?? -93.62;
+  const latitude =
+    row.latitude !== null && row.latitude !== undefined && Number.isFinite(Number(row.latitude))
+      ? Number(row.latitude)
+      : tupleLat ?? 42.03;
+
+  const coords: [number, number] = [longitude, latitude];
+  const areaUnit = row.area_unit === 'hectares' ? 'hectares' : 'acres';
+  const rawAcreage = Number(row.acreage);
+  const rawArea = Number(row.area);
+  const area = Number.isFinite(rawArea) && rawArea > 0 ? rawArea : Number.isFinite(rawAcreage) && rawAcreage > 0 ? rawAcreage : 1;
+  const acreage =
+    Number.isFinite(rawAcreage) && rawAcreage > 0
+      ? rawAcreage
+      : areaUnit === 'hectares'
+      ? Number((area * 2.47105381).toFixed(2))
+      : area;
+
+  const soilType = row.soil_type ? String(row.soil_type) : null;
+  const soilPH =
+    row.soil_ph !== null && row.soil_ph !== undefined && row.soil_ph !== '' && Number.isFinite(Number(row.soil_ph))
+      ? Number(row.soil_ph)
+      : null;
+  const organicMatter =
+    row.organic_matter !== null &&
+    row.organic_matter !== undefined &&
+    row.organic_matter !== '' &&
+    Number.isFinite(Number(row.organic_matter))
+      ? Number(row.organic_matter)
+      : null;
+  const nitrogen = row.nitrogen ? String(row.nitrogen) : null;
+  const phosphorus = row.phosphorus ? String(row.phosphorus) : null;
+  const potassium = row.potassium ? String(row.potassium) : null;
+  const drainage = row.drainage ? String(row.drainage) : null;
+  const lastSoilTest = row.last_soil_test ? String(row.last_soil_test) : null;
+
+  const hasAnySoilData = Boolean(
+    soilType || soilPH !== null || organicMatter !== null || nitrogen || phosphorus || potassium || drainage || lastSoilTest
+  );
+
+  const composedLocation =
+    row.location && String(row.location).trim()
+      ? String(row.location).trim()
+      : [row.city, row.state, row.country].filter((v) => typeof v === 'string' && v.trim()).join(', ');
 
   return {
     id: String(row.id),
     userId: row.user_id || null,
     isDemo: Boolean(row.is_demo),
     name: String(row.name),
-    location: String(row.location),
+    description: row.description ? String(row.description) : null,
+    location: composedLocation,
+    country: row.country ? String(row.country) : null,
+    state: row.state ? String(row.state) : null,
+    city: row.city ? String(row.city) : null,
+    latitude,
+    longitude,
     coordinates: coords,
-    acreage: Number(row.acreage) || 250,
+    area,
+    areaUnit,
+    acreage,
+    farmType: row.farm_type ? String(row.farm_type) : null,
+    operatingStatus: row.operating_status ? String(row.operating_status) : null,
     currentCrop: String(row.current_crop || 'Corn (Maize)'),
+    previousCrop: row.previous_crop ? String(row.previous_crop) : null,
+    irrigationType: row.irrigation_type ? String(row.irrigation_type) : null,
     plantingSeason: String(row.planting_season || 'Spring 2026'),
+    harvestSeason: row.harvest_season ? String(row.harvest_season) : null,
     rotationHistory: Array.isArray(row.rotation_history) ? row.rotation_history.map(String) : [],
-    soilType: String(row.soil_type || 'Silt Loam'),
-    soilPH: Number(row.soil_ph) || 6.5,
-    organicMatter: Number(row.organic_matter) || 3.2,
-    nitrogen: String(row.nitrogen || 'Medium'),
-    phosphorus: String(row.phosphorus || 'Medium'),
-    potassium: String(row.potassium || 'Medium'),
-    drainage: String(row.drainage || 'Well Drained'),
-    lastSoilTest: String(row.last_soil_test || '2026-01-01'),
+    soilType,
+    soilPH,
+    organicMatter,
+    nitrogen,
+    phosphorus,
+    potassium,
+    drainage,
+    lastSoilTest,
+    soilProvenance: hasAnySoilData ? 'Farmer-entered / lab soil record (not NASA-measured)' : null,
+    farmerPriorities: row.farmer_priorities && typeof row.farmer_priorities === 'object' ? row.farmer_priorities : null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
   };
 }

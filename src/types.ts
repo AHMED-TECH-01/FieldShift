@@ -1,20 +1,37 @@
+export type FarmAreaUnit = 'acres' | 'hectares';
+
 export interface Farm {
   id: string;
   name: string;
+  description?: string | null;
   location: string;
-  coordinates: [number, number];
-  acreage: number;
+  country?: string | null;
+  state?: string | null;
+  city?: string | null;
+  latitude: number;
+  longitude: number;
+  coordinates: [number, number]; // [longitude, latitude]
+  area: number;
+  areaUnit: FarmAreaUnit;
+  acreage: number; // Canonical acres for agronomic calculations
+  farmType?: string | null;
+  operatingStatus?: string | null;
   currentCrop: string;
+  previousCrop?: string | null;
+  irrigationType?: string | null;
   plantingSeason: string;
+  harvestSeason?: string | null;
   rotationHistory: string[];
-  soilType: string;
-  soilPH: number;
-  organicMatter: number;
-  nitrogen: string;
-  phosphorus: string;
-  potassium: string;
-  drainage: string;
-  lastSoilTest: string;
+  soilType: string | null;
+  soilPH: number | null;
+  organicMatter: number | null;
+  nitrogen: string | null;
+  phosphorus: string | null;
+  potassium: string | null;
+  drainage: string | null;
+  lastSoilTest: string | null;
+  soilProvenance?: string | null;
+  farmerPriorities?: FarmerPriorities | null;
   createdAt: string;
   userId?: string | null;
   isDemo?: boolean;

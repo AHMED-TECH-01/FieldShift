@@ -1,16 +1,48 @@
 import type { NASAObservation } from '../../src/types.js';
 
+export type NasaErrorCategory =
+  | 'timeout'
+  | 'network'
+  | 'rate_limit'
+  | 'server_error'
+  | 'client_error'
+  | 'auth'
+  | 'parse_error'
+  | 'persistence'
+  | 'validation';
+
+export interface NasaErrorMeta {
+  category?: NasaErrorCategory;
+  retryAfterMs?: number | null;
+  durationMs?: number;
+  details?: Record<string, any>;
+}
+
 export class NasaUpstreamError extends Error {
   status: number;
   code: string;
   retryable: boolean;
+  category: NasaErrorCategory;
+  retryAfterMs: number | null;
+  durationMs?: number;
+  details?: Record<string, any>;
 
-  constructor(message: string, status = 502, code = 'NASA_UPSTREAM_ERROR', retryable = false) {
+  constructor(
+    message: string,
+    status = 502,
+    code = 'NASA_UPSTREAM_ERROR',
+    retryable = false,
+    meta?: NasaErrorMeta
+  ) {
     super(message);
     this.name = 'NasaUpstreamError';
     this.status = status;
     this.code = code;
     this.retryable = retryable;
+    this.category = meta?.category || (status === 504 ? 'timeout' : status === 429 ? 'rate_limit' : status === 401 || status === 403 ? 'auth' : status >= 500 ? 'server_error' : 'client_error');
+    this.retryAfterMs = meta?.retryAfterMs ?? null;
+    this.durationMs = meta?.durationMs;
+    this.details = meta?.details;
   }
 }
 
@@ -208,6 +240,11 @@ export function normalizeModisScaledIndex(
   fillValue = -3000,
   scaleFactor = 0.0001
 ): { value: number | null; isMissing: boolean; qualityFlag: string; qualityStatus: string } {
+  if (!Number.isFinite(scaleFactor) || scaleFactor <= 0 || scaleFactor > 1) {
+    throw new NasaUpstreamError(`Invalid MODIS scale factor: ${scaleFactor}`, 500, 'INVALID_MODIS_SCALE_FACTOR', false, {
+      category: 'validation',
+    });
+  }
   const rel = mapModisReliabilityFlag(reliabilityCode);
   const numVal = typeof rawValue === 'number' ? rawValue : Number(rawValue);
   if (!Number.isFinite(numVal) || numVal === fillValue || numVal < -2000 || numVal > 10000) {
@@ -218,8 +255,8 @@ export function normalizeModisScaledIndex(
       qualityStatus: 'Missing / Sensor Fill Value',
     };
   }
-  // Exclude cloudy / snow-covered optical pixels from usable numeric metrics while keeping flag
-  if (reliabilityCode === 3 || reliabilityCode === 2) {
+  // Mask ALL unusable pixels: snow/ice (2), cloud-contaminated (3), fill (-1), and unverified codes
+  if (!rel.usable) {
     return {
       value: null,
       isMissing: true,
@@ -238,8 +275,23 @@ export function normalizeModisScaledIndex(
 export function normalizeModisLstCelsius(
   rawValue: unknown,
   fillValue = 0,
-  scaleFactor = 0.02
+  scaleFactor = 0.02,
+  qcDayCode?: number | null
 ): { value: number | null; isMissing: boolean; qualityFlag: string; qualityStatus: string } {
+  if (!Number.isFinite(scaleFactor) || scaleFactor <= 0) {
+    throw new NasaUpstreamError(`Invalid MODIS LST scale factor: ${scaleFactor}`, 500, 'INVALID_MODIS_SCALE_FACTOR', false, {
+      category: 'validation',
+    });
+  }
+  // MOD11A2 QC_Day mandatory QA bits (bits 0-1): 2 = cloud-affected, 3 = LST not produced
+  if (typeof qcDayCode === 'number' && Number.isFinite(qcDayCode) && (qcDayCode & 0b11) >= 2) {
+    return {
+      value: null,
+      isMissing: true,
+      qualityFlag: (qcDayCode & 0b11) === 2 ? 'cloudy' : 'fill_or_unverified',
+      qualityStatus: (qcDayCode & 0b11) === 2 ? 'Cloud-affected thermal pixel (QC_Day)' : 'Thermal LST not produced (QC_Day)',
+    };
+  }
   const numVal = typeof rawValue === 'number' ? rawValue : Number(rawValue);
   if (!Number.isFinite(numVal) || numVal === fillValue || numVal < 7500 || numVal > 65535) {
     return {
@@ -301,21 +353,43 @@ export function deduplicateObservationRows<
    4. RESILIENT HTTP FETCH (Timeout, Exponential Backoff, Auth Short-Circuit)
    ========================================================================== */
 
+export function parseRetryAfterMs(headerValue: string | null | undefined): number | null {
+  if (!headerValue) return null;
+  const trimmed = headerValue.trim();
+  if (!trimmed) return null;
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds * 1000) : null;
+  }
+  const targetMs = Date.parse(trimmed);
+  if (Number.isFinite(targetMs)) {
+    return Math.max(0, targetMs - Date.now());
+  }
+  return null;
+}
+
 export async function fetchNasaJson<T = any>(
   url: string,
   options?: {
     timeoutMs?: number;
     maxRetries?: number;
+    baseBackoffMs?: number;
+    maxBackoffMs?: number;
     headers?: Record<string, string>;
     fetchImpl?: typeof globalThis.fetch;
+    onAttempt?: (info: { attempt: number; maxAttempts: number; url: string }) => void;
   }
 ): Promise<T> {
   const timeoutMs = options?.timeoutMs ?? 12000;
-  const maxRetries = options?.maxRetries ?? 2;
+  const maxRetries = Math.min(2, Math.max(0, options?.maxRetries ?? 2));
+  const baseBackoffMs = Math.max(0, options?.baseBackoffMs ?? 450);
+  const maxBackoffMs = Math.max(baseBackoffMs, options?.maxBackoffMs ?? 5000);
   const doFetch = options?.fetchImpl ?? globalThis.fetch;
-  let lastError: unknown;
+  const startedAt = Date.now();
+  let lastError: NasaUpstreamError | null = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    options?.onAttempt?.({ attempt: attempt + 1, maxAttempts: maxRetries + 1, url });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -330,13 +404,14 @@ export async function fetchNasaJson<T = any>(
       });
       clearTimeout(timer);
 
-      // Never retry auth failures (401/403) or client validation errors (400/404)
+      // Never retry auth failures (401/403) or permanent client validation errors (400/404/422)
       if (response.status === 401 || response.status === 403) {
         throw new NasaUpstreamError(
           `NASA service rejected authentication (${response.status}). Check credentials.`,
           response.status,
           'NASA_AUTH_REJECTED',
-          false
+          false,
+          { category: 'auth', durationMs: Date.now() - startedAt }
         );
       }
       if (response.status >= 400 && response.status < 500 && response.status !== 429) {
@@ -345,21 +420,34 @@ export async function fetchNasaJson<T = any>(
           `NASA API client error HTTP ${response.status}${text ? `: ${text.slice(0, 180)}` : ''}`,
           response.status,
           'NASA_CLIENT_ERROR',
-          false
+          false,
+          { category: 'client_error', durationMs: Date.now() - startedAt }
         );
       }
       if (response.status === 429 || response.status >= 500) {
+        const retryAfterMs = parseRetryAfterMs(response.headers?.get?.('retry-after'));
         lastError = new NasaUpstreamError(
           `NASA API transient HTTP ${response.status}`,
           response.status,
           response.status === 429 ? 'NASA_RATE_LIMITED' : 'NASA_SERVER_ERROR',
-          true
+          true,
+          {
+            category: response.status === 429 ? 'rate_limit' : 'server_error',
+            retryAfterMs,
+            durationMs: Date.now() - startedAt,
+          }
         );
       } else if (response.ok) {
         try {
           return (await response.json()) as T;
         } catch {
-          throw new NasaUpstreamError('NASA upstream returned malformed JSON payload.', 502, 'NASA_MALFORMED_JSON', false);
+          throw new NasaUpstreamError(
+            'NASA upstream returned malformed JSON payload.',
+            502,
+            'NASA_MALFORMED_JSON',
+            false,
+            { category: 'parse_error', durationMs: Date.now() - startedAt }
+          );
         }
       }
     } catch (err: any) {
@@ -367,27 +455,53 @@ export async function fetchNasaJson<T = any>(
       if (err instanceof NasaUpstreamError && !err.retryable) {
         throw err;
       }
-      if (err?.name === 'AbortError') {
-        lastError = new NasaUpstreamError(`NASA upstream request timed out after ${timeoutMs}ms`, 504, 'NASA_TIMEOUT', true);
-      } else {
+      if (err instanceof NasaUpstreamError) {
         lastError = err;
+      } else if (err?.name === 'AbortError') {
+        lastError = new NasaUpstreamError(
+          `NASA upstream request timed out after ${timeoutMs}ms`,
+          504,
+          'NASA_TIMEOUT',
+          true,
+          { category: 'timeout', durationMs: Date.now() - startedAt }
+        );
+      } else {
+        const message = err instanceof Error ? err.message : 'Network error communicating with NASA upstream';
+        lastError = new NasaUpstreamError(
+          `NASA upstream network error: ${message}`,
+          502,
+          'NASA_NETWORK_ERROR',
+          true,
+          { category: 'network', durationMs: Date.now() - startedAt }
+        );
       }
     }
 
     if (attempt < maxRetries) {
-      const backoffMs = Math.min(3000, 450 * Math.pow(2, attempt)) + Math.floor(Math.random() * 120);
-      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      const expDelay = Math.min(maxBackoffMs, baseBackoffMs * Math.pow(2, attempt));
+      const jitterRange = Math.min(250, Math.floor(baseBackoffMs * 0.4));
+      const jitter = jitterRange > 0 ? Math.floor(Math.random() * jitterRange) : 0;
+      const retryAfterDelay =
+        lastError?.retryAfterMs !== null && lastError?.retryAfterMs !== undefined
+          ? Math.min(15000, Math.max(0, lastError.retryAfterMs))
+          : 0;
+      const delayMs = Math.max(retryAfterDelay, expDelay + jitter);
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
   }
 
-  if (lastError instanceof NasaUpstreamError) {
+  if (lastError) {
+    lastError.durationMs = Date.now() - startedAt;
     throw lastError;
   }
   throw new NasaUpstreamError(
-    lastError instanceof Error ? lastError.message : 'NASA upstream request failed',
+    'NASA upstream request failed',
     502,
     'NASA_UPSTREAM_FAILED',
-    false
+    false,
+    { category: 'network', durationMs: Date.now() - startedAt }
   );
 }
 
@@ -464,7 +578,12 @@ export function mapDbObservationToCanonical(row: any): NASAObservation {
     retrievedAt: String(row.retrieved_at),
     spatialResolution: row.spatial_resolution || undefined,
     temporalResolution: row.temporal_resolution || undefined,
-    spatialMethod: 'point_centroid_approximation',
+    spatialMethod:
+      row.raw_metadata?.spatialMethod === 'polygon_boundary' ||
+      row.raw_metadata?.spatialMethod === 'grid_cell_point' ||
+      row.raw_metadata?.spatialMethod === 'point_centroid_approximation'
+        ? row.raw_metadata.spatialMethod
+        : 'point_centroid_approximation',
     qualityFlag: row.quality_flag || undefined,
     qualityStatus:
       row.raw_metadata?.qualityStatus ||
@@ -476,7 +595,7 @@ export function mapDbObservationToCanonical(row: any): NASAObservation {
       (dataset === 'nasa-power'
         ? '0.5° (~50 km) meteorological assimilation grid; not a parcel weather station.'
         : dataset === 'modis'
-        ? '250 m / 1 km composite pixel centered on farm coordinate; adjacent land covers may blend.'
+        ? '250 m / 1 km composite pixel centered on point-centroid coordinate; adjacent land covers may blend.'
         : 'Satellite granule coverage metadata; sub-field pixel extraction requires Earthdata binary parsing.'),
     status,
   };

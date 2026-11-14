@@ -570,11 +570,24 @@ export function calculateStrategyEvaluations(
   if (!nasaSummary?.hasModisNumericData) {
     missingDataList.push('MODIS MOD13Q1 250m NDVI/EVI composite has not been synced for this parcel yet.');
   }
+  if (farm.soilPH === null || farm.organicMatter === null || !farm.soilType) {
+    missingDataList.push('Farmer/laboratory soil test parameters (soil series, pH, organic matter %, N-P-K) have not been fully entered.');
+  }
   missingDataList.push('Sub-surface tile drainage maps and county elevator specialty grain bids.');
 
   const soilContext = [
-    `Soil series ${farm.soilType} with ${farm.organicMatter}% organic matter and ${farm.drainage} drainage`,
-    `Measured pH ${farm.soilPH}; reported lab N: ${farm.nitrogen}, P: ${farm.phosphorus}, K: ${farm.potassium} (tested ${farm.lastSoilTest})`,
+    farm.soilType || farm.organicMatter !== null || farm.drainage
+      ? `Soil series: ${farm.soilType || 'Not provided'} | Organic matter: ${
+          farm.organicMatter !== null ? `${farm.organicMatter}%` : 'Not provided'
+        } | Drainage: ${farm.drainage || 'Not provided'} (Farmer-provided)`
+      : 'Soil series, organic matter %, and drainage class: Not yet provided by farmer/lab test',
+    farm.soilPH !== null || farm.nitrogen || farm.phosphorus || farm.potassium
+      ? `Soil pH: ${farm.soilPH !== null ? farm.soilPH : 'Not provided'} | Reported lab N: ${
+          farm.nitrogen || 'Not provided'
+        }, P: ${farm.phosphorus || 'Not provided'}, K: ${farm.potassium || 'Not provided'} (${
+          farm.lastSoilTest ? `tested ${farm.lastSoilTest}` : 'test date not provided'
+        })`
+      : 'Laboratory soil pH and N-P-K fertility measurements: Not yet provided',
   ];
 
   const modisEvidenceLine = nasaSummary?.hasModisNumericData

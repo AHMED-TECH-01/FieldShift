@@ -16,6 +16,7 @@ This document provides the complete reference for all environment variables used
 | `SUPABASE_SECRET_KEY` | **Backend Secret** | **Yes** | *None* | Server-side admin/health checks & user-scoped clients | `"sb_secret_..."` |
 | `GEMINI_API_KEY` | **Backend Secret** | **Yes\*** | *None* | `@google/genai` server-side AI Advisor (`backend/gemini.ts`) | `"AIzaSy..."` |
 | `GEMINI_TIMEOUT_MS` | **Backend Config** | No | `25000` | Timeout (ms) before failing over or falling back | `"25000"` |
+| `MODIS_TIMEOUT_MS` | **Backend Config** | No | `25000` | Timeout (ms) per ORNL DAAC MODIS Subsets REST request (max 2 retries) | `"25000"` |
 | `EARTHDATA_TOKEN` | **Backend Optional** | No | *None* | Future authenticated HDF5/NetCDF4 granule downloads | `""` |
 | `NASA_API_KEY` | **Backend Optional** | No | *None* | Optional `api.nasa.gov` rate-limit expansion | `""` |
 | `APP_PORT` | **Local Dev Config** | No | `3000` | Local `server.ts` HTTP port (not used on Vercel) | `"3000"` |
@@ -47,7 +48,7 @@ This document provides the complete reference for all environment variables used
 ## 4. NASA Earth Observation Data Services & Credential Setup
 
 - **NASA POWER Daily & Monthly Point API** (`https://power.larc.nasa.gov/docs/`): Live public agroclimatology API (no key required) queried by farm longitude/latitude (`T2M`, `T2M_MAX`, `T2M_MIN`, `PRECTOTCORR`, `RH2M`, `ALLSKY_SFC_SW_DWN`, `WS2M`).
-- **NASA MODIS via ORNL DAAC Global Subsets REST API** (`https://modis.ornl.gov/rst/api/v1` / `https://modis.gsfc.nasa.gov/data/`): Live public 250m `MOD13Q1` (`NDVI`, `EVI`, `pixel_reliability`) & 1km `MOD11A2` (`LST_Day_1km`) pixel extraction with automatic cloud/snow exclusion (`pixel_reliability` `2`/`3`), plus Earthdata CMR granule metadata. No API key required.
+- **NASA MODIS via ORNL DAAC Global Subsets REST API** (`https://modis.ornl.gov/rst/api/v1` / `https://modis.gsfc.nasa.gov/data/`): Live public 250m `MOD13Q1` (`NDVI`, `EVI`, `pixel_reliability`) & 1km `MOD11A2` (`LST_Day_1km`) pixel extraction with automatic cloud/snow/fill exclusion, configurable `MODIS_TIMEOUT_MS` (default `25000` ms) and bounded retries (`<=2`), plus Earthdata CMR granule metadata. No API key required.
 - **NASA Earthdata CMR Granule Search** (`https://cmr.earthdata.nasa.gov/search/granules.json`): Live metadata discovery for `SPL4SMGP` ([SMAP](https://nsidc.org/data/smap)), `GPM_3IMERGDL` ([GPM IMERG](https://gpm.nasa.gov/data)), and `ECO_L3T_JET` ([ECOSTRESS](https://ecostress.jpl.nasa.gov/)). Granule metadata rows are stored with `value = null` and `is_missing = true` until authenticated Earthdata HDF5/NetCDF4 binary extraction is added.
 - **How to Obtain Optional NASA Credentials**:
   - `EARTHDATA_TOKEN`: Create a free account at [urs.earthdata.nasa.gov](https://urs.earthdata.nasa.gov/), go to **Generate Token**, and copy the Bearer token into `.env` / Vercel secrets (never into `VITE_*`).
