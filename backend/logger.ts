@@ -9,9 +9,21 @@ const REDACTED_KEYS = new Set([
   'authorization',
   'cookie',
   'set-cookie',
+  'otp',
+  'otp_code',
+  'otpcode',
+  'otp_hash',
+  'otphash',
+  'code',
+  'verificationcode',
+  'verification_code',
+  'pendingtoken',
+  'pending_token',
+  'smtppass',
+  'smtp_pass',
 ]);
 
-function sanitizeMeta(value: unknown, depth = 0): unknown {
+export function sanitizeMeta(value: unknown, depth = 0): unknown {
   if (depth > 4) return '[Truncated]';
   if (value === null || value === undefined) return value;
   if (Array.isArray(value)) {

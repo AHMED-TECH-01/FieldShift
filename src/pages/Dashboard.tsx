@@ -36,6 +36,7 @@ import {
   Trash2,
   CloudDownload,
   BookmarkCheck,
+  Layers,
 } from 'lucide-react';
 import {
   Farm,
@@ -414,18 +415,31 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
       let totalGranules = 0;
       let modisNumeric = 0;
+      let smapNumeric = 0;
+      let gpmNumeric = 0;
       const warnings: string[] = [];
 
       results.forEach((r, idx) => {
         const ds = targets[idx];
         if (r.status === 'fulfilled') {
           totalGranules += Number(r.value.granulesFound ?? r.value.recordsSaved ?? 0);
+          const pixels = Number(r.value.numericPixelCount || 0);
           if (ds === 'modis') {
-            modisNumeric = Number(r.value.numericPixelCount || 0);
+            modisNumeric = pixels;
             if (r.value.status === 'partial' && (r.value.failureExplanation || r.value.ornlError)) {
               warnings.push(
-                `MODIS CMR granule indexed; pixel retrieval failed (${r.value.failureExplanation || r.value.ornlError})`
+                `MODIS granule indexed; pixel extraction failed (${r.value.failureExplanation || r.value.ornlError})`
               );
+            }
+          } else if (ds === 'smap') {
+            smapNumeric = pixels;
+            if (pixels === 0 && r.value.error) {
+              warnings.push(`SMAP granule indexed; pixel data pending (${r.value.error})`);
+            }
+          } else if (ds === 'gpm') {
+            gpmNumeric = pixels;
+            if (pixels === 0 && r.value.error) {
+              warnings.push(`GPM granule indexed; pixel data pending (${r.value.error})`);
             }
           }
         } else {
@@ -433,21 +447,26 @@ export const Dashboard: React.FC<DashboardProps> = ({
         }
       });
 
-      if (warnings.length === targets.length) {
+      const totalPixels = modisNumeric + smapNumeric + gpmNumeric;
+      if (warnings.length === targets.length && totalGranules === 0) {
         setSyncBanner({
           type: 'error',
           message: `Satellite sync failed: ${warnings[0]}`,
         });
       } else {
+        const parts: string[] = [];
+        if (modisNumeric > 0) parts.push(`${modisNumeric} MODIS`);
+        if (smapNumeric > 0) parts.push(`${smapNumeric} SMAP`);
+        if (gpmNumeric > 0) parts.push(`${gpmNumeric} GPM`);
         setSyncBanner({
-          type: warnings.length > 0 && modisNumeric === 0 ? 'error' : 'success',
+          type: warnings.length > 0 && totalPixels === 0 ? 'error' : 'success',
           message:
-            modisNumeric > 0
-              ? `Synced ${modisNumeric} MODIS 250m/1km pixel records and indexed ${totalGranules} Earthdata CMR granules.${
-                  warnings.length > 0 ? ` Partial issues: ${warnings.join('; ')}.` : ''
+            totalPixels > 0
+              ? `Persisted ${parts.join(', ')} pixel observations and indexed ${totalGranules} Earthdata CMR granules.${
+                  warnings.length > 0 ? ` Pending/Partial: ${warnings.join('; ')}.` : ''
                 }`
-              : `Indexed ${totalGranules} NASA Earthdata CMR granules.${
-                  warnings.length > 0 ? ` Notice: ${warnings.join('; ')}.` : ''
+              : `Granule Indexed (${totalGranules} Earthdata CMR) — Pixel Data Pending.${
+                  warnings.length > 0 ? ` Details: ${warnings.join('; ')}.` : ''
                 }`,
         });
       }
@@ -472,8 +491,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const outcomes = res?.outcomes || {};
       const powerOutcome = outcomes['nasa-power'];
       const modisOutcome = outcomes.modis;
+      const smapOutcome = outcomes.smap;
+      const gpmOutcome = outcomes.gpm;
       const powerSaved = powerOutcome?.recordsSaved || 0;
       const modisPixels = modisOutcome?.numericPixelCount || 0;
+      const smapPixels = smapOutcome?.numericPixelCount || 0;
+      const gpmPixels = gpmOutcome?.numericPixelCount || 0;
       const cmrTotal = ['smap', 'gpm', 'modis', 'ecostress'].reduce(
         (sum, k) => sum + Number(outcomes[k]?.granulesFound || 0),
         0
@@ -485,22 +508,25 @@ export const Dashboard: React.FC<DashboardProps> = ({
       if (modisOutcome && !modisOutcome.ok) {
         partialIssues.push(
           modisOutcome.granulesFound > 0
-            ? `MODIS CMR granules indexed (${modisOutcome.granulesFound}), ORNL pixel API unavailable (${modisOutcome.ornlError || modisOutcome.error || 'timeout'})`
+            ? `MODIS granule indexed (${modisOutcome.granulesFound}), pixel retrieval failed (${modisOutcome.ornlError || modisOutcome.error || 'timeout'})`
             : `MODIS failed (${modisOutcome.error || 'upstream timeout'})`
         );
       }
       for (const k of ['smap', 'gpm', 'ecostress']) {
         if (outcomes[k] && !outcomes[k].ok) {
-          partialIssues.push(`${k.toUpperCase()} failed (${outcomes[k].error || 'upstream error'})`);
+          partialIssues.push(`${k.toUpperCase()} (${outcomes[k].error || 'pixel data pending'})`);
+        } else if (outcomes[k]?.granulesFound > 0 && Number(outcomes[k]?.numericPixelCount || 0) === 0 && k !== 'ecostress') {
+          partialIssues.push(`${k.toUpperCase()} granule indexed — pixel data pending`);
         }
       }
 
+      const satPixels = modisPixels + smapPixels + gpmPixels;
       setSyncBanner({
-        type: partialIssues.length > 0 && powerSaved === 0 && modisPixels === 0 ? 'error' : 'success',
+        type: partialIssues.length > 0 && powerSaved === 0 && satPixels === 0 ? 'error' : 'success',
         message:
           partialIssues.length > 0
-            ? `Ingested ${powerSaved} NASA POWER rows, ${modisPixels} MODIS pixel rows, and ${cmrTotal} CMR granules. Note: ${partialIssues.join('; ')}.`
-            : `Ingested ${powerSaved} NASA POWER rows, ${modisPixels} MODIS 250m/1km pixel records, and ${cmrTotal} Earthdata CMR granule metadata entries.`,
+            ? `Ingested ${powerSaved} NASA POWER rows, ${satPixels} satellite pixel rows (${modisPixels} MODIS, ${smapPixels} SMAP, ${gpmPixels} GPM), and ${cmrTotal} CMR granules. Note: ${partialIssues.join('; ')}.`
+            : `Ingested ${powerSaved} NASA POWER rows, ${satPixels} satellite pixel records, and ${cmrTotal} Earthdata CMR granule metadata entries.`,
       });
       await fetchNasaAndFarmAnalytics(targetFarmId);
       await recalculateStrategies(priorities, activeScenario, targetFarmId);
@@ -1248,6 +1274,25 @@ export const Dashboard: React.FC<DashboardProps> = ({
             const smap = rt?.soilMoistureSMAP;
             const gpm = rt?.precipitationGPM;
             const modis = rt?.vegetationNDVI;
+            const ecostress = rt?.evapotranspirationECOSTRESS;
+            const pipelines = nasaTelemetry?.datasetPipelines || {};
+            const formatAttemptTime = (iso?: string | null) => {
+              if (!iso) return 'Not attempted';
+              const parsed = new Date(iso);
+              return Number.isNaN(parsed.getTime()) ? String(iso) : parsed.toLocaleString();
+            };
+            const stageTone = (status?: string) => {
+              if (['indexed', 'completed', 'extracted', 'validated', 'persisted'].includes(status || '')) {
+                return 'bg-[#EAF5DF] border-[#76B93F]/60 text-[#073D2B] font-semibold';
+              }
+              if (['failed', 'auth_failed'].includes(status || '')) {
+                return 'bg-rose-50 border-rose-200 text-rose-700 font-semibold';
+              }
+              if (['auth_required', 'quality_masked', 'empty', 'skipped'].includes(status || '')) {
+                return 'bg-amber-50 border-amber-200 text-amber-800';
+              }
+              return 'bg-slate-50 border-slate-200 text-slate-600';
+            };
             const topStrategy = [...strategies].sort((a, b) => b.score - a.score)[0];
 
             return (
@@ -1280,8 +1325,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             ? `MODIS Quality Masked (${modis.observedAt})`
                             : modis?.granuleIndexed || modis?.status === 'granule_metadata_only'
                             ? modis?.pixelRetrievalStatus === 'failed'
-                              ? 'MODIS Granule Indexed • Pixel Retrieval Failed'
-                              : 'MODIS Granule Indexed • Pixel Retrieval Pending'
+                              ? 'MODIS Granule Indexed — Pixel Data Pending (Retrieval Failed)'
+                              : 'MODIS Granule Indexed — Pixel Data Pending'
                             : modis?.status === 'ingestion_failed'
                             ? 'MODIS Pixel Retrieval Failed'
                             : 'MODIS Pixel Retrieval Pending'
@@ -1388,174 +1433,361 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </p>
                 </div>
 
-                {/* Card 2: NASA POWER Precipitation (Strict Provenance — Separate from GPM CMR) */}
+                {/* Card 2: Precipitation (NASA POWER Numerical + GPM IMERG Honest Status) */}
                 {(() => {
                   const precipMm = precipPower?.valueTotalMm ?? power?.precipTotalMm ?? null;
                   const daysObserved = precipPower?.daysObserved || power?.daysObserved || 0;
                   const winStart = precipPower?.windowStart || power?.windowStart || null;
                   const winEnd = precipPower?.windowEnd || power?.windowEnd || null;
                   const hasPrecip = precipMm !== null && precipMm !== undefined;
+                  const gpmHasPixels = Boolean(gpm?.status === 'synced' && gpm?.persisted && gpm?.value !== null && gpm?.value !== undefined);
                   return (
-                    <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
+                    <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1.5">
                       <div className="flex items-center justify-between text-xs text-[#527367]">
                         <span className="flex items-center gap-1">
                           <Droplets className="w-3.5 h-3.5 text-blue-600" />
-                          Precip (NASA POWER)
+                          Precip (POWER / GPM)
                         </span>
-                        <span className="text-[10px] font-mono text-emerald-700 font-bold">
-                          {hasPrecip ? 'LIVE 0.5° MM' : gpm?.latestGranuleId ? 'GPM CMR ONLY' : 'NOT SYNCED'}
+                        <span
+                          className={`text-[10px] font-mono font-bold ${
+                            hasPrecip || gpmHasPixels
+                              ? 'text-emerald-700'
+                              : gpm?.status === 'ingestion_failed'
+                              ? 'text-rose-700'
+                              : 'text-amber-700'
+                          }`}
+                        >
+                          {hasPrecip
+                            ? gpmHasPixels
+                              ? 'POWER + GPM'
+                              : 'LIVE 0.5° MM'
+                            : gpmHasPixels
+                            ? 'GPM 0.1°'
+                            : gpm?.latestGranuleId
+                            ? 'GPM CMR ONLY'
+                            : 'NOT SYNCED'}
                         </span>
                       </div>
                       <div className="font-display text-2xl font-bold text-[#073D2B]">
-                        {nasaLoading ? 'Loading...' : hasPrecip ? `${precipMm} mm` : 'Unavailable'}
+                        {nasaLoading
+                          ? 'Loading...'
+                          : hasPrecip
+                          ? `${precipMm} mm`
+                          : gpmHasPixels
+                          ? `${gpm.value} mm/d`
+                          : gpm?.latestGranuleId
+                          ? 'Granule Indexed'
+                          : 'Unavailable'}
                       </div>
                       <p className="text-[11px] text-[#2A4D3E] break-words">
                         {hasPrecip
-                          ? `PRECTOTCORR (${daysObserved}d${winStart && winEnd ? `: ${winStart} to ${winEnd}` : ''})${
-                              gpm?.latestGranuleId ? ' • GPM CMR: metadata only' : ''
-                            }`
-                          : `Sync NASA POWER for daily PRECTOTCORR rainfall${
-                              gpm?.latestGranuleId ? ' • GPM CMR granule indexed (no pixels)' : ''
-                            }`}
+                          ? `POWER PRECTOTCORR (${daysObserved}d${winStart && winEnd ? `: ${winStart} to ${winEnd}` : ''})`
+                          : 'Sync NASA POWER for daily PRECTOTCORR rainfall'}
                       </p>
+                      <p className="text-[10px] text-[#527367] break-words">
+                        {gpmHasPixels
+                          ? `GPM IMERG OPeNDAP: ${gpm.value} mm/day (${gpm.observedAt || 'latest'})`
+                          : gpm?.latestGranuleId
+                          ? `GPM: Granule Indexed — Pixel Data Pending${gpm?.error ? ` (${gpm.error})` : ''}`
+                          : gpm?.error
+                          ? `GPM failed: ${gpm.error}`
+                          : 'GPM IMERG: Not synced yet'}
+                      </p>
+                      {gpm?.lastAttemptAt && !gpmHasPixels && (
+                        <p className="text-[10px] text-[#8C9E94] font-mono">
+                          GPM Last Attempt: {formatAttemptTime(gpm.lastAttemptAt)}
+                        </p>
+                      )}
                     </div>
                   );
                 })()}
 
-                {/* Card 3: NASA SMAP CMR */}
-                <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1">
-                  <div className="flex items-center justify-between text-xs text-[#527367]">
-                    <span className="flex items-center gap-1">
-                      <Satellite className="w-3.5 h-3.5 text-sky-600" />
-                      NASA SMAP L4
-                    </span>
-                    <span className="text-[10px] font-mono text-sky-700 font-bold">
-                      {smap?.latestGranuleId ? '9km CMR' : 'NOT SYNCED'}
-                    </span>
-                  </div>
-                  <div className="font-display text-xl sm:text-2xl font-bold text-[#073D2B]">
-                    {nasaLoading
-                      ? 'Loading...'
-                      : smap?.latestGranuleId
-                      ? 'Granule Indexed'
-                      : 'Not Synced'}
-                  </div>
-                  <p className="text-[11px] text-[#2A4D3E] break-words">
-                    {smap?.latestGranuleId
-                      ? `Pass: ${smap.granuleTimestamp ? new Date(smap.granuleTimestamp).toLocaleDateString() : 'Indexed'} • Pixel HDF5 requires Earthdata token`
-                      : 'Index CMR granules to verify SMAP L4 orbital overpass availability'}
-                  </p>
-                </div>
-
-                {/* Card 4: NASA MODIS 250m Live NDVI / EVI / LST */}
-                <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-2">
-                  <div className="flex items-center justify-between text-xs text-[#527367]">
-                    <span className="flex items-center gap-1">
-                      <Sprout className="w-3.5 h-3.5 text-emerald-600" />
-                      NASA MODIS
-                    </span>
-                    <span
-                      className={`text-[10px] font-mono font-bold ${
-                        modis?.pixelRetrievalStatus === 'failed' || modis?.status === 'ingestion_failed'
-                          ? 'text-rose-700'
-                          : modis?.status === 'quality_masked'
-                          ? 'text-amber-700'
-                          : modis?.persisted
-                          ? 'text-emerald-700'
-                          : 'text-[#527367]'
-                      }`}
-                    >
-                      {modis?.persisted && modis?.status === 'synced'
-                        ? 'PERSISTED 250m'
-                        : modis?.status === 'quality_masked'
-                        ? 'CLOUD/SNOW'
-                        : modis?.pixelRetrievalStatus === 'failed' || modis?.status === 'ingestion_failed'
-                        ? 'PIXEL FAILED'
-                        : modis?.granuleIndexed || modis?.latestGranuleId
-                        ? 'CMR ONLY'
-                        : 'PENDING'}
-                    </span>
-                  </div>
-                  <div className="font-display text-xl sm:text-2xl font-bold text-[#073D2B]">
-                    {nasaLoading
-                      ? 'Loading...'
-                      : modis?.persisted && modis?.status === 'synced' && modis?.currentNDVI !== null && modis?.currentNDVI !== undefined
-                      ? `${modis.currentNDVI} NDVI`
-                      : modis?.status === 'quality_masked'
-                      ? 'Quality Masked'
-                      : modis?.granuleIndexed || modis?.latestGranuleId
-                      ? 'Granule Indexed'
-                      : modis?.pixelRetrievalStatus === 'failed' || modis?.status === 'ingestion_failed'
-                      ? 'Pixel Retrieval Failed'
-                      : 'Pixel Retrieval Pending'}
-                  </div>
-
-                  {/* Independent Pipeline Stage Indicators */}
-                  {!nasaLoading && (
-                    <div className="grid grid-cols-2 gap-1 text-[10px] font-mono pt-0.5">
-                      <div
-                        className={`px-1.5 py-0.5 rounded border ${
-                          modis?.granuleIndexed || modis?.latestGranuleId
-                            ? 'bg-[#FAFDF8] border-[#D5E5CA] text-[#145C3D]'
-                            : 'bg-slate-50 border-slate-200 text-slate-500'
-                        }`}
-                      >
-                        {modis?.granuleIndexed || modis?.latestGranuleId ? 'Granule Indexed' : 'No CMR Granule'}
-                      </div>
-                      <div
-                        className={`px-1.5 py-0.5 rounded border ${
-                          modis?.pixelsExtracted
-                            ? 'bg-[#EAF5DF] border-[#76B93F]/60 text-[#073D2B] font-semibold'
-                            : modis?.pixelRetrievalStatus === 'failed' || modis?.status === 'ingestion_failed'
-                            ? 'bg-rose-50 border-rose-200 text-rose-700 font-semibold'
-                            : modis?.status === 'quality_masked'
-                            ? 'bg-amber-50 border-amber-200 text-amber-800'
-                            : 'bg-slate-50 border-slate-200 text-slate-600'
-                        }`}
-                      >
-                        {syncingCmr || syncingAll
-                          ? 'Pixel Retrieval Pending'
-                          : modis?.pixelsExtracted
-                          ? 'Pixels Extracted'
-                          : modis?.pixelRetrievalStatus === 'failed' || modis?.status === 'ingestion_failed'
-                          ? 'Pixel Retrieval Failed'
-                          : modis?.status === 'quality_masked'
-                          ? 'Quality Masked'
-                          : 'Pixel Retrieval Pending'}
-                      </div>
-                      <div
-                        className={`col-span-2 px-1.5 py-0.5 rounded border flex items-center justify-between ${
-                          modis?.persisted
-                            ? 'bg-[#EAF5DF] border-[#76B93F]/60 text-[#073D2B] font-semibold'
-                            : 'bg-[#FAFDF8] border-[#E2E8DE] text-[#527367]'
-                        }`}
-                      >
-                        <span>{modis?.persisted ? 'Persisted (Supabase)' : 'Not Persisted'}</span>
-                        <span>
-                          {modis?.lastSuccessfulObservationDate || modis?.observedAt
-                            ? `Obs: ${modis.lastSuccessfulObservationDate || modis.observedAt}`
-                            : 'No Obs Yet'}
+                {/* Card 3: NASA SMAP L4 Soil Moisture (OPeNDAP Numeric or Honest CMR Pending) */}
+                {(() => {
+                  const smapHasPixels = Boolean(smap?.status === 'synced' && smap?.persisted && smap?.value !== null && smap?.value !== undefined);
+                  const smapStages = smap?.stages || pipelines?.smap?.stages;
+                  return (
+                    <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-1.5">
+                      <div className="flex items-center justify-between text-xs text-[#527367]">
+                        <span className="flex items-center gap-1">
+                          <Satellite className="w-3.5 h-3.5 text-sky-600" />
+                          NASA SMAP L4
+                        </span>
+                        <span
+                          className={`text-[10px] font-mono font-bold ${
+                            smapHasPixels
+                              ? 'text-emerald-700'
+                              : smap?.status === 'ingestion_failed'
+                              ? 'text-rose-700'
+                              : smap?.latestGranuleId
+                              ? 'text-amber-700'
+                              : 'text-[#527367]'
+                          }`}
+                        >
+                          {smapHasPixels
+                            ? 'PERSISTED 9km'
+                            : smap?.latestGranuleId
+                            ? 'CMR ONLY'
+                            : smap?.status === 'ingestion_failed'
+                            ? 'FAILED'
+                            : 'NOT SYNCED'}
                         </span>
                       </div>
+                      <div className="font-display text-xl sm:text-2xl font-bold text-[#073D2B]">
+                        {nasaLoading
+                          ? 'Loading...'
+                          : smapHasPixels
+                          ? `${smap.value} m³/m³`
+                          : smap?.latestGranuleId
+                          ? 'Granule Indexed'
+                          : smap?.status === 'ingestion_failed'
+                          ? 'Retrieval Failed'
+                          : 'Not Synced'}
+                      </div>
+                      {!nasaLoading && (
+                        <div className="grid grid-cols-5 gap-1 text-[9px] font-mono">
+                          <span className={`px-1 py-0.5 rounded border text-center truncate ${stageTone(smapStages?.cmrDiscovery?.status)}`} title="CMR Discovery">
+                            CMR
+                          </span>
+                          <span className={`px-1 py-0.5 rounded border text-center truncate ${stageTone(smapStages?.granuleDownload?.status)}`} title="Granule Download / OPeNDAP Auth">
+                            DL
+                          </span>
+                          <span className={`px-1 py-0.5 rounded border text-center truncate ${stageTone(smapStages?.pixelExtraction?.status)}`} title="Pixel Extraction">
+                            EXT
+                          </span>
+                          <span className={`px-1 py-0.5 rounded border text-center truncate ${stageTone(smapStages?.observationValidation?.status)}`} title="Observation Validation">
+                            VAL
+                          </span>
+                          <span className={`px-1 py-0.5 rounded border text-center truncate ${stageTone(smapStages?.databasePersistence?.status)}`} title="Database Persistence">
+                            DB
+                          </span>
+                        </div>
+                      )}
+                      <p className="text-[11px] text-[#2A4D3E] break-words">
+                        {smapHasPixels
+                          ? `Root-zone: ${smap.rootZoneMoisture ?? smap.value} • Surface: ${smap.surfaceMoisture ?? '—'} m³/m³ (${smap.observedAt || 'latest'})`
+                          : smap?.latestGranuleId
+                          ? `Granule Indexed — Pixel Data Pending${smap?.error ? ` (${smap.error})` : ''}`
+                          : smap?.error
+                          ? smap.error
+                          : 'Index CMR granules to verify SMAP L4 overpass or configure EARTHDATA_TOKEN for OPeNDAP pixels'}
+                      </p>
+                      {smap?.lastAttemptAt && (
+                        <p className="text-[10px] text-[#8C9E94] font-mono">
+                          Last Attempt: {formatAttemptTime(smap.lastAttemptAt)}
+                        </p>
+                      )}
                     </div>
-                  )}
+                  );
+                })()}
 
-                  <p className="text-[11px] text-[#2A4D3E] break-words">
-                    {modis?.persisted && modis?.status === 'synced'
-                      ? `EVI: ${modis.currentEVI ?? '—'}${modis.lstDayC !== null && modis.lstDayC !== undefined ? ` • LST: ${modis.lstDayC}°C` : ''} • ${
-                          modis?.spatialMethod === 'polygon_boundary' ? 'Polygon boundary' : 'Point-centroid approx.'
-                        }`
-                      : modis?.status === 'quality_masked'
-                      ? `${modis.qualityStatus || 'Cloud/Snow obscured'} (${modis.observedAt || 'latest composite'})`
-                      : modis?.failureExplanation || modis?.ornlError || modis?.error
-                      ? `${modis.failureExplanation || modis.ornlError || modis.error}`
-                      : modis?.granuleIndexed || modis?.latestGranuleId
-                      ? 'CMR granule indexed only (NOT live pixel NDVI). Run Sync MODIS & CMR to extract ORNL DAAC pixels.'
-                      : 'Ingest MODIS 250m to retrieve live ORNL DAAC NDVI, EVI & pixel reliability.'}
-                  </p>
-                </div>
+                {/* Card 4: NASA MODIS 250m Live NDVI / EVI / LST */}
+                {(() => {
+                  const modisStages = modis?.stages || pipelines?.modis?.stages;
+                  const modisFailed = modis?.pixelRetrievalStatus === 'failed' || modis?.status === 'ingestion_failed';
+                  return (
+                    <div className="bg-white p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-2">
+                      <div className="flex items-center justify-between text-xs text-[#527367]">
+                        <span className="flex items-center gap-1">
+                          <Sprout className="w-3.5 h-3.5 text-emerald-600" />
+                          NASA MODIS
+                        </span>
+                        <span
+                          className={`text-[10px] font-mono font-bold ${
+                            modisFailed
+                              ? 'text-rose-700'
+                              : modis?.status === 'quality_masked'
+                              ? 'text-amber-700'
+                              : modis?.persisted
+                              ? 'text-emerald-700'
+                              : 'text-[#527367]'
+                          }`}
+                        >
+                          {modis?.persisted && modis?.status === 'synced'
+                            ? 'PERSISTED 250m'
+                            : modis?.status === 'quality_masked'
+                            ? 'CLOUD/SNOW'
+                            : modisFailed
+                            ? 'PIXEL FAILED'
+                            : modis?.granuleIndexed || modis?.latestGranuleId
+                            ? 'CMR ONLY'
+                            : 'PENDING'}
+                        </span>
+                      </div>
+                      <div className="font-display text-xl sm:text-2xl font-bold text-[#073D2B]">
+                        {nasaLoading
+                          ? 'Loading...'
+                          : modis?.persisted && modis?.status === 'synced' && modis?.currentNDVI !== null && modis?.currentNDVI !== undefined
+                          ? `${modis.currentNDVI} NDVI`
+                          : modis?.status === 'quality_masked'
+                          ? 'Quality Masked'
+                          : modis?.granuleIndexed || modis?.latestGranuleId
+                          ? 'Granule Indexed'
+                          : modisFailed
+                          ? 'Pixel Retrieval Failed'
+                          : 'Pixel Retrieval Pending'}
+                      </div>
+
+                      {/* 5 Independent Pipeline Stage Indicators */}
+                      {!nasaLoading && (
+                        <div className="grid grid-cols-5 gap-1 text-[9px] font-mono pt-0.5">
+                          <div
+                            className={`px-1 py-0.5 rounded border text-center truncate ${stageTone(
+                              modisStages?.cmrDiscovery?.status || (modis?.granuleIndexed || modis?.latestGranuleId ? 'indexed' : 'pending')
+                            )}`}
+                            title="1. CMR Discovery"
+                          >
+                            CMR
+                          </div>
+                          <div
+                            className={`px-1 py-0.5 rounded border text-center truncate ${stageTone(
+                              modisStages?.granuleDownload?.status || (modisFailed ? 'failed' : modis?.pixelsExtracted ? 'completed' : 'pending')
+                            )}`}
+                            title="2. Granule Download"
+                          >
+                            DL
+                          </div>
+                          <div
+                            className={`px-1 py-0.5 rounded border text-center truncate ${stageTone(
+                              modisStages?.pixelExtraction?.status || (modis?.pixelsExtracted ? 'extracted' : modisFailed ? 'failed' : 'pending')
+                            )}`}
+                            title="3. Pixel Extraction"
+                          >
+                            EXT
+                          </div>
+                          <div
+                            className={`px-1 py-0.5 rounded border text-center truncate ${stageTone(
+                              modisStages?.observationValidation?.status || (modis?.pixelsExtracted ? 'validated' : 'pending')
+                            )}`}
+                            title="4. Observation Validation"
+                          >
+                            VAL
+                          </div>
+                          <div
+                            className={`px-1 py-0.5 rounded border text-center truncate ${stageTone(
+                              modisStages?.databasePersistence?.status || (modis?.persisted ? 'persisted' : 'pending')
+                            )}`}
+                            title="5. Database Persistence"
+                          >
+                            DB
+                          </div>
+                        </div>
+                      )}
+
+                      <p className="text-[11px] text-[#2A4D3E] break-words">
+                        {modis?.persisted && modis?.status === 'synced'
+                          ? `EVI: ${modis.currentEVI ?? '—'}${modis.lstDayC !== null && modis.lstDayC !== undefined ? ` • LST: ${modis.lstDayC}°C` : ''} • ${
+                              modis?.spatialMethod === 'polygon_boundary' ? 'Polygon boundary' : 'Point-centroid approx.'
+                            } (${modis.observedAt || 'latest'})`
+                          : modis?.status === 'quality_masked'
+                          ? `${modis.qualityStatus || 'Cloud/Snow obscured'} (${modis.observedAt || 'latest composite'})`
+                          : modis?.failureExplanation || modis?.ornlError || modis?.error
+                          ? `Granule Indexed — Pixel Data Pending: ${modis.failureExplanation || modis.ornlError || modis.error}`
+                          : modis?.granuleIndexed || modis?.latestGranuleId
+                          ? 'Granule Indexed — Pixel Data Pending. Run Sync MODIS & CMR to retrieve ORNL/OPeNDAP pixels.'
+                          : 'Ingest MODIS 250m to retrieve live ORNL DAAC NDVI, EVI & pixel reliability.'}
+                      </p>
+                      {modis?.lastAttemptAt && (
+                        <p className="text-[10px] text-[#8C9E94] font-mono">
+                          Last Attempt: {formatAttemptTime(modis.lastAttemptAt)}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
 
               </div>
+
+              {/* 5-Stage Satellite Ingestion Telemetry Matrix */}
+              {!nasaLoading && (
+                <div className="bg-white p-4 sm:p-5 rounded-2xl border border-[#D5E5CA] shadow-2xs space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-[#145C3D]" />
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-[#073D2B]">
+                        Satellite Pipeline Stage Telemetry (CMR &rarr; Download &rarr; Extract &rarr; Validate &rarr; Persist)
+                      </h3>
+                    </div>
+                    <span className="text-[10px] text-[#527367] font-mono">
+                      Zero Synthetic Fallback • Real Persisted States Only
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {([
+                      { key: 'modis', label: 'MODIS (MOD13Q1 / MOD11A2)', metric: modis },
+                      { key: 'smap', label: 'SMAP L4 (SPL4SMGP)', metric: smap },
+                      { key: 'gpm', label: 'GPM IMERG (GPM_3IMERGDL)', metric: gpm },
+                      { key: 'ecostress', label: 'ECOSTRESS (ECO_L2_LSTE)', metric: ecostress },
+                    ] as const).map(({ key, label, metric }) => {
+                      const pipe = pipelines?.[key];
+                      const st = metric?.stages || pipe?.stages;
+                      const isSynced = metric?.status === 'synced' && metric?.persisted;
+                      const isGranuleOnly = !isSynced && Boolean(metric?.latestGranuleId || pipe?.granuleIndexed);
+                      const lastErr =
+                        metric?.failureExplanation ||
+                        metric?.ornlError ||
+                        metric?.error ||
+                        pipe?.latestError ||
+                        null;
+                      const lastAttempt = metric?.lastAttemptAt || pipe?.lastAttemptAt || null;
+                      return (
+                        <div key={key} className="p-3 rounded-xl bg-[#FAFDF8] border border-[#E2E8DE] space-y-1.5">
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <span className="font-bold text-[#073D2B]">{label}</span>
+                            <span
+                              className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                                isSynced
+                                  ? 'bg-[#EAF5DF] text-[#073D2B]'
+                                  : metric?.status === 'ingestion_failed'
+                                  ? 'bg-rose-50 text-rose-700'
+                                  : isGranuleOnly
+                                  ? 'bg-amber-50 text-amber-800'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              {isSynced
+                                ? 'Persisted'
+                                : isGranuleOnly
+                                ? 'Granule Indexed — Pixel Data Pending'
+                                : metric?.status === 'quality_masked'
+                                ? 'Quality Masked'
+                                : metric?.status === 'ingestion_failed'
+                                ? 'Failed'
+                                : 'Pending'}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-5 gap-1 text-[10px] font-mono">
+                            <div className={`px-1.5 py-0.5 rounded border truncate ${stageTone(st?.cmrDiscovery?.status)}`}>
+                              1.CMR: {st?.cmrDiscovery?.status || 'pending'}
+                            </div>
+                            <div className={`px-1.5 py-0.5 rounded border truncate ${stageTone(st?.granuleDownload?.status)}`}>
+                              2.DL: {st?.granuleDownload?.status || 'pending'}
+                            </div>
+                            <div className={`px-1.5 py-0.5 rounded border truncate ${stageTone(st?.pixelExtraction?.status)}`}>
+                              3.EXT: {st?.pixelExtraction?.status || 'pending'}
+                            </div>
+                            <div className={`px-1.5 py-0.5 rounded border truncate ${stageTone(st?.observationValidation?.status)}`}>
+                              4.VAL: {st?.observationValidation?.status || 'pending'}
+                            </div>
+                            <div className={`px-1.5 py-0.5 rounded border truncate ${stageTone(st?.databasePersistence?.status)}`}>
+                              5.DB: {st?.databasePersistence?.status || 'pending'}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#527367]">
+                            <span>Last Attempt: {formatAttemptTime(lastAttempt)}</span>
+                            <span>
+                              Obs: {metric?.observedAt || metric?.lastSuccessfulObservationDate || pipe?.lastSuccessfulObservationDate || 'None'}
+                            </span>
+                          </div>
+                          {lastErr && !isSynced && (
+                            <p className="text-[10px] text-rose-700 break-words">{lastErr}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Middle Section: Recommended Rotation Strategy Callout */}
               <div className="bg-gradient-to-br from-white to-[#FAFDF8] p-4 sm:p-8 rounded-3xl border border-[#D5E5CA] shadow-sm grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 items-center">

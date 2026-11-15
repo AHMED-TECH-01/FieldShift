@@ -21,6 +21,7 @@ export interface ServerEnvironmentSummary {
   geminiConfigured: boolean;
   geminiTimeoutMs: number;
   modisTimeoutMs: number;
+  modisTimeoutSource: 'env' | 'default';
   nasaApiKeyConfigured: boolean;
   earthdataTokenConfigured: boolean;
   appUrl: string | null;
@@ -31,6 +32,11 @@ let bootLogged = false;
 export function getModisTimeoutMs(): number {
   const raw = Number(process.env.MODIS_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 25000;
+}
+
+export function isModisTimeoutConfiguredInEnv(): boolean {
+  const raw = Number(process.env.MODIS_TIMEOUT_MS);
+  return Boolean(process.env.MODIS_TIMEOUT_MS?.trim()) && Number.isFinite(raw) && raw > 0;
 }
 
 export function getServerEnv(): ServerEnvironmentSummary {
@@ -55,6 +61,7 @@ export function getServerEnv(): ServerEnvironmentSummary {
   const nasaApiKey = (process.env.NASA_API_KEY || '').trim();
   const earthdataToken = (process.env.EARTHDATA_TOKEN || '').trim();
   const timeoutRaw = Number(process.env.GEMINI_TIMEOUT_MS);
+  const modisTimeoutSource: 'env' | 'default' = isModisTimeoutConfiguredInEnv() ? 'env' : 'default';
 
   const summary: ServerEnvironmentSummary = {
     nodeEnv: process.env.NODE_ENV || 'development',
@@ -64,6 +71,7 @@ export function getServerEnv(): ServerEnvironmentSummary {
     geminiConfigured: Boolean(geminiKey),
     geminiTimeoutMs: Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 25000,
     modisTimeoutMs: getModisTimeoutMs(),
+    modisTimeoutSource,
     nasaApiKeyConfigured: Boolean(nasaApiKey),
     earthdataTokenConfigured: Boolean(earthdataToken),
     appUrl: (process.env.APP_URL || process.env.APP_URI || '').trim() || null,
@@ -78,6 +86,7 @@ export function getServerEnv(): ServerEnvironmentSummary {
       supabaseAdminConfigured: summary.supabaseAdminConfigured,
       geminiConfigured: summary.geminiConfigured,
       modisTimeoutMs: summary.modisTimeoutMs,
+      modisTimeoutSource: summary.modisTimeoutSource,
       nasaApiKeyConfigured: summary.nasaApiKeyConfigured,
       earthdataTokenConfigured: summary.earthdataTokenConfigured,
     });
@@ -101,11 +110,13 @@ export function getNasaIntegrationCapabilities(): Record<string, IntegrationCapa
     modis: {
       configured: true,
       available: true,
-      mode: 'live_public_api',
+      mode: env.earthdataTokenConfigured ? 'live_with_optional_token' : 'live_public_api',
       requiresAuth: false,
       hasCredential: true,
       documentationUrl: 'https://modis.gsfc.nasa.gov/data/',
-      notes: 'Live 250m MOD13Q1 NDVI/EVI + pixel reliability & 1km MOD11A2 LST via NASA ORNL DAAC Subsets REST API + Earthdata CMR.',
+      notes: env.earthdataTokenConfigured
+        ? '250m MOD13Q1 NDVI/EVI + 1km MOD11A2 LST via NASA ORNL DAAC REST API with Earthdata Cloud OPeNDAP fallback enabled.'
+        : '250m MOD13Q1 NDVI/EVI + 1km MOD11A2 LST via NASA ORNL DAAC REST API + Earthdata CMR (set EARTHDATA_TOKEN for OPeNDAP fallback if ORNL stalls).',
     },
     gpm: {
       configured: true,
@@ -115,8 +126,8 @@ export function getNasaIntegrationCapabilities(): Record<string, IntegrationCapa
       hasCredential: env.earthdataTokenConfigured,
       documentationUrl: 'https://gpm.nasa.gov/data',
       notes: env.earthdataTokenConfigured
-        ? 'Earthdata CMR granule discovery active with EARTHDATA_TOKEN configured; NetCDF4 raster parsing requires external binary decoder.'
-        : 'Live Earthdata CMR granule discovery active. Numeric GPM IMERG grid extraction requires EARTHDATA_TOKEN + NetCDF4 reader.',
+        ? 'Earthdata CMR granule discovery + Earthdata Cloud OPeNDAP NetCDF4 grid subsetting active via EARTHDATA_TOKEN.'
+        : 'Earthdata CMR granule discovery active. Numerical GPM IMERG pixel extraction requires EARTHDATA_TOKEN in server env.',
     },
     smap: {
       configured: true,
@@ -126,8 +137,8 @@ export function getNasaIntegrationCapabilities(): Record<string, IntegrationCapa
       hasCredential: env.earthdataTokenConfigured,
       documentationUrl: 'https://nsidc.org/data/smap',
       notes: env.earthdataTokenConfigured
-        ? 'Earthdata CMR granule discovery active with EARTHDATA_TOKEN configured; 9km EASE-Grid HDF5 parsing requires external binary decoder.'
-        : 'Live Earthdata CMR granule discovery active. Numeric SMAP L4 m³/m³ moisture extraction requires EARTHDATA_TOKEN + HDF5 reader.',
+        ? 'Earthdata CMR granule discovery + Earthdata Cloud OPeNDAP HDF5 surface/root-zone soil moisture extraction active via EARTHDATA_TOKEN.'
+        : 'Earthdata CMR granule discovery active. Numerical SMAP L4 (m³/m³) pixel extraction requires EARTHDATA_TOKEN in server env.',
     },
     ecostress: {
       configured: true,
@@ -138,7 +149,7 @@ export function getNasaIntegrationCapabilities(): Record<string, IntegrationCapa
       documentationUrl: 'https://ecostress.jpl.nasa.gov/',
       notes: env.earthdataTokenConfigured
         ? 'Earthdata CMR granule discovery active with EARTHDATA_TOKEN configured (variable 1-5 day ISS orbit).'
-        : 'Live Earthdata CMR granule discovery active (variable 1-5 day ISS orbit). Numeric 70m ET GeoTIFF extraction requires EARTHDATA_TOKEN.',
+        : 'Earthdata CMR granule discovery active (variable 1-5 day ISS orbit). Numeric 70m ET GeoTIFF extraction requires EARTHDATA_TOKEN.',
     },
   };
 }

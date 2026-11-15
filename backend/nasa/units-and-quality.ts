@@ -310,6 +310,54 @@ export function normalizeModisLstCelsius(
   };
 }
 
+export function normalizeSmapSoilMoisture(
+  rawValue: unknown,
+  fillValue = -9999
+): { value: number | null; isMissing: boolean; qualityFlag: string; qualityStatus: string } {
+  const numVal = typeof rawValue === 'number' ? rawValue : Number(rawValue);
+  if (!Number.isFinite(numVal) || numVal === fillValue || numVal <= -9000 || numVal < 0 || numVal > 1) {
+    return {
+      value: null,
+      isMissing: true,
+      qualityFlag: 'fill_value_missing',
+      qualityStatus: 'Missing / Fill or Out-of-Range SMAP Soil Moisture',
+    };
+  }
+  return {
+    value: Number(numVal.toFixed(4)),
+    isMissing: false,
+    qualityFlag: 'good_data',
+    qualityStatus: 'Valid SMAP L4 Volumetric Soil Moisture (m³/m³)',
+  };
+}
+
+export function normalizeGpmPrecipitation(
+  rawValue: unknown,
+  fillValue = -9999.9
+): { value: number | null; isMissing: boolean; qualityFlag: string; qualityStatus: string } {
+  const numVal = typeof rawValue === 'number' ? rawValue : Number(rawValue);
+  if (
+    !Number.isFinite(numVal) ||
+    Math.abs(numVal - fillValue) < 1e-3 ||
+    numVal <= -9000 ||
+    numVal < 0 ||
+    numVal > 2000
+  ) {
+    return {
+      value: null,
+      isMissing: true,
+      qualityFlag: 'fill_value_missing',
+      qualityStatus: 'Missing / Fill or Out-of-Range GPM IMERG Precipitation',
+    };
+  }
+  return {
+    value: Number(numVal.toFixed(3)),
+    isMissing: false,
+    qualityFlag: 'good_data',
+    qualityStatus: 'Valid GPM IMERG Calibrated Precipitation (mm/day)',
+  };
+}
+
 export interface DbObservationInsertRow {
   farm_id: string;
   user_id: string | null;
@@ -368,8 +416,18 @@ export function parseRetryAfterMs(headerValue: string | null | undefined): numbe
   return null;
 }
 
-export async function fetchNasaJson<T = any>(
+function formatSanitizedUpstreamEndpoint(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return rawUrl.slice(0, 120);
+  }
+}
+
+async function fetchNasaWithRetries<T>(
   url: string,
+  responseMode: 'json' | 'text',
   options?: {
     timeoutMs?: number;
     maxRetries?: number;
@@ -388,11 +446,14 @@ export async function fetchNasaJson<T = any>(
   const deadlineMs = typeof options?.deadlineMs === 'number' && Number.isFinite(options.deadlineMs) ? options.deadlineMs : null;
   const doFetch = options?.fetchImpl ?? globalThis.fetch;
   const startedAt = Date.now();
+  const sanitizedEndpoint = formatSanitizedUpstreamEndpoint(url);
+  const attemptDetails: Array<{ attempt: number; attemptTimeoutMs: number; outcome: string; durationMs: number }> = [];
   let lastError: NasaUpstreamError | null = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const attemptStartedAt = Date.now();
     const attemptTimeoutMs = deadlineMs !== null
-      ? Math.min(timeoutMs, Math.max(250, deadlineMs - Date.now()))
+      ? Math.min(timeoutMs, Math.max(250, deadlineMs - attemptStartedAt))
       : timeoutMs;
     options?.onAttempt?.({ attempt: attempt + 1, maxAttempts: maxRetries + 1, url });
     const controller = new AbortController();
@@ -401,38 +462,50 @@ export async function fetchNasaJson<T = any>(
       const response = await doFetch(url, {
         method: 'GET',
         headers: {
-          Accept: 'application/json',
+          Accept: responseMode === 'json' ? 'application/json' : 'text/plain, application/xml, */*',
           'User-Agent': 'FieldShift-Agronomic-Platform/2.6',
           ...(options?.headers || {}),
         },
         signal: controller.signal,
       });
       clearTimeout(timer);
+      const attemptDurationMs = Date.now() - attemptStartedAt;
 
       // Never retry auth failures (401/403) or permanent client validation errors (400/404/422)
       if (response.status === 401 || response.status === 403) {
+        attemptDetails.push({ attempt: attempt + 1, attemptTimeoutMs, outcome: `http_${response.status}`, durationMs: attemptDurationMs });
         throw new NasaUpstreamError(
-          `NASA service rejected authentication (${response.status}). Check credentials.`,
+          `NASA service rejected authentication (${response.status}) at ${sanitizedEndpoint}. Check EARTHDATA_TOKEN credentials.`,
           response.status,
           'NASA_AUTH_REJECTED',
           false,
-          { category: 'auth', durationMs: Date.now() - startedAt }
+          {
+            category: 'auth',
+            durationMs: Date.now() - startedAt,
+            details: { failedEndpoint: sanitizedEndpoint, attempts: attempt + 1, attemptDetails },
+          }
         );
       }
       if (response.status >= 400 && response.status < 500 && response.status !== 429) {
         const text = await response.text().catch(() => '');
+        attemptDetails.push({ attempt: attempt + 1, attemptTimeoutMs, outcome: `http_${response.status}`, durationMs: attemptDurationMs });
         throw new NasaUpstreamError(
-          `NASA API client error HTTP ${response.status}${text ? `: ${text.slice(0, 180)}` : ''}`,
+          `NASA API client error HTTP ${response.status} at ${sanitizedEndpoint}${text ? `: ${text.slice(0, 180)}` : ''}`,
           response.status,
           'NASA_CLIENT_ERROR',
           false,
-          { category: 'client_error', durationMs: Date.now() - startedAt }
+          {
+            category: 'client_error',
+            durationMs: Date.now() - startedAt,
+            details: { failedEndpoint: sanitizedEndpoint, attempts: attempt + 1, attemptDetails },
+          }
         );
       }
       if (response.status === 429 || response.status >= 500) {
         const retryAfterMs = parseRetryAfterMs(response.headers?.get?.('retry-after'));
+        attemptDetails.push({ attempt: attempt + 1, attemptTimeoutMs, outcome: `http_${response.status}`, durationMs: attemptDurationMs });
         lastError = new NasaUpstreamError(
-          `NASA API transient HTTP ${response.status}`,
+          `NASA API transient HTTP ${response.status} from ${sanitizedEndpoint}`,
           response.status,
           response.status === 429 ? 'NASA_RATE_LIMITED' : 'NASA_SERVER_ERROR',
           true,
@@ -440,44 +513,75 @@ export async function fetchNasaJson<T = any>(
             category: response.status === 429 ? 'rate_limit' : 'server_error',
             retryAfterMs,
             durationMs: Date.now() - startedAt,
+            details: { failedEndpoint: sanitizedEndpoint, attempts: attempt + 1, attemptDetails },
           }
         );
       } else if (response.ok) {
+        if (responseMode === 'text') {
+          return (await response.text()) as unknown as T;
+        }
         try {
           return (await response.json()) as T;
         } catch {
+          attemptDetails.push({ attempt: attempt + 1, attemptTimeoutMs, outcome: 'malformed_json', durationMs: attemptDurationMs });
           throw new NasaUpstreamError(
-            'NASA upstream returned malformed JSON payload.',
+            `NASA upstream returned malformed JSON payload from ${sanitizedEndpoint}.`,
             502,
             'NASA_MALFORMED_JSON',
             false,
-            { category: 'parse_error', durationMs: Date.now() - startedAt }
+            {
+              category: 'parse_error',
+              durationMs: Date.now() - startedAt,
+              details: { failedEndpoint: sanitizedEndpoint, attempts: attempt + 1, attemptDetails },
+            }
           );
         }
       }
     } catch (err: any) {
       clearTimeout(timer);
+      const attemptDurationMs = Date.now() - attemptStartedAt;
       if (err instanceof NasaUpstreamError && !err.retryable) {
         throw err;
       }
       if (err instanceof NasaUpstreamError) {
         lastError = err;
-      } else if (err?.name === 'AbortError') {
+      } else if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
+        attemptDetails.push({ attempt: attempt + 1, attemptTimeoutMs, outcome: 'timeout', durationMs: attemptDurationMs });
+        const totalElapsedMs = Date.now() - startedAt;
+        const message =
+          attempt > 0 || attemptTimeoutMs < timeoutMs
+            ? `NASA upstream request timed out across ${attempt + 1} attempts (${totalElapsedMs}ms total; configured ${timeoutMs}ms/attempt, final attempt ${attemptTimeoutMs}ms) at ${sanitizedEndpoint}`
+            : `NASA upstream request timed out after ${attemptTimeoutMs}ms at ${sanitizedEndpoint}`;
         lastError = new NasaUpstreamError(
-          `NASA upstream request timed out after ${attemptTimeoutMs}ms`,
+          message,
           504,
           'NASA_TIMEOUT',
           true,
-          { category: 'timeout', durationMs: Date.now() - startedAt }
+          {
+            category: 'timeout',
+            durationMs: totalElapsedMs,
+            details: {
+              configuredTimeoutMs: timeoutMs,
+              finalAttemptTimeoutMs: attemptTimeoutMs,
+              attempts: attempt + 1,
+              failedEndpoint: sanitizedEndpoint,
+              attemptDetails,
+            },
+          }
         );
       } else {
-        const message = err instanceof Error ? err.message : 'Network error communicating with NASA upstream';
+        const errMsg = err instanceof Error ? err.message : 'Network error communicating with NASA upstream';
+        attemptDetails.push({ attempt: attempt + 1, attemptTimeoutMs, outcome: 'network_error', durationMs: attemptDurationMs });
         lastError = new NasaUpstreamError(
-          `NASA upstream network error: ${message}`,
+          `NASA upstream network error at ${sanitizedEndpoint}: ${errMsg}`,
           502,
           'NASA_NETWORK_ERROR',
           true,
-          { category: 'network', durationMs: Date.now() - startedAt }
+          {
+            category: 'network',
+            durationMs: Date.now() - startedAt,
+            details: { failedEndpoint: sanitizedEndpoint, attempts: attempt + 1, attemptDetails },
+          }
         );
       }
     }
@@ -502,15 +606,58 @@ export async function fetchNasaJson<T = any>(
 
   if (lastError) {
     lastError.durationMs = Date.now() - startedAt;
+    lastError.details = {
+      ...(lastError.details || {}),
+      configuredTimeoutMs: timeoutMs,
+      attempts: attemptDetails.length,
+      failedEndpoint: sanitizedEndpoint,
+      attemptDetails,
+    };
     throw lastError;
   }
   throw new NasaUpstreamError(
-    'NASA upstream request failed',
+    `NASA upstream request failed at ${sanitizedEndpoint}`,
     502,
     'NASA_UPSTREAM_FAILED',
     false,
-    { category: 'network', durationMs: Date.now() - startedAt }
+    {
+      category: 'network',
+      durationMs: Date.now() - startedAt,
+      details: { failedEndpoint: sanitizedEndpoint, attempts: attemptDetails.length, attemptDetails },
+    }
   );
+}
+
+export async function fetchNasaJson<T = any>(
+  url: string,
+  options?: {
+    timeoutMs?: number;
+    maxRetries?: number;
+    baseBackoffMs?: number;
+    maxBackoffMs?: number;
+    deadlineMs?: number;
+    headers?: Record<string, string>;
+    fetchImpl?: typeof globalThis.fetch;
+    onAttempt?: (info: { attempt: number; maxAttempts: number; url: string }) => void;
+  }
+): Promise<T> {
+  return fetchNasaWithRetries<T>(url, 'json', options);
+}
+
+export async function fetchNasaText(
+  url: string,
+  options?: {
+    timeoutMs?: number;
+    maxRetries?: number;
+    baseBackoffMs?: number;
+    maxBackoffMs?: number;
+    deadlineMs?: number;
+    headers?: Record<string, string>;
+    fetchImpl?: typeof globalThis.fetch;
+    onAttempt?: (info: { attempt: number; maxAttempts: number; url: string }) => void;
+  }
+): Promise<string> {
+  return fetchNasaWithRetries<string>(url, 'text', options);
 }
 
 /* ==========================================================================

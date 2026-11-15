@@ -46,6 +46,9 @@ Add these variables in **Vercel Dashboard -> Project Settings -> Environment Var
 | `SUPABASE_SECRET_KEY` | Server runtime secret | Your Supabase secret key (`sb_secret_...`) |
 | `GEMINI_API_KEY` | Server runtime secret | Your Google AI Studio Gemini API key |
 | `GEMINI_TIMEOUT_MS` | Server runtime config | `25000` |
+| `MODIS_TIMEOUT_MS` | Server runtime config | `25000` (Per-attempt ORNL DAAC timeout before retry budget fallback) |
+| `EARTHDATA_TOKEN` | Server runtime secret | NASA Earthdata Bearer token for authenticated Cloud OPeNDAP `.dmr`/`.ascii` pixel extraction (SMAP/GPM/MODIS) |
+| `NASA_API_KEY` | Server runtime secret | Optional NASA Open APIs key for CMR/Open API requests |
 | `APP_URL` | Server runtime config | Canonical domain (e.g. `https://field-shift-sable.vercel.app`) |
 | `NODE_ENV` | Runtime | `production` |
 

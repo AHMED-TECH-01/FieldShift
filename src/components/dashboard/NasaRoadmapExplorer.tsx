@@ -77,6 +77,7 @@ export const NasaRoadmapExplorer: React.FC<NasaRoadmapExplorerProps> = ({ farmId
       const res = await apiClient.post(`/api/datasets/${datasetId}/sync`, { farmId, days: 30 });
       const isPartialModis = datasetId === 'modis' && res.status === 'partial';
       const isCachedModis = datasetId === 'modis' && Boolean(res.cacheHit);
+      const numericPixels = Number(res.numericPixelCount || 0);
       setSyncNotice({
         type: isPartialModis ? 'error' : 'success',
         message:
@@ -84,11 +85,13 @@ export const NasaRoadmapExplorer: React.FC<NasaRoadmapExplorerProps> = ({ farmId
             ? `Synced ${res.recordsSaved || 0} live NASA POWER agroclimatology records (${res.startDate} to ${res.endDate}).`
             : datasetId === 'modis'
             ? isPartialModis
-              ? `Granule Indexed (${res.granulesFound ?? 0} CMR), Pixel Retrieval Failed: ${res.failureExplanation || res.ornlError || 'ORNL DAAC timeout'}`
+              ? `Granule Indexed (${res.granulesFound ?? 0} CMR) — Pixel Data Pending: ${res.failureExplanation || res.ornlError || 'ORNL DAAC timeout'}`
               : isCachedModis
-              ? `Reused ${res.numericPixelCount || 0} persisted MODIS pixels from Supabase cache (last obs: ${res.lastSuccessfulObservedAt || 'latest'}).`
-              : `Pixels Extracted & Persisted: ${res.numericPixelCount || 0} live MODIS 250m/1km pixel records + ${res.granulesFound ?? 0} CMR granules.`
-            : `Discovered ${res.granulesFound ?? res.recordsSaved ?? 0} Earthdata CMR granule metadata entries for ${datasetId.toUpperCase()} (metadata-only; numeric raster extraction unavailable).`,
+              ? `Reused ${numericPixels} persisted MODIS pixels from Supabase cache (last obs: ${res.lastSuccessfulObservedAt || 'latest'}).`
+              : `Pixels Extracted & Persisted: ${numericPixels} live MODIS 250m/1km pixel records + ${res.granulesFound ?? 0} CMR granules.`
+            : numericPixels > 0 && res.persisted
+            ? `Pixels Extracted & Persisted: ${numericPixels} ${datasetId.toUpperCase()} numerical observations via Earthdata Cloud OPeNDAP (${res.granulesFound ?? 0} CMR granules).`
+            : `Granule Indexed (${res.granulesFound ?? res.recordsSaved ?? 0} Earthdata CMR) — Pixel Data Pending for ${datasetId.toUpperCase()}${res.error ? ` (${res.error})` : ''}.`,
       });
       await fetchSyncStatus();
       onSynced?.();
@@ -285,7 +288,9 @@ export const NasaRoadmapExplorer: React.FC<NasaRoadmapExplorerProps> = ({ farmId
                       {selectedDataset.id === 'nasa-power'
                         ? 'Live Numeric API Sync'
                         : selectedDataset.id === 'modis'
-                        ? 'Live ORNL DAAC 250m Pixel + CMR Sync'
+                        ? 'Live ORNL DAAC 250m + Earthdata OPeNDAP Sync'
+                        : selectedDataset.id === 'smap' || selectedDataset.id === 'gpm'
+                        ? 'Earthdata CMR + Cloud OPeNDAP Pixel Extraction'
                         : 'Live Earthdata CMR Granule Discovery'}
                     </strong>
                     <span>

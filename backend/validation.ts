@@ -20,6 +20,13 @@ export const resendOtpSchema = z.object({
   email: z.string().trim().email('Valid email address is required').max(254),
 });
 
+export const changeEmailSchema = z.object({
+  currentEmail: z.string().trim().email('Valid current email address is required').max(254),
+  newEmail: z.string().trim().email('Please enter a valid new email address').max(254),
+  pendingToken: z.string().trim().min(10).max(500).optional(),
+  password: z.string().min(1).max(128).optional(),
+});
+
 export const passwordResetSchema = z.object({
   email: z.string().trim().email('Valid email address is required').max(254),
 });

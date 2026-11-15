@@ -23,6 +23,17 @@ This document provides the complete reference for all environment variables used
 | `APP_URL` | **Config** | No | *None* | Canonical app origin for CORS & password reset redirects | `"https://field-shift-sable.vercel.app"` |
 | `DISABLE_HMR` | **Local Dev Config** | No | `"false"` | Disables Vite HMR WebSocket in headless/container dev | `"true"` |
 | `NODE_ENV` | **Runtime Flag** | Auto | `"development"` | Set to `"production"` automatically on Vercel | `"production"` |
+| `OTP_TTL_SECONDS` | **Backend Config** | No | `600` (10 min) | Server-enforced 6-digit email OTP validity window | `"600"` |
+| `OTP_RESEND_COOLDOWN_SECONDS` | **Backend Config** | No | `60` | Server-enforced cooldown between OTP resends | `"60"` |
+| `OTP_MAX_ATTEMPTS` | **Backend Config** | No | `5` | Max failed verification attempts before OTP lockout | `"5"` |
+| `OTP_HMAC_SECRET` | **Backend Secret** | No | Uses `SUPABASE_SECRET_KEY` | Dedicated secret for HMAC-SHA256 OTP & pending tokens | `""` |
+| `SMTP_HOST` | **Backend Optional** | No | *None* | Direct `nodemailer` SMTP host (e.g. `smtp.gmail.com`) | `"smtp.gmail.com"` |
+| `SMTP_PORT` | **Backend Optional** | No | `465` | Direct SMTP port (`465` TLS or `587` STARTTLS) | `"465"` |
+| `SMTP_SECURE` | **Backend Optional** | No | `true` (`465`) | Implicit TLS toggle for SMTP transport | `"true"` |
+| `SMTP_USER` | **Backend Optional** | No | *None* | SMTP authentication username / Gmail address | `"you@gmail.com"` |
+| `SMTP_PASS` | **Backend Secret** | No | *None* | SMTP app password; when absent, uses Supabase Gmail SMTP | `""` |
+| `SMTP_FROM_EMAIL` | **Backend Optional** | No | `SMTP_USER` | Verified sender address in `From` header | `"noreply@yourdomain.com"` |
+| `SMTP_FROM_NAME` | **Backend Optional** | No | `"FieldShift"` | Display name in verification emails | `"FieldShift"` |
 
 *\*Note on `GEMINI_API_KEY`: If absent or temporarily unavailable, the backend gracefully activates the deterministic grounded agronomic summary so advisory endpoints remain available without fabricating satellite data.*
 
@@ -30,9 +41,9 @@ This document provides the complete reference for all environment variables used
 
 ## 2. Security & Frontend Safety Rules
 
-1. **Zero Secrets in Browser Code**: `VITE_*` variables are compiled into `dist/` by Vite. Never assign `SUPABASE_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`, or `EARTHDATA_TOKEN` to any `VITE_*` prefix.
-2. **Per-Request RLS Enforcement**: Express creates a user-scoped Supabase client (`getSupabaseUserClient(accessToken)`) per request so PostgreSQL Row Level Security (`auth.uid()`) protects private farm, soil, NASA, rotation, and AI history records.
-3. **Log Sanitization**: `[FIELDSHIFT_LOG]` (`backend/logger.ts`) redacts `password`, `token`, `secret`, `apiKey`, and `authorization` fields automatically before logging.
+1. **Zero Secrets in Browser Code**: `VITE_*` variables are compiled into `dist/` by Vite. Never assign `SUPABASE_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`, `EARTHDATA_TOKEN`, `SMTP_PASS`, or `OTP_HMAC_SECRET` to any `VITE_*` prefix.
+2. **Per-Request RLS Enforcement**: Express creates a user-scoped Supabase client (`getSupabaseUserClient(accessToken)`) per request so PostgreSQL Row Level Security (`auth.uid()`) protects private farm, soil, NASA, rotation, and AI history records. `public.email_verification_otps` denies all `PUBLIC`/`anon`/`authenticated` access and is accessed exclusively via `service_role` `SECURITY DEFINER` RPCs.
+3. **Log Sanitization**: `[FIELDSHIFT_LOG]` (`backend/logger.ts`) automatically redacts `password`, `token`, `secret`, `apiKey`, `authorization`, `otp`, `otpHash`, `pendingToken`, and `smtpPass` fields before logging.
 
 ---
 
@@ -57,8 +68,11 @@ This document provides the complete reference for all environment variables used
 
 ---
 
-## 5. Authentication & Database Requirements
+## 5. Authentication, 6-Digit Email OTP & Database Requirements
 
-- Authentication runs exclusively via **Supabase Auth** (`signUp`, `verifyOtp`, `signInWithPassword`, `resetPasswordForEmail`, `getSession`). There are zero in-memory user maps or hardcoded passwords.
+- **Express Auth + Supabase Auth**: Registration (`/api/auth/register`), verification (`/api/auth/verify-otp`), resend (`/api/auth/resend-otp`), pending email updates (`/api/auth/change-email`), status sync (`/api/auth/verification-status`), and login (`/api/auth/login`) all route through Express (`backend/emailOtp.ts` + `app.ts`) backed by Supabase Auth & PostgreSQL (`public.email_verification_otps`).
+- **Cryptographic OTP & Delivery**:
+  - When `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` are configured, Express generates a CSPRNG 6-digit OTP (`crypto.randomInt`), stores an HMAC-SHA256 hash in PostgreSQL, and sends branded HTML emails via `nodemailer`.
+  - When direct SMTP credentials are not present in server env, Express uses Supabase Auth's configured Gmail SMTP (`mailer_otp_length = 6`, `mailer_otp_exp = 600`) while enforcing PostgreSQL cooldown, expiration, and max-attempt tracking.
 - Local development uses `.env` (git-ignored by `.env*` with `!.env.example`).
 - Vercel production deployments must configure both frontend `VITE_*` variables (used at build time) and backend secret variables (used by the serverless function at runtime) across **Production** and **Preview** environments.

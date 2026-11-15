@@ -23,6 +23,7 @@ import {
 } from './backend/supabase.js';
 import {
   advisorRequestSchema,
+  changeEmailSchema,
   createFarmSchema,
   datasetSyncSchema,
   loginSchema,
@@ -37,6 +38,13 @@ import {
   updateFarmSchema,
   verifyOtpSchema,
 } from './backend/validation.js';
+import {
+  createPendingVerificationToken,
+  EmailOtpService,
+  SupabaseAuthProvider,
+  SupabaseOtpStore,
+} from './backend/emailOtp.js';
+import { getSmtpConfigSummary } from './backend/email.js';
 import {
   buildBareFieldAnalysis,
   buildPestCycles,
@@ -135,6 +143,7 @@ function createRateLimiter(bucketName: string, maxRequests: number, windowMs: nu
     if (recent.length >= maxRequests) {
       res.status(429).json({
         error: 'Rate limit exceeded. Please wait briefly before retrying.',
+        code: 'RATE_LIMITED',
       });
       return;
     }
@@ -149,7 +158,9 @@ function createRateLimiter(bucketName: string, maxRequests: number, windowMs: nu
   };
 }
 
-const authRateLimit = createRateLimiter('auth', 25, 60_000);
+const authRateLimit = createRateLimiter('auth', 30, 60_000);
+const otpResendRateLimit = createRateLimiter('otp_resend', 20, 10 * 60_000);
+const otpVerifyRateLimit = createRateLimiter('otp_verify', 30, 10 * 60_000);
 const nasaSyncRateLimit = createRateLimiter('nasa_sync', 20, 60_000);
 const aiAdvisorRateLimit = createRateLimiter('ai_advisor', 15, 60_000);
 
@@ -163,6 +174,56 @@ function buildSessionCookie(token: string): string {
 function clearSessionCookie(): string {
   const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
   return `fieldshift_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isProd ? '; Secure' : ''}`;
+}
+
+function buildPendingVerifyCookie(token: string): string {
+  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  return `fieldshift_pending_verify=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1800${
+    isProd ? '; Secure' : ''
+  }`;
+}
+
+function clearPendingVerifyCookie(): string {
+  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  return `fieldshift_pending_verify=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isProd ? '; Secure' : ''}`;
+}
+
+function extractPendingVerifyToken(req: Request, bodyToken?: string): string | undefined {
+  if (typeof bodyToken === 'string' && bodyToken.trim()) {
+    return bodyToken.trim();
+  }
+  const cookieHeader = req.headers.cookie;
+  if (!cookieHeader) return undefined;
+  const match = cookieHeader.match(/fieldshift_pending_verify=([^;]+)/);
+  if (!match) return undefined;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
+let testEmailOtpServiceOverride: EmailOtpService | null = null;
+export function setEmailOtpServiceForTesting(service: EmailOtpService | null): void {
+  testEmailOtpServiceOverride = service;
+}
+export function resetRateLimitsForTesting(): void {
+  rateLimitBuckets.clear();
+}
+
+function getEmailOtpService(): EmailOtpService | null {
+  if (testEmailOtpServiceOverride) {
+    return testEmailOtpServiceOverride;
+  }
+  const supaAuth = isSupabaseConfigured() ? getSupabaseAuthClient() : null;
+  const supaAdmin = getSupabaseAdminClient();
+  if (!supaAuth || !supaAdmin) {
+    return null;
+  }
+  return new EmailOtpService({
+    store: new SupabaseOtpStore(supaAdmin),
+    auth: new SupabaseAuthProvider(supaAuth, supaAdmin),
+  });
 }
 
 /* ==========================================================================
@@ -192,6 +253,7 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     supabaseConfigured: envSummary.supabaseConfigured,
     supabaseReachable,
     geminiConfigured: Boolean(getGeminiClient()),
+    emailDelivery: getSmtpConfigSummary(),
     nasaApiKeyConfigured: envSummary.nasaApiKeyConfigured,
     earthdataTokenConfigured: envSummary.earthdataTokenConfigured,
     nasaCapabilities,
@@ -206,7 +268,7 @@ app.get('/api/nasa/health', async (_req: Request, res: Response) => {
   const capabilities = getNasaIntegrationCapabilities();
   const missingCredentials: string[] = [];
   if (!envSummary.earthdataTokenConfigured) {
-    missingCredentials.push('EARTHDATA_TOKEN (optional; needed only for authenticated HDF5/NetCDF4 binary pixel downloads on SMAP/GPM/ECOSTRESS)');
+    missingCredentials.push('EARTHDATA_TOKEN (required for authenticated Earthdata Cloud OPeNDAP pixel extraction on SMAP/GPM and MODIS fallback)');
   }
   if (!envSummary.nasaApiKeyConfigured) {
     missingCredentials.push('NASA_API_KEY (optional; not required by NASA POWER, ORNL DAAC MODIS, or Earthdata CMR)');
@@ -221,7 +283,9 @@ app.get('/api/nasa/health', async (_req: Request, res: Response) => {
       geminiConfigured: envSummary.geminiConfigured,
       nasaApiKeyConfigured: envSummary.nasaApiKeyConfigured,
       earthdataTokenConfigured: envSummary.earthdataTokenConfigured,
+      earthdataExtractionProtocol: 'opendap_dmr_ascii',
       modisTimeoutMs: envSummary.modisTimeoutMs,
+      modisTimeoutSource: envSummary.modisTimeoutSource,
     },
     missingOptionalCredentials: missingCredentials,
     timestamp: new Date().toISOString(),
@@ -301,72 +365,27 @@ const authRegisterPaths = ['/api/auth/register', '/api/v1/auth/register', '/auth
 app.post(authRegisterPaths, authRateLimit, async (req: Request, res: Response) => {
   const parsed = parseBody(registerSchema, req.body);
   if (!parsed.ok) {
-    res.status(400).json({ error: parsed.error });
+    res.status(400).json({ error: parsed.error, code: 'VALIDATION_ERROR' });
     return;
   }
 
-  const supaAuth = isSupabaseConfigured() ? getSupabaseAuthClient() : null;
-  if (!supaAuth) {
+  const otpService = getEmailOtpService();
+  if (!otpService) {
     res.status(503).json({
-      error: 'Supabase authentication service is not configured.',
+      error: 'Supabase authentication service is not fully configured.',
       code: 'SUPABASE_UNCONFIGURED',
     });
     return;
   }
 
-  const { email, fullName, password } = parsed.data;
-  const normalizedEmail = email.toLowerCase();
-
   try {
-    const { data, error } = await supaAuth.auth.signUp({
-      email: normalizedEmail,
-      password,
-      options: {
-        data: { full_name: fullName },
-      },
-    });
-
-    if (error) {
-      const isDuplicate = /already registered|already exists/i.test(error.message);
-      res.status(isDuplicate ? 409 : 400).json({
-        error: isDuplicate
-          ? 'An account with this email already exists. Please sign in instead.'
-          : error.message,
-        code: isDuplicate ? 'USER_ALREADY_EXISTS' : 'SIGNUP_FAILED',
-      });
-      return;
+    const result = await otpService.register(parsed.data);
+    if (result.body?.token) {
+      res.set('Set-Cookie', buildSessionCookie(result.body.token));
+    } else if (result.body?.pendingToken) {
+      res.set('Set-Cookie', buildPendingVerifyCookie(result.body.pendingToken));
     }
-
-    if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-      res.status(409).json({
-        error: 'An account with this email already exists. Please sign in instead.',
-        code: 'USER_ALREADY_EXISTS',
-      });
-      return;
-    }
-
-    if (data.session && data.user) {
-      res.set('Set-Cookie', buildSessionCookie(data.session.access_token));
-      res.status(201).json({
-        success: true,
-        autoConfirmed: true,
-        message: 'Account created and verified.',
-        user: {
-          email: data.user.email || normalizedEmail,
-          fullName,
-          verified: Boolean(data.user.email_confirmed_at),
-        },
-        token: data.session.access_token,
-      });
-      return;
-    }
-
-    res.status(201).json({
-      success: true,
-      autoConfirmed: false,
-      message: 'We sent a 6-digit verification code to your email address.',
-      email: normalizedEmail,
-    });
+    res.status(result.status).json(result.body);
   } catch (err: any) {
     logEvent('Auth', 'REGISTER_EXCEPTION', { message: err?.message });
     res.status(500).json({ error: 'Registration failed due to an upstream authentication error.' });
@@ -374,46 +393,34 @@ app.post(authRegisterPaths, authRateLimit, async (req: Request, res: Response) =
 });
 
 const authVerifyPaths = ['/api/auth/verify-otp', '/api/v1/auth/verify-otp', '/auth/verify-otp', '/api/verify-otp'];
-app.post(authVerifyPaths, authRateLimit, async (req: Request, res: Response) => {
+app.post(authVerifyPaths, otpVerifyRateLimit, async (req: Request, res: Response) => {
   const parsed = parseBody(verifyOtpSchema, req.body);
   if (!parsed.ok) {
-    res.status(400).json({ error: parsed.error });
+    res.status(400).json({ error: parsed.error, code: 'INVALID_OTP_FORMAT' });
     return;
   }
 
-  const supaAuth = isSupabaseConfigured() ? getSupabaseAuthClient() : null;
-  if (!supaAuth) {
+  const otpService = getEmailOtpService();
+  if (!otpService) {
     res.status(503).json({
-      error: 'Supabase authentication service is not configured.',
+      error: 'Supabase authentication service is not fully configured.',
       code: 'SUPABASE_UNCONFIGURED',
     });
     return;
   }
 
-  const normalizedEmail = parsed.data.email.toLowerCase();
   try {
-    const { data, error } = await supaAuth.auth.verifyOtp({
-      email: normalizedEmail,
-      token: parsed.data.code,
-      type: 'signup',
+    const result = await otpService.verify({
+      email: parsed.data.email,
+      code: parsed.data.code,
     });
-
-    if (error || !data.session || !data.user) {
-      res.status(400).json({ error: error?.message || 'Invalid or expired verification code.' });
-      return;
+    if (result.status === 200 && result.body?.token) {
+      res.set('Set-Cookie', [
+        buildSessionCookie(result.body.token),
+        clearPendingVerifyCookie(),
+      ]);
     }
-
-    const metaName = data.user.user_metadata?.full_name || normalizedEmail.split('@')[0];
-    res.set('Set-Cookie', buildSessionCookie(data.session.access_token));
-    res.json({
-      success: true,
-      user: {
-        email: data.user.email || normalizedEmail,
-        fullName: String(metaName),
-        verified: Boolean(data.user.email_confirmed_at),
-      },
-      token: data.session.access_token,
-    });
+    res.status(result.status).json(result.body);
   } catch (err: any) {
     logEvent('Auth', 'VERIFY_OTP_EXCEPTION', { message: err?.message });
     res.status(500).json({ error: 'Verification failed due to an upstream error.' });
@@ -421,44 +428,94 @@ app.post(authVerifyPaths, authRateLimit, async (req: Request, res: Response) => 
 });
 
 const authResendPaths = ['/api/auth/resend-otp', '/api/v1/auth/resend-otp', '/auth/resend-otp', '/api/resend-otp'];
-app.post(authResendPaths, authRateLimit, async (req: Request, res: Response) => {
+app.post(authResendPaths, otpResendRateLimit, async (req: Request, res: Response) => {
   const parsed = parseBody(resendOtpSchema, req.body);
   if (!parsed.ok) {
-    res.status(400).json({ error: parsed.error });
+    res.status(400).json({ error: parsed.error, code: 'VALIDATION_ERROR' });
     return;
   }
 
-  const supaAuth = isSupabaseConfigured() ? getSupabaseAuthClient() : null;
-  if (!supaAuth) {
+  const otpService = getEmailOtpService();
+  if (!otpService) {
     res.status(503).json({
-      error: 'Supabase authentication service is not configured.',
+      error: 'Supabase authentication service is not fully configured.',
       code: 'SUPABASE_UNCONFIGURED',
     });
     return;
   }
 
   try {
-    const { error } = await supaAuth.auth.resend({
-      type: 'signup',
-      email: parsed.data.email.toLowerCase(),
-    });
-    if (error) {
-      const isRateLimit =
-        (error as any).status === 429 ||
-        /rate limit|security purposes|only request this after/i.test(error.message);
-      res.status(isRateLimit ? 429 : 400).json({
-        error: error.message,
-        code: isRateLimit ? 'RATE_LIMITED' : 'RESEND_FAILED',
-      });
-      return;
+    const result = await otpService.resend({ email: parsed.data.email });
+    if (result.body?.retryAfterSeconds) {
+      res.set('Retry-After', String(result.body.retryAfterSeconds));
     }
-    res.json({
-      success: true,
-      message: 'A new 6-digit verification code has been sent to your email address.',
-    });
+    if (result.body?.pendingToken) {
+      res.set('Set-Cookie', buildPendingVerifyCookie(result.body.pendingToken));
+    }
+    res.status(result.status).json(result.body);
   } catch (err: any) {
     logEvent('Auth', 'RESEND_OTP_EXCEPTION', { message: err?.message });
     res.status(500).json({ error: 'Unable to resend verification email.' });
+  }
+});
+
+const authChangeEmailPaths = ['/api/auth/change-email', '/api/v1/auth/change-email', '/auth/change-email'];
+app.post(authChangeEmailPaths, otpResendRateLimit, async (req: Request, res: Response) => {
+  const parsed = parseBody(changeEmailSchema, req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error, code: 'VALIDATION_ERROR' });
+    return;
+  }
+
+  const otpService = getEmailOtpService();
+  if (!otpService) {
+    res.status(503).json({
+      error: 'Supabase authentication service is not fully configured.',
+      code: 'SUPABASE_UNCONFIGURED',
+    });
+    return;
+  }
+
+  try {
+    const pendingToken = extractPendingVerifyToken(req, parsed.data.pendingToken);
+    const result = await otpService.changePendingEmail({
+      currentEmail: parsed.data.currentEmail,
+      newEmail: parsed.data.newEmail,
+      pendingToken,
+      password: parsed.data.password,
+    });
+    if (result.body?.pendingToken) {
+      res.set('Set-Cookie', buildPendingVerifyCookie(result.body.pendingToken));
+    }
+    res.status(result.status).json(result.body);
+  } catch (err: any) {
+    logEvent('Auth', 'CHANGE_EMAIL_EXCEPTION', { message: err?.message });
+    res.status(500).json({ error: 'Unable to update pending email address.' });
+  }
+});
+
+app.get(['/api/auth/verification-status', '/api/v1/auth/verification-status'], authRateLimit, async (req: Request, res: Response) => {
+  const rawEmail = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+  if (!rawEmail) {
+    res.status(400).json({ error: 'Email query parameter is required.', code: 'EMAIL_REQUIRED' });
+    return;
+  }
+
+  const otpService = getEmailOtpService();
+  if (!otpService) {
+    res.status(503).json({
+      error: 'Supabase authentication service is not fully configured.',
+      code: 'SUPABASE_UNCONFIGURED',
+    });
+    return;
+  }
+
+  try {
+    const result = await otpService.getStatus(rawEmail);
+    res.status(result.status).json(result.body);
+  } catch (err: any) {
+    logEvent('Auth', 'VERIFICATION_STATUS_EXCEPTION', { message: err?.message });
+    res.status(500).json({ error: 'Unable to fetch verification status.' });
   }
 });
 
@@ -494,11 +551,56 @@ app.post(authLoginPaths, authRateLimit, async (req: Request, res: Response) => {
     if (error || !data?.session || !data?.user) {
       const msg = error?.message || 'Invalid login credentials.';
       const isUnconfirmed = /email not confirmed|confirm your email/i.test(msg);
-      res.status(isUnconfirmed ? 403 : 401).json({
-        error: isUnconfirmed
-          ? 'Your email address has not been verified yet. Please enter your 6-digit verification code or request a new code.'
-          : msg,
-        code: isUnconfirmed ? 'EMAIL_NOT_CONFIRMED' : 'INVALID_CREDENTIALS',
+      if (isUnconfirmed) {
+        let pendingToken: string | undefined;
+        let statusMeta: Record<string, any> = {};
+        const supaAdmin = getSupabaseAdminClient();
+        const otpService = getEmailOtpService();
+        if (supaAdmin) {
+          const authProv = new SupabaseAuthProvider(supaAuth, supaAdmin);
+          const pendingUser = await authProv.findUserByEmail(normalizedEmail);
+          if (pendingUser && !pendingUser.emailConfirmedAt) {
+            try {
+              pendingToken = createPendingVerificationToken(pendingUser.id, normalizedEmail);
+              res.set('Set-Cookie', buildPendingVerifyCookie(pendingToken));
+            } catch {
+              // ignore if HMAC secret unavailable
+            }
+          }
+        }
+        if (otpService) {
+          const st = await otpService.getStatus(normalizedEmail);
+          if (st.status === 200) {
+            statusMeta = {
+              resendCooldownRemainingSeconds: st.body.resendCooldownRemainingSeconds ?? 0,
+              expiresAt: st.body.expiresAt ?? null,
+              resendAvailableAt: st.body.resendAvailableAt ?? null,
+            };
+          }
+        }
+
+        res.status(403).json({
+          error: 'Your email address has not been verified yet. Please enter your 6-digit verification code or request a new code.',
+          code: 'EMAIL_NOT_CONFIRMED',
+          email: normalizedEmail,
+          pendingToken,
+          ...statusMeta,
+        });
+        return;
+      }
+
+      res.status(401).json({
+        error: msg,
+        code: 'INVALID_CREDENTIALS',
+      });
+      return;
+    }
+
+    if (!data.user.email_confirmed_at) {
+      res.status(403).json({
+        error: 'Your email address has not been verified yet. Please verify your 6-digit code first.',
+        code: 'EMAIL_NOT_CONFIRMED',
+        email: normalizedEmail,
       });
       return;
     }
@@ -513,6 +615,7 @@ app.post(authLoginPaths, authRateLimit, async (req: Request, res: Response) => {
         verified: Boolean(data.user.email_confirmed_at),
       },
       token: data.session.access_token,
+      refreshToken: data.session.refresh_token || null,
     });
   } catch (err: any) {
     logEvent('Auth', 'LOGIN_EXCEPTION', { message: err?.message });
@@ -1332,17 +1435,18 @@ app.post('/api/datasets/:dataset/sync', nasaSyncRateLimit, async (req: Request, 
       return;
     }
 
-    const result = await syncEarthdataCmrForFarm(
+    const result: any = await syncEarthdataCmrForFarm(
       auth.writeClient,
       auth.ownerUserId,
       auth.farm,
       dataset as SupportedCmrDataset
     );
+    const hasNumericPixels = Number(result.numericPixelCount || 0) > 0 && Boolean(result.persisted);
     res.json({
-      success: false,
-      discoverySuccess: true,
-      metadataOnly: true,
-      numericObservationsPersisted: false,
+      success: hasNumericPixels,
+      discoverySuccess: Number(result.granulesFound || 0) > 0,
+      metadataOnly: !hasNumericPixels,
+      numericObservationsPersisted: hasNumericPixels,
       accessMode: auth.mode,
       ...result,
     });
@@ -1508,7 +1612,9 @@ app.post('/api/nasa/ingest/:farmId', nasaSyncRateLimit, async (req: Request, res
   const outcomeList = Object.entries(outcomes);
   const powerSaved = outcomes['nasa-power']?.ok ? Number(outcomes['nasa-power']?.recordsSaved || 0) : 0;
   const modisPixels = Number(outcomes.modis?.numericPixelCount || 0);
-  const numericRecordsSaved = powerSaved + modisPixels;
+  const smapPixels = Number(outcomes.smap?.numericPixelCount || 0);
+  const gpmPixels = Number(outcomes.gpm?.numericPixelCount || 0);
+  const numericRecordsSaved = powerSaved + modisPixels + smapPixels + gpmPixels;
   const metadataGranulesFound = ['smap', 'gpm', 'modis', 'ecostress'].reduce(
     (sum, ds) => sum + Number(outcomes[ds]?.granulesFound || 0),
     0
@@ -1751,14 +1857,35 @@ app.get('/api/nasa/:provider(modis|gpm|smap|ecostress)', async (req: Request, re
               latestJobError: summary.latestModisJobError,
               failureExplanation: summary.latestModisFailureExplanation,
               persisted: summary.modisStages.persisted,
+              lastAttemptAt: summary.modisStages.lastAttemptAt,
               stages: summary.modisStages,
             }
           : {
-              pixelValuesAvailable: false,
+              pixelValuesAvailable: Boolean(summary.datasetPipelines?.[provider]?.pixelValuesAvailable),
+              persisted: Boolean(summary.datasetPipelines?.[provider]?.persisted),
+              lastAttemptAt: summary.datasetPipelines?.[provider]?.lastAttemptAt || null,
+              latestError: summary.datasetPipelines?.[provider]?.latestError || null,
+              stages: summary.datasetPipelines?.[provider]?.stages || null,
               granuleSummary: summary.cmrGranulesByDataset[provider] || null,
+              ...(provider === 'smap'
+                ? {
+                    smSurface: summary.smapSurfaceMoisture,
+                    smRootZone: summary.smapRootZoneMoisture,
+                    observedAt: summary.smapLatestObservedAt,
+                    pixelCount: summary.smapPixelCount,
+                  }
+                : provider === 'gpm'
+                ? {
+                    latestPrecipMm: summary.gpmLatestPrecipMm,
+                    precipTotalMm: summary.gpmPrecipTotalMm,
+                    observedAt: summary.gpmLatestObservedAt,
+                    pixelCount: summary.gpmPixelCount,
+                  }
+                : {}),
               reason:
+                summary.datasetPipelines?.[provider]?.latestError ||
                 capabilities[provider]?.notes ||
-                'Numeric raster pixel decoding requires authenticated Earthdata binary download + HDF5/NetCDF4 worker.',
+                'Numeric raster pixel decoding requires EARTHDATA_TOKEN for Earthdata Cloud OPeNDAP extraction.',
             },
       observations: (rows || []).map(mapDbObservationToCanonical),
     });
@@ -1794,10 +1921,11 @@ app.get('/api/nasa/observations', async (req: Request, res: Response) => {
     validPixelCount: summary.modisValidPixelCount,
     maskedPixelCount: summary.modisMaskedPixelCount,
     lastSuccessfulObservationDate: summary.modisStages.lastSuccessfulObservationDate,
+    lastAttemptAt: summary.modisStages.lastAttemptAt,
     failureExplanation: summary.latestModisFailureExplanation,
     spatialMethod: geometry.spatialMethod,
     spatialDisclosure: geometry.disclosure,
-    stages: summary.modisStages,
+    stages: summary.datasetPipelines.modis.stages,
   };
 
   const vegetationNDVI =
@@ -1815,7 +1943,7 @@ app.get('/api/nasa/observations', async (req: Request, res: Response) => {
           spatialResolution: '250 m NDVI/EVI & 1 km LST',
           latestGranuleId: modis?.latestGranuleId || null,
           granuleTimestamp: modis?.latestTimeStart || null,
-          sensor: 'MODIS MOD13Q1 (250m) & MOD11A2 (1km) via NASA ORNL DAAC',
+          sensor: 'MODIS MOD13Q1 (250m) & MOD11A2 (1km) via NASA ORNL DAAC / OPeNDAP',
           ...modisStageFields,
         }
       : summary.hasModisMaskedOnly
@@ -1845,8 +1973,8 @@ app.get('/api/nasa/observations', async (req: Request, res: Response) => {
           ornlError: summary.latestModisJobError || null,
           sensor: 'MODIS MOD13Q1 (250m)',
           notice: summary.latestModisFailureExplanation
-            ? `Earthdata CMR granule indexed; ${summary.latestModisFailureExplanation}`
-            : 'Earthdata CMR granule indexed. Run Sync MODIS 250m to retrieve ORNL DAAC numeric NDVI pixels.',
+            ? `Granule Indexed — Pixel Data Pending: ${summary.latestModisFailureExplanation}`
+            : 'Granule Indexed — Pixel Data Pending. Run Sync MODIS & CMR to retrieve pixel values.',
           ...modisStageFields,
           persisted: false,
         }
@@ -1879,6 +2007,12 @@ app.get('/api/nasa/observations', async (req: Request, res: Response) => {
           persisted: false,
         };
 
+  const smapPipeline = summary.datasetPipelines.smap;
+  const gpmPipeline = summary.datasetPipelines.gpm;
+  const ecoPipeline = summary.datasetPipelines.ecostress;
+  const hasSmapPixels = smapPipeline.pixelValuesAvailable && smapPipeline.persisted;
+  const hasGpmPixels = gpmPipeline.pixelValuesAvailable && gpmPipeline.persisted;
+
   res.json({
     farmId: auth.farm.id,
     farmName: auth.farm.name,
@@ -1888,6 +2022,7 @@ app.get('/api/nasa/observations', async (req: Request, res: Response) => {
     capabilities: getNasaIntegrationCapabilities(),
     catalog: nasaHarmonizedRoadmap,
     summary,
+    datasetPipelines: summary.datasetPipelines,
     realTimeMetrics: {
       solarInsolationPOWER: summary.hasPowerData
         ? {
@@ -1950,35 +2085,79 @@ app.get('/api/nasa/observations', async (req: Request, res: Response) => {
             notice: 'Sync NASA POWER for cumulative daily PRECTOTCORR precipitation totals.',
           },
       soilMoistureSMAP: {
-        status: smap?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
-        value: null,
+        status: hasSmapPixels
+          ? 'synced'
+          : smap?.latestGranuleId
+          ? 'granule_metadata_only'
+          : smapPipeline.latestJobStatus === 'failed'
+          ? 'ingestion_failed'
+          : 'not_synced',
+        value: hasSmapPixels ? (summary.smapRootZoneMoisture ?? summary.smapSurfaceMoisture) : null,
+        surfaceMoisture: hasSmapPixels ? summary.smapSurfaceMoisture : null,
+        rootZoneMoisture: hasSmapPixels ? summary.smapRootZoneMoisture : null,
+        observedAt: summary.smapLatestObservedAt,
+        pixelValuesAvailable: hasSmapPixels,
+        persisted: hasSmapPixels,
         unit: 'm³/m³',
         latestGranuleId: smap?.latestGranuleId || null,
         granuleTimestamp: smap?.latestTimeStart || null,
+        lastAttemptAt: smapPipeline.lastAttemptAt,
+        error: smapPipeline.latestError,
+        stages: smapPipeline.stages,
         sensor: 'SMAP L4 (9km EASE-Grid 2.0)',
-        notice: 'Numeric HDF5 moisture pixel extraction requires EARTHDATA_TOKEN + binary decoder.',
+        notice: hasSmapPixels
+          ? `Extracted via Earthdata Cloud OPeNDAP (${summary.smapLatestObservedAt}).`
+          : smap?.latestGranuleId
+          ? `Granule Indexed — Pixel Data Pending${smapPipeline.latestError ? ` (${smapPipeline.latestError})` : ''}`
+          : smapPipeline.latestError || 'Sync Earthdata to discover SMAP L4 granules.',
       },
       precipitationGPM: {
-        status: gpm?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
-        value: null,
-        value30DayTotal: null,
-        pixelValuesAvailable: false,
+        status: hasGpmPixels
+          ? 'synced'
+          : gpm?.latestGranuleId
+          ? 'granule_metadata_only'
+          : gpmPipeline.latestJobStatus === 'failed'
+          ? 'ingestion_failed'
+          : 'not_synced',
+        value: hasGpmPixels ? summary.gpmLatestPrecipMm : null,
+        value30DayTotal: hasGpmPixels ? summary.gpmPrecipTotalMm : null,
+        observedAt: summary.gpmLatestObservedAt,
+        pixelValuesAvailable: hasGpmPixels,
+        persisted: hasGpmPixels,
         unit: 'mm/day',
         productId: 'GPM_3IMERGDL',
         latestGranuleId: gpm?.latestGranuleId || null,
         granuleTimestamp: gpm?.latestTimeStart || null,
+        lastAttemptAt: gpmPipeline.lastAttemptAt,
+        error: gpmPipeline.latestError,
+        stages: gpmPipeline.stages,
         sensor: 'GPM IMERG Late (0.1° / ~10 km)',
         timestamp: gpm?.retrievedAt || null,
-        notice: 'Earthdata CMR granule metadata only; numeric NetCDF4 rainfall extraction unavailable.',
+        notice: hasGpmPixels
+          ? `Extracted via Earthdata Cloud OPeNDAP (${summary.gpmLatestObservedAt}).`
+          : gpm?.latestGranuleId
+          ? `Granule Indexed — Pixel Data Pending${gpmPipeline.latestError ? ` (${gpmPipeline.latestError})` : ''}`
+          : gpmPipeline.latestError || 'Sync Earthdata to discover GPM IMERG granules.',
       },
       vegetationNDVI,
       evapotranspirationECOSTRESS: {
-        status: ecostress?.latestGranuleId ? 'granule_metadata_only' : 'not_synced',
+        status: ecostress?.latestGranuleId
+          ? 'granule_metadata_only'
+          : ecoPipeline.latestJobStatus === 'failed'
+          ? 'ingestion_failed'
+          : 'not_synced',
         waterStressIndex: null,
+        pixelValuesAvailable: false,
+        persisted: false,
         latestGranuleId: ecostress?.latestGranuleId || null,
         granuleTimestamp: ecostress?.latestTimeStart || null,
+        lastAttemptAt: ecoPipeline.lastAttemptAt,
+        error: ecoPipeline.latestError,
+        stages: ecoPipeline.stages,
         sensor: 'ECOSTRESS ISS (70m)',
-        notice: 'Numeric thermal ET GeoTIFF extraction requires EARTHDATA_TOKEN + binary decoder.',
+        notice: ecostress?.latestGranuleId
+          ? `Granule Indexed — Pixel Data Pending${ecoPipeline.latestError ? ` (${ecoPipeline.latestError})` : ''}`
+          : ecoPipeline.latestError || 'ECOSTRESS 70m GeoTIFF extraction requires EARTHDATA_TOKEN + raster decoder.',
       },
     },
   });

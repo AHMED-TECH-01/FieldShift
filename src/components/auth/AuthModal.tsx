@@ -40,12 +40,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [agreeTerms, setAgreeTerms] = useState(true);
   const [rememberMe, setRememberMe] = useState(true);
 
-  // 6-digit OTP array
+  // 6-digit OTP & verification lifecycle state
   const [otp, setOtp] = useState<string[]>(['', '', '', '', '', '']);
   const [timerSeconds, setTimerSeconds] = useState(RESEND_COOLDOWN_SECONDS);
+  const [resendAvailableAtMs, setResendAvailableAtMs] = useState<number | null>(null);
+  const [pendingToken, setPendingToken] = useState<string | undefined>(undefined);
+  const [verifiedSuccess, setVerifiedSuccess] = useState(false);
+
+  // Inline Change Email workflow state inside verification screen
+  const [isChangeEmailOpen, setIsChangeEmailOpen] = useState(false);
+  const [newEmailInput, setNewEmailInput] = useState('');
+  const [changeEmailPassword, setChangeEmailPassword] = useState('');
+  const [requireChangeEmailPassword, setRequireChangeEmailPassword] = useState(false);
+  const [changingEmail, setChangingEmail] = useState(false);
+
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [unverifiedSignInEmail, setUnverifiedSignInEmail] = useState<string | null>(null);
+  const [unverifiedSignInMeta, setUnverifiedSignInMeta] = useState<{
+    email: string;
+    pendingToken?: string;
+    resendAvailableAt?: string | null;
+    cooldownSeconds?: number;
+  } | null>(null);
+  const [pendingSignupMeta, setPendingSignupMeta] = useState<{
+    email: string;
+    pendingToken?: string;
+    cooldownSeconds?: number;
+  } | null>(null);
   const [duplicateSignupEmail, setDuplicateSignupEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
@@ -54,40 +76,92 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const submittingRef = useRef(false);
 
+  const applyCooldownFromServer = (resendAvailableAt?: string | null, fallbackSeconds?: number) => {
+    if (resendAvailableAt) {
+      const targetMs = new Date(resendAvailableAt).getTime();
+      if (Number.isFinite(targetMs)) {
+        const remaining = Math.max(0, Math.ceil((targetMs - Date.now()) / 1000));
+        setResendAvailableAtMs(remaining > 0 ? targetMs : null);
+        setTimerSeconds(remaining);
+        return;
+      }
+    }
+    if (typeof fallbackSeconds === 'number' && Number.isFinite(fallbackSeconds)) {
+      const secs = Math.max(0, Math.ceil(fallbackSeconds));
+      setResendAvailableAtMs(secs > 0 ? Date.now() + secs * 1000 : null);
+      setTimerSeconds(secs);
+    }
+  };
+
   useEffect(() => {
     setMode(initialMode);
     setErrorMsg(null);
+    setErrorCode(null);
     setSuccessMsg(null);
-    setUnverifiedSignInEmail(null);
+    setUnverifiedSignInMeta(null);
+    setPendingSignupMeta(null);
     setDuplicateSignupEmail(null);
+    setIsChangeEmailOpen(false);
+    setVerifiedSuccess(false);
   }, [initialMode, isOpen]);
 
-  // Countdown timer for resend OTP
+  // Drift-free server-synced countdown timer for resend OTP
   useEffect(() => {
-    if (mode !== 'verify' || timerSeconds <= 0) return;
-    const interval = setInterval(() => {
-      setTimerSeconds((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
+    if (mode !== 'verify' || !resendAvailableAtMs) return;
+
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((resendAvailableAtMs - Date.now()) / 1000));
+      setTimerSeconds(remaining);
+      if (remaining <= 0) {
+        setResendAvailableAtMs(null);
+      }
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [mode, timerSeconds]);
+  }, [mode, resendAvailableAtMs]);
+
+  // Sync cooldown / status when entering verify mode directly with an email
+  useEffect(() => {
+    if (!isOpen || mode !== 'verify') return;
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || resendAvailableAtMs) return;
+
+    let cancelled = false;
+    authService
+      .getVerificationStatus(cleanEmail)
+      .then((status) => {
+        if (cancelled || !status) return;
+        applyCooldownFromServer(status.resendAvailableAt, status.resendCooldownRemainingSeconds);
+      })
+      .catch(() => {
+        // Non-blocking fallback
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, mode, email]);
 
   // Auto-focus first OTP box when entering verification screen
   useEffect(() => {
-    if (isOpen && mode === 'verify') {
+    if (isOpen && mode === 'verify' && !isChangeEmailOpen && !verifiedSuccess) {
       const id = setTimeout(() => {
         otpInputRefs.current[0]?.focus();
       }, 60);
       return () => clearTimeout(id);
     }
-  }, [isOpen, mode]);
+  }, [isOpen, mode, isChangeEmailOpen, verifiedSuccess]);
 
   if (!isOpen) return null;
 
-  const isBusy = loading || resending || oauthLoading;
+  const isBusy = loading || resending || oauthLoading || changingEmail || verifiedSuccess;
 
   // Handle OTP digit changes (numeric only + handles multi-digit mobile autofill)
   const handleOtpChange = (index: number, rawValue: string) => {
     setErrorMsg(null);
+    setErrorCode(null);
     const digitsOnly = rawValue.replace(/\D/g, '');
 
     if (!digitsOnly) {
@@ -144,6 +218,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handlePasteOtp = (e: React.ClipboardEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+    setErrorCode(null);
     const digits = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6).split('');
     if (digits.length === 0) {
       setErrorMsg('Please paste a 6-digit numeric verification code.');
@@ -161,6 +236,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handleGoogleAuth = async () => {
     if (isBusy) return;
     setErrorMsg(null);
+    setErrorCode(null);
     setSuccessMsg(null);
     setOauthLoading(true);
     try {
@@ -176,11 +252,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     e.preventDefault();
     if (isBusy || submittingRef.current) return;
     setErrorMsg(null);
+    setErrorCode(null);
     setSuccessMsg(null);
     setDuplicateSignupEmail(null);
+    setPendingSignupMeta(null);
 
     const cleanName = fullName.trim();
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanName || !cleanEmail || !password) {
       setErrorMsg('Please complete all required fields.');
@@ -214,14 +292,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return;
       }
 
+      setEmail(cleanEmail);
+      setPendingToken(data.pendingToken);
       setOtp(['', '', '', '', '', '']);
-      setTimerSeconds(RESEND_COOLDOWN_SECONDS);
+      setIsChangeEmailOpen(false);
+      applyCooldownFromServer(
+        data.resendAvailableAt,
+        data.resendCooldownSeconds ?? RESEND_COOLDOWN_SECONDS
+      );
       setSuccessMsg(data.message || 'We sent a 6-digit verification code to your email address.');
       setMode('verify');
     } catch (err: any) {
       if (err?.code === 'USER_ALREADY_EXISTS') {
         setDuplicateSignupEmail(cleanEmail);
+      } else if (err?.code === 'ACCOUNT_PENDING_VERIFICATION') {
+        setPendingSignupMeta({
+          email: cleanEmail,
+          pendingToken: err?.details?.pendingToken,
+          cooldownSeconds: err?.details?.resendCooldownRemainingSeconds ?? 0,
+        });
       }
+      setErrorCode(err?.code || null);
       setErrorMsg(err?.message || 'Error occurred while creating account.');
     } finally {
       setLoading(false);
@@ -234,10 +325,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     e.preventDefault();
     if (isBusy || submittingRef.current) return;
     setErrorMsg(null);
+    setErrorCode(null);
     setSuccessMsg(null);
-    setUnverifiedSignInEmail(null);
+    setUnverifiedSignInMeta(null);
 
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !password) {
       setErrorMsg('Please enter your email and password.');
       return;
@@ -251,8 +343,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onClose();
     } catch (err: any) {
       if (err?.code === 'EMAIL_NOT_CONFIRMED') {
-        setUnverifiedSignInEmail(cleanEmail);
+        setUnverifiedSignInMeta({
+          email: cleanEmail,
+          pendingToken: err?.details?.pendingToken,
+          resendAvailableAt: err?.details?.resendAvailableAt,
+          cooldownSeconds: err?.details?.resendCooldownRemainingSeconds ?? 0,
+        });
       }
+      setErrorCode(err?.code || null);
       setErrorMsg(err?.message || 'Authentication failed. Please verify credentials.');
     } finally {
       setLoading(false);
@@ -265,6 +363,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     e.preventDefault();
     if (isBusy || submittingRef.current) return;
     setErrorMsg(null);
+    setErrorCode(null);
     setSuccessMsg(null);
 
     const code = otp.join('');
@@ -276,11 +375,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     submittingRef.current = true;
     setLoading(true);
     try {
-      const data = await authService.verifyOtp(email.trim(), code);
-      onSuccess(data.user);
-      onClose();
+      const data = await authService.verifyOtp(email.trim().toLowerCase(), code);
+      setVerifiedSuccess(true);
+      setSuccessMsg(data.message || 'Email verified! Opening your FieldShift workspace...');
+      setTimeout(() => {
+        onSuccess(data.user);
+        onClose();
+      }, 500);
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Invalid or expired 6-digit code. Please retry.');
+      setErrorCode(err?.code || null);
+      setErrorMsg(err?.message || 'Unable to verify your 6-digit code. Please try again.');
     } finally {
       setLoading(false);
       submittingRef.current = false;
@@ -290,25 +394,94 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   // Resend OTP
   const handleResendOtp = async () => {
     if (timerSeconds > 0 || isBusy) return;
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {
-      setErrorMsg('Email address is missing. Click Change Email to re-enter your email.');
+      setErrorMsg('Email address is missing. Click Change Email to enter your email.');
       return;
     }
 
     setResending(true);
     setErrorMsg(null);
+    setErrorCode(null);
     setSuccessMsg(null);
     try {
       const data = await authService.resendOtp(cleanEmail);
+      if (data.pendingToken) {
+        setPendingToken(data.pendingToken);
+      }
       setOtp(['', '', '', '', '', '']);
-      setTimerSeconds(RESEND_COOLDOWN_SECONDS);
-      setSuccessMsg(data.message || 'A new 6-digit verification code has been sent to your email address.');
+      applyCooldownFromServer(
+        data.resendAvailableAt,
+        data.resendCooldownSeconds ?? RESEND_COOLDOWN_SECONDS
+      );
+      setSuccessMsg(
+        data.message || 'A new 6-digit verification code has been sent to your email address.'
+      );
       otpInputRefs.current[0]?.focus();
     } catch (err: any) {
+      setErrorCode(err?.code || null);
+      if (err?.code === 'COOLDOWN_ACTIVE' || err?.code === 'RESEND_IN_PROGRESS') {
+        applyCooldownFromServer(err?.details?.resendAvailableAt, err?.details?.retryAfterSeconds);
+      }
       setErrorMsg(err?.message || 'Failed to resend verification code. Please try again shortly.');
     } finally {
       setResending(false);
+    }
+  };
+
+  // Inline Change Email Submission
+  const handleChangePendingEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isBusy) return;
+    setErrorMsg(null);
+    setErrorCode(null);
+    setSuccessMsg(null);
+
+    const current = email.trim().toLowerCase();
+    const next = newEmailInput.trim().toLowerCase();
+    if (!next || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next)) {
+      setErrorMsg('Please enter a valid new email address.');
+      return;
+    }
+    if (next === current) {
+      setErrorMsg('New email address must be different from your current email.');
+      return;
+    }
+
+    setChangingEmail(true);
+    try {
+      const res = await authService.changePendingEmail({
+        currentEmail: current,
+        newEmail: next,
+        pendingToken,
+        password: changeEmailPassword || undefined,
+      });
+
+      setEmail(res.email || next);
+      if (res.pendingToken) {
+        setPendingToken(res.pendingToken);
+      }
+      setOtp(['', '', '', '', '', '']);
+      setIsChangeEmailOpen(false);
+      setNewEmailInput('');
+      setChangeEmailPassword('');
+      setRequireChangeEmailPassword(false);
+      applyCooldownFromServer(
+        res.resendAvailableAt,
+        res.resendCooldownSeconds ?? RESEND_COOLDOWN_SECONDS
+      );
+      setSuccessMsg(
+        res.message || `Email updated to ${res.email || next}. A fresh 6-digit verification code was sent.`
+      );
+      setTimeout(() => otpInputRefs.current[0]?.focus(), 60);
+    } catch (err: any) {
+      setErrorCode(err?.code || null);
+      if (err?.code === 'PENDING_OWNERSHIP_REQUIRED') {
+        setRequireChangeEmailPassword(true);
+      }
+      setErrorMsg(err?.message || 'Unable to update your email address. Please try again.');
+    } finally {
+      setChangingEmail(false);
     }
   };
 
@@ -408,8 +581,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 onClick={() => {
                   setMode('signup');
                   setErrorMsg(null);
+                  setErrorCode(null);
                   setSuccessMsg(null);
-                  setUnverifiedSignInEmail(null);
+                  setUnverifiedSignInMeta(null);
+                  setPendingSignupMeta(null);
                   setDuplicateSignupEmail(null);
                 }}
                 className={`flex-1 py-2 min-h-[40px] text-xs font-bold rounded-full transition-all ${
@@ -425,8 +600,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 onClick={() => {
                   setMode('signin');
                   setErrorMsg(null);
+                  setErrorCode(null);
                   setSuccessMsg(null);
-                  setUnverifiedSignInEmail(null);
+                  setUnverifiedSignInMeta(null);
+                  setPendingSignupMeta(null);
                   setDuplicateSignupEmail(null);
                 }}
                 className={`flex-1 py-2 min-h-[40px] text-xs font-bold rounded-full transition-all ${
@@ -451,21 +628,63 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <span>{errorMsg}</span>
               </div>
 
-              {unverifiedSignInEmail && mode === 'signin' && (
+              {unverifiedSignInMeta && mode === 'signin' && (
                 <div className="flex flex-wrap items-center gap-2 pl-6">
                   <button
                     type="button"
                     onClick={() => {
-                      setEmail(unverifiedSignInEmail);
+                      setEmail(unverifiedSignInMeta.email);
+                      setPendingToken(unverifiedSignInMeta.pendingToken);
                       setOtp(['', '', '', '', '', '']);
-                      setTimerSeconds(0);
+                      applyCooldownFromServer(
+                        unverifiedSignInMeta.resendAvailableAt,
+                        unverifiedSignInMeta.cooldownSeconds ?? 0
+                      );
                       setErrorMsg(null);
+                      setErrorCode(null);
+                      setIsChangeEmailOpen(false);
                       setSuccessMsg('Enter your 6-digit code below or request a new verification code.');
                       setMode('verify');
                     }}
                     className="px-3 py-1.5 rounded-lg bg-[#073D2B] text-white font-bold text-[11px] hover:bg-[#145C3D] transition-colors"
                   >
                     Enter OTP / Resend Code
+                  </button>
+                </div>
+              )}
+
+              {pendingSignupMeta && mode === 'signup' && (
+                <div className="flex flex-wrap items-center gap-2 pl-6">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmail(pendingSignupMeta.email);
+                      setPendingToken(pendingSignupMeta.pendingToken);
+                      setOtp(['', '', '', '', '', '']);
+                      applyCooldownFromServer(undefined, pendingSignupMeta.cooldownSeconds ?? 0);
+                      setErrorMsg(null);
+                      setErrorCode(null);
+                      setPendingSignupMeta(null);
+                      setIsChangeEmailOpen(false);
+                      setSuccessMsg('Continue verifying your email or request a new 6-digit code.');
+                      setMode('verify');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-[#073D2B] text-white font-bold text-[11px] hover:bg-[#145C3D] transition-colors"
+                  >
+                    Continue Verification
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmail(pendingSignupMeta.email);
+                      setErrorMsg(null);
+                      setErrorCode(null);
+                      setPendingSignupMeta(null);
+                      setMode('signin');
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-[#073D2B]/30 text-[#073D2B] font-bold text-[11px] hover:bg-white transition-colors"
+                  >
+                    Go to Sign In
                   </button>
                 </div>
               )}
@@ -477,6 +696,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     onClick={() => {
                       setEmail(duplicateSignupEmail);
                       setErrorMsg(null);
+                      setErrorCode(null);
                       setDuplicateSignupEmail(null);
                       setMode('signin');
                     }}
@@ -704,7 +924,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     setEmail('test@test.com');
                     setPassword('12345678');
                     setErrorMsg(null);
-                    setUnverifiedSignInEmail(null);
+                    setErrorCode(null);
+                    setUnverifiedSignInMeta(null);
                   }}
                   className="px-3 py-2 min-h-[38px] text-[11px] font-bold rounded-lg bg-[#073D2B] text-white hover:bg-[#145C3D] transition-colors cursor-pointer shrink-0"
                 >
@@ -846,8 +1067,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   type="button"
                   onClick={() => {
                     setErrorMsg(null);
+                    setErrorCode(null);
                     setSuccessMsg(null);
-                    setUnverifiedSignInEmail(null);
+                    setUnverifiedSignInMeta(null);
                     setMode('signup');
                   }}
                   className="font-bold text-[#073D2B] hover:underline py-2 px-1"
@@ -860,7 +1082,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
           {/* ================= MODE: 6-DIGIT EMAIL VERIFICATION ================= */}
           {mode === 'verify' && (
-            <form onSubmit={handleVerifyOtp} className="space-y-5 text-center">
+            <div className="space-y-5 text-center">
               {/* Mobile 3D Earth orbital element */}
               <div className="md:hidden flex justify-center -my-1">
                 <FieldShiftEarth
@@ -875,114 +1097,227 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
 
               <div className="w-14 h-14 rounded-2xl bg-[#EAF5DF] text-[#145C3D] items-center justify-center mx-auto shadow-xs hidden md:flex">
-                <Mail className="w-7 h-7 text-[#145C3D]" />
+                {verifiedSuccess ? (
+                  <CheckCircle2 className="w-7 h-7 text-emerald-600" />
+                ) : (
+                  <Mail className="w-7 h-7 text-[#145C3D]" />
+                )}
               </div>
 
               <div>
-                <h3 className="font-display text-xl font-bold text-[#073D2B]">Verify your email</h3>
+                <h3 className="font-display text-xl font-bold text-[#073D2B]">
+                  {verifiedSuccess
+                    ? 'Email Verified'
+                    : isChangeEmailOpen
+                    ? 'Change Verification Email'
+                    : 'Verify your email'}
+                </h3>
                 <p className="text-xs text-[#527367] mt-1 leading-relaxed">
-                  We sent a 6-digit verification code to your email address.
-                  {email.trim() && (
+                  {verifiedSuccess ? (
+                    'Your account is verified. Entering your FieldShift dashboard...'
+                  ) : isChangeEmailOpen ? (
                     <>
-                      <br />
-                      <strong className="text-[#073D2B] break-all">{email.trim()}</strong>
+                      Update your pending email address below. Any older codes for{' '}
+                      <strong className="text-[#073D2B] break-all">{email.trim() || 'your account'}</strong> will be invalidated.
+                    </>
+                  ) : (
+                    <>
+                      We sent a 6-digit verification code to your email address (valid for 10 minutes).
+                      {email.trim() && (
+                        <>
+                          <br />
+                          <strong className="text-[#073D2B] break-all">{email.trim()}</strong>
+                        </>
+                      )}
                     </>
                   )}
                 </p>
               </div>
 
-              {/* 6 Individual OTP Boxes - Numeric, paste-friendly & keyboard accessible */}
-              <div
-                className="flex items-center justify-center gap-1.5 sm:gap-2.5 max-w-full px-1"
-                onPaste={handlePasteOtp}
-                role="group"
-                aria-label="6-digit verification code"
-              >
-                {otp.map((digit, index) => (
-                  <input
-                    key={index}
-                    ref={(el) => {
-                      otpInputRefs.current[index] = el;
-                    }}
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    autoComplete={index === 0 ? 'one-time-code' : 'off'}
-                    maxLength={6}
-                    value={digit}
-                    onChange={(e) => handleOtpChange(index, e.target.value)}
-                    onKeyDown={(e) => handleOtpKeyDown(index, e)}
-                    aria-label={`Verification digit ${index + 1}`}
-                    disabled={loading}
-                    className="w-10 h-12 sm:w-11 sm:h-13 md:w-12 md:h-14 text-center font-display text-base sm:text-lg font-bold rounded-lg sm:rounded-xl border border-[#D5E5CA] bg-white text-[#073D2B] shadow-xs focus:outline-hidden focus:ring-2 focus:ring-[#76B93F] focus:border-[#76B93F] disabled:opacity-60"
-                  />
-                ))}
-              </div>
-
-              {/* Countdown / Resend Action */}
-              <div className="text-xs text-[#527367]">
-                Didn't receive the code?{' '}
-                {timerSeconds > 0 ? (
-                  <span className="font-semibold text-[#073D2B]" aria-live="polite">
-                    Resend in 00:{timerSeconds < 10 ? `0${timerSeconds}` : timerSeconds}
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={isBusy}
-                    onClick={handleResendOtp}
-                    className="font-bold text-[#145C3D] hover:underline py-2 px-1 disabled:opacity-50"
-                  >
-                    {resending ? 'Sending...' : 'Resend Code'}
-                  </button>
-                )}
-              </div>
-
-              <button
-                type="submit"
-                disabled={isBusy || otp.join('').length < 6}
-                className="w-full py-3 min-h-[44px] rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50"
-              >
-                {loading ? (
+              {verifiedSuccess ? (
+                <div className="py-4 flex items-center justify-center gap-2 text-xs font-semibold text-emerald-700">
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <span>Verify Email</span>
-                    <ArrowRight className="w-4 h-4 text-[#76B93F]" />
-                  </>
-                )}
-              </button>
+                  <span>Loading workspace...</span>
+                </div>
+              ) : isChangeEmailOpen ? (
+                <form onSubmit={handleChangePendingEmail} className="space-y-3.5 text-left">
+                  <div>
+                    <label htmlFor="change-pending-email" className="block text-xs font-semibold text-[#073D2B] mb-1">
+                      New Email Address
+                    </label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-3.5 w-4 h-4 text-[#8C9E94]" />
+                      <input
+                        id="change-pending-email"
+                        type="email"
+                        required
+                        autoFocus
+                        value={newEmailInput}
+                        onChange={(e) => setNewEmailInput(e.target.value)}
+                        placeholder="new.address@example.com"
+                        className="w-full pl-9 pr-3 py-2.5 min-h-[44px] rounded-xl border border-[#D5E5CA] bg-white text-sm sm:text-xs text-[#073D2B] focus:outline-hidden focus:ring-2 focus:ring-[#76B93F]"
+                      />
+                    </div>
+                  </div>
 
-              <div className="flex flex-wrap items-center justify-center gap-4 pt-1">
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => {
-                    setOtp(['', '', '', '', '', '']);
-                    setErrorMsg(null);
-                    setSuccessMsg(null);
-                    setMode('signup');
-                  }}
-                  className="text-xs font-semibold text-[#145C3D] hover:text-[#073D2B] hover:underline py-2 px-2 min-h-[44px]"
-                >
-                  Change Email
-                </button>
-                <span className="text-[#D5E5CA]" aria-hidden="true">|</span>
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => {
-                    setOtp(['', '', '', '', '', '']);
-                    setErrorMsg(null);
-                    setSuccessMsg(null);
-                    setMode('signin');
-                  }}
-                  className="text-xs text-[#527367] hover:text-[#073D2B] underline py-2 px-2 min-h-[44px]"
-                >
-                  Back to Login
-                </button>
-              </div>
-            </form>
+                  {(requireChangeEmailPassword || !pendingToken) && (
+                    <div>
+                      <label htmlFor="change-email-password" className="block text-xs font-semibold text-[#073D2B] mb-1">
+                        Account Password (to verify ownership)
+                      </label>
+                      <div className="relative">
+                        <Lock className="absolute left-3 top-3.5 w-4 h-4 text-[#8C9E94]" />
+                        <input
+                          id="change-email-password"
+                          type="password"
+                          required
+                          value={changeEmailPassword}
+                          onChange={(e) => setChangeEmailPassword(e.target.value)}
+                          placeholder="Enter your password"
+                          className="w-full pl-9 pr-3 py-2.5 min-h-[44px] rounded-xl border border-[#D5E5CA] bg-white text-sm sm:text-xs text-[#073D2B] focus:outline-hidden focus:ring-2 focus:ring-[#76B93F]"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                    <button
+                      type="submit"
+                      disabled={isBusy || !newEmailInput.trim()}
+                      className="flex-1 py-2.5 min-h-[44px] rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-sm disabled:opacity-50"
+                    >
+                      {changingEmail ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <>
+                          <span>Update & Send Code</span>
+                          <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => {
+                        setIsChangeEmailOpen(false);
+                        setErrorMsg(null);
+                        setErrorCode(null);
+                        setNewEmailInput('');
+                        setChangeEmailPassword('');
+                      }}
+                      className="py-2.5 px-4 min-h-[44px] rounded-full border border-[#D5E5CA] bg-white text-[#073D2B] text-xs font-semibold hover:bg-[#F0F5EE] transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleVerifyOtp} className="space-y-5">
+                  {/* 6 Individual OTP Boxes - Numeric, paste-friendly & keyboard accessible */}
+                  <div
+                    className="flex items-center justify-center gap-1.5 sm:gap-2.5 max-w-full px-1"
+                    onPaste={handlePasteOtp}
+                    role="group"
+                    aria-label="6-digit verification code"
+                  >
+                    {otp.map((digit, index) => (
+                      <input
+                        key={index}
+                        ref={(el) => {
+                          otpInputRefs.current[index] = el;
+                        }}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        autoComplete={index === 0 ? 'one-time-code' : 'off'}
+                        maxLength={6}
+                        value={digit}
+                        onChange={(e) => handleOtpChange(index, e.target.value)}
+                        onKeyDown={(e) => handleOtpKeyDown(index, e)}
+                        aria-label={`Verification digit ${index + 1}`}
+                        disabled={loading}
+                        className={`w-10 h-12 sm:w-11 sm:h-13 md:w-12 md:h-14 text-center font-display text-base sm:text-lg font-bold rounded-lg sm:rounded-xl border bg-white text-[#073D2B] shadow-xs focus:outline-hidden focus:ring-2 focus:ring-[#76B93F] focus:border-[#76B93F] disabled:opacity-60 ${
+                          errorCode === 'OTP_INVALID' || errorCode === 'OTP_EXPIRED' || errorCode === 'OTP_TOO_MANY_ATTEMPTS'
+                            ? 'border-red-300'
+                            : 'border-[#D5E5CA]'
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Countdown / Resend Action */}
+                  <div className="text-xs text-[#527367]">
+                    {errorCode === 'OTP_EXPIRED' || errorCode === 'OTP_TOO_MANY_ATTEMPTS' || errorCode === 'OTP_INVALIDATED'
+                      ? 'Need a fresh verification code? '
+                      : "Didn't receive the code? "}
+                    {timerSeconds > 0 ? (
+                      <span className="font-semibold text-[#073D2B]" aria-live="polite">
+                        Resend in 00:{timerSeconds < 10 ? `0${timerSeconds}` : timerSeconds}
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={handleResendOtp}
+                        className="font-bold text-[#145C3D] hover:underline py-2 px-1 disabled:opacity-50"
+                      >
+                        {resending ? 'Sending...' : 'Resend Code'}
+                      </button>
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isBusy || otp.join('').length < 6}
+                    className="w-full py-3 min-h-[44px] rounded-full bg-[#073D2B] hover:bg-[#145C3D] text-white text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-md disabled:opacity-50"
+                  >
+                    {loading ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        <span>Verify Email</span>
+                        <ArrowRight className="w-4 h-4 text-[#76B93F]" />
+                      </>
+                    )}
+                  </button>
+
+                  <div className="flex flex-wrap items-center justify-center gap-4 pt-1">
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => {
+                        setErrorMsg(null);
+                        setErrorCode(null);
+                        setSuccessMsg(null);
+                        setNewEmailInput('');
+                        setChangeEmailPassword('');
+                        setRequireChangeEmailPassword(!pendingToken);
+                        setIsChangeEmailOpen(true);
+                      }}
+                      className="text-xs font-semibold text-[#145C3D] hover:text-[#073D2B] hover:underline py-2 px-2 min-h-[44px]"
+                    >
+                      Change Email
+                    </button>
+                    <span className="text-[#D5E5CA]" aria-hidden="true">|</span>
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => {
+                        setOtp(['', '', '', '', '', '']);
+                        setErrorMsg(null);
+                        setErrorCode(null);
+                        setSuccessMsg(null);
+                        setIsChangeEmailOpen(false);
+                        setMode('signin');
+                      }}
+                      className="text-xs text-[#527367] hover:text-[#073D2B] underline py-2 px-2 min-h-[44px]"
+                    >
+                      Back to Login
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
           )}
 
           {/* ================= MODE: FORGOT PASSWORD ================= */}

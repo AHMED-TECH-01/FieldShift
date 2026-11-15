@@ -4,6 +4,7 @@ import { getModisTimeoutMs } from './env.js';
 import { logEvent } from './logger.js';
 import type { DbFarmRecord } from './supabase.js';
 import {
+  extractPixelsFromCmrEntriesViaOpendap,
   fetchEarthdataCmrGranules,
   fetchModisOrnlData,
   fetchNasaPowerSeries,
@@ -52,7 +53,7 @@ export function getNasaCacheStats() {
   };
 }
 
-export interface ModisPipelineStages {
+export interface FiveStageSatellitePipeline {
   cmrDiscovery: {
     status: 'pending' | 'indexed' | 'empty' | 'failed';
     granulesFound: number;
@@ -60,16 +61,47 @@ export interface ModisPipelineStages {
     latestTimeStart: string | null;
     error: string | null;
   };
+  granuleDownload: {
+    status: 'pending' | 'completed' | 'auth_required' | 'auth_failed' | 'cached' | 'failed' | 'skipped';
+    source: 'ornl_daac_live' | 'earthdata_opendap' | 'supabase_cache' | 'none';
+    durationMs: number | null;
+    timeoutMs: number | null;
+    error: string | null;
+    errorCategory: string | null;
+  };
+  pixelExtraction: {
+    status: 'pending' | 'extracted' | 'quality_masked' | 'empty' | 'cached' | 'failed' | 'skipped';
+    totalRows: number;
+    validNumericCount: number;
+    maskedCount: number;
+    error: string | null;
+  };
+  observationValidation: {
+    status: 'pending' | 'validated' | 'quality_masked' | 'empty' | 'invalid' | 'skipped';
+    validNumericCount: number;
+    maskedCount: number;
+    error: string | null;
+  };
+  databasePersistence: {
+    status: 'pending' | 'persisted' | 'cached' | 'failed' | 'skipped';
+    recordsSaved: number;
+    error: string | null;
+  };
+  lastAttemptAt: string | null;
+}
+
+export interface ModisPipelineStages extends FiveStageSatellitePipeline {
+  // Backward-compatible stage aliases preserved for existing consumers & tests
   pixelRetrieval: {
-    status: 'pending' | 'extracted' | 'quality_masked' | 'cached' | 'failed';
-    source: 'ornl_daac_live' | 'supabase_cache' | 'none';
+    status: 'pending' | 'extracted' | 'quality_masked' | 'cached' | 'failed' | 'empty';
+    source: 'ornl_daac_live' | 'earthdata_opendap' | 'supabase_cache' | 'none';
     durationMs: number | null;
     timeoutMs: number;
     error: string | null;
     errorCategory: string | null;
   };
   normalization: {
-    status: 'pending' | 'completed' | 'quality_masked' | 'failed' | 'skipped';
+    status: 'pending' | 'completed' | 'quality_masked' | 'empty' | 'failed' | 'skipped';
     totalRows: number;
     validNumericCount: number;
     maskedCount: number;
@@ -92,6 +124,7 @@ export interface ModisSyncOptions {
   maxRetries?: number;
   baseBackoffMs?: number;
   totalBudgetMs?: number;
+  earthdataToken?: string;
   fetchImpl?: typeof globalThis.fetch;
 }
 
@@ -144,19 +177,25 @@ export function summarizeModisFailureReason(rawError: string | null | undefined,
   if (persistenceFailed || /persist|supabase|row-level security|database/i.test(msg)) {
     return `MODIS pixels could not be saved to Supabase (${msg.slice(0, 140)}).`;
   }
-  if (/timed out|timeout|AbortError/i.test(msg)) {
-    return `ORNL DAAC Subsets REST API timed out waiting for pixel data (${msg.slice(0, 120)}).`;
+  if (/timed out|timeout|AbortError|TimeoutError/i.test(msg)) {
+    return `ORNL DAAC Subsets REST API timed out waiting for pixel data (${msg.slice(0, 160)}).`;
+  }
+  if (/returned 0 MODIS|empty|no MODIS composites/i.test(msg)) {
+    return `ORNL DAAC returned empty composite data (${msg.slice(0, 140)}).`;
+  }
+  if (/401|403|authentication|rejected/i.test(msg)) {
+    return `NASA Earthdata authentication rejected (${msg.slice(0, 140)}).`;
   }
   if (/429|rate limit/i.test(msg)) {
     return 'ORNL DAAC API rate-limited requests (HTTP 429) after bounded retries.';
   }
   if (/502|503|504|transient HTTP 5/i.test(msg)) {
-    return `ORNL DAAC upstream server returned a transient error (${msg.slice(0, 120)}).`;
+    return `ORNL DAAC upstream server returned a transient error (${msg.slice(0, 140)}).`;
   }
   if (/network error|fetch failed|ECONN|ENOTFOUND|EAI_AGAIN/i.test(msg)) {
-    return `Network connectivity issue reaching ORNL DAAC (${msg.slice(0, 120)}).`;
+    return `Network connectivity issue reaching ORNL DAAC (${msg.slice(0, 140)}).`;
   }
-  return msg.slice(0, 160);
+  return msg.slice(0, 180);
 }
 
 export const nasaHarmonizedRoadmap: NasaHarmonizedDataset[] = [
@@ -431,7 +470,7 @@ async function findCachedModisObservations(
 
   const nowMs = Date.now();
   const validNumericRows = obsRows.filter((r: any) => {
-    if (r.provenance !== 'live_api_nasa_ornl_modis') return false;
+    if (r.provenance !== 'live_api_nasa_ornl_modis' && r.provenance !== 'live_api_nasa_opendap') return false;
     if (r.is_missing || r.value === null || r.value === undefined || !Number.isFinite(Number(r.value))) {
       return false;
     }
@@ -514,6 +553,7 @@ export async function syncModisForFarm(
   const cacheTtlMs = options?.cacheTtlMs ?? DEFAULT_MODIS_CACHE_TTL_MS;
 
   const execute = async (): Promise<ModisSyncResult> => {
+    const attemptIso = new Date().toISOString();
     // 1. Check Supabase cache for valid numeric MODIS observations before querying ORNL DAAC
     if (!options?.forceRefresh) {
       const cached = await findCachedModisObservations(
@@ -536,6 +576,33 @@ export async function syncModisForFarm(
             latestTimeStart: cached.latestGranuleTimeStart,
             error: null,
           },
+          granuleDownload: {
+            status: 'cached',
+            source: 'supabase_cache',
+            durationMs: 0,
+            timeoutMs,
+            error: null,
+            errorCategory: null,
+          },
+          pixelExtraction: {
+            status: 'cached',
+            totalRows: cached.validNumericRows.length,
+            validNumericCount: cached.validNumericRows.length,
+            maskedCount: 0,
+            error: null,
+          },
+          observationValidation: {
+            status: 'validated',
+            validNumericCount: cached.validNumericRows.length,
+            maskedCount: 0,
+            error: null,
+          },
+          databasePersistence: {
+            status: 'cached',
+            recordsSaved: 0,
+            error: null,
+          },
+          lastAttemptAt: cached.retrievedAt,
           pixelRetrieval: {
             status: 'cached',
             source: 'supabase_cache',
@@ -607,6 +674,7 @@ export async function syncModisForFarm(
           windowKey,
           spatialMethod: geom.spatialMethod,
           timeoutMs,
+          lastAttemptAt: attemptIso,
         },
       })
       .select('*')
@@ -620,6 +688,33 @@ export async function syncModisForFarm(
         latestTimeStart: null,
         error: null,
       },
+      granuleDownload: {
+        status: 'pending',
+        source: 'none',
+        durationMs: null,
+        timeoutMs,
+        error: null,
+        errorCategory: null,
+      },
+      pixelExtraction: {
+        status: 'pending',
+        totalRows: 0,
+        validNumericCount: 0,
+        maskedCount: 0,
+        error: null,
+      },
+      observationValidation: {
+        status: 'pending',
+        validNumericCount: 0,
+        maskedCount: 0,
+        error: null,
+      },
+      databasePersistence: {
+        status: 'pending',
+        recordsSaved: 0,
+        error: null,
+      },
+      lastAttemptAt: attemptIso,
       pixelRetrieval: {
         status: 'pending',
         source: 'none',
@@ -668,19 +763,20 @@ export async function syncModisForFarm(
           dataset: 'modis',
           boundingBox: geom.boundingBox,
           spatialMethod: geom.spatialMethod,
+          earthdataToken: options?.earthdataToken,
           fetchImpl: options?.fetchImpl,
         }),
       ]);
 
-      const ornlResult = ornlSettled.status === 'fulfilled' ? ornlSettled.value : null;
+      let ornlResult = ornlSettled.status === 'fulfilled' ? ornlSettled.value : null;
       const ornlError = ornlSettled.status === 'rejected' ? ornlSettled.reason : null;
       const cmrResult =
         cmrSettled.status === 'fulfilled'
           ? cmrSettled.value
-          : { entriesCount: 0, rows: [] as any[], retrievedAt: new Date().toISOString() };
+          : { entriesCount: 0, entries: [] as any[], rows: [] as any[], retrievedAt: new Date().toISOString() };
       const cmrError = cmrSettled.status === 'rejected' ? cmrSettled.reason : null;
 
-      // Update CMR discovery stage independently
+      // Update Stage 1: CMR discovery independently
       if (cmrSettled.status === 'fulfilled') {
         const latestCmrRow = cmrResult.rows[0];
         stages.cmrDiscovery = {
@@ -700,34 +796,156 @@ export async function syncModisForFarm(
         };
       }
 
-      // Update pixel retrieval + normalization stages independently
-      const ornlErrorMessage =
+      let ornlErrorMessage =
         ornlError instanceof Error ? ornlError.message : ornlError ? String(ornlError) : null;
+      let opendapFallbackRows: any[] = [];
+      let opendapValidCount = 0;
+      let opendapMaskedCount = 0;
+      let pixelSource: 'ornl_daac_live' | 'earthdata_opendap' | 'none' = 'none';
 
-      if (ornlResult) {
+      // If ORNL failed or returned 0 rows AND EARTHDATA_TOKEN is configured, try authenticated NASA Earthdata Cloud OPeNDAP fallback
+      const earthdataToken = (options?.earthdataToken ?? process.env.EARTHDATA_TOKEN ?? '').trim();
+      const ornlEmpty = Boolean(ornlResult && ornlResult.rows.length === 0);
+      if ((!ornlResult || ornlEmpty) && cmrResult.entries.length > 0 && earthdataToken) {
+        const opendapRes = await extractPixelsFromCmrEntriesViaOpendap({
+          dataset: 'modis',
+          farmId: farm.id,
+          userId,
+          latitude: geom.latitude,
+          longitude: geom.longitude,
+          spatialMethod: geom.spatialMethod,
+          entries: cmrResult.entries,
+          maxGranules: 2,
+          earthdataToken,
+          timeoutMs: Math.min(timeoutMs, 15000),
+          fetchImpl: options?.fetchImpl,
+        });
+        if (opendapRes.authStatus === 'authenticated' && opendapRes.rows.length > 0) {
+          opendapFallbackRows = opendapRes.rows;
+          opendapValidCount = opendapRes.validNumericCount;
+          opendapMaskedCount = opendapRes.maskedCount;
+          pixelSource = 'earthdata_opendap';
+        } else if (opendapRes.error && !ornlErrorMessage) {
+          ornlErrorMessage = `Earthdata Cloud OPeNDAP fallback failed: ${opendapRes.error}`;
+        }
+      }
+
+      const activeRows = opendapFallbackRows.length > 0 ? opendapFallbackRows : (ornlResult?.rows || []);
+      const activeValidCount =
+        opendapFallbackRows.length > 0 ? opendapValidCount : (ornlResult?.validNumericCount || 0);
+      const activeMaskedCount =
+        opendapFallbackRows.length > 0 ? opendapMaskedCount : (ornlResult?.maskedCount || 0);
+      const hasExtractedOrMasked = activeRows.length > 0;
+
+      if (hasExtractedOrMasked) {
+        if (pixelSource === 'none') pixelSource = 'ornl_daac_live';
+        const statusKind = activeValidCount > 0 ? 'extracted' : 'quality_masked';
+        stages.granuleDownload = {
+          status: 'completed',
+          source: pixelSource,
+          durationMs: ornlResult?.diagnostics.durationMs ?? null,
+          timeoutMs: ornlResult?.diagnostics.timeoutMs ?? timeoutMs,
+          error: opendapFallbackRows.length > 0 ? ornlErrorMessage : null,
+          errorCategory: opendapFallbackRows.length > 0 ? 'fallback_used' : null,
+        };
+        stages.pixelExtraction = {
+          status: statusKind,
+          totalRows: activeRows.length,
+          validNumericCount: activeValidCount,
+          maskedCount: activeMaskedCount,
+          error: null,
+        };
+        stages.observationValidation = {
+          status: activeValidCount > 0 ? 'validated' : 'quality_masked',
+          validNumericCount: activeValidCount,
+          maskedCount: activeMaskedCount,
+          error: null,
+        };
         stages.pixelRetrieval = {
-          status: ornlResult.validNumericCount > 0 ? 'extracted' : 'quality_masked',
-          source: 'ornl_daac_live',
-          durationMs: ornlResult.diagnostics.durationMs,
-          timeoutMs: ornlResult.diagnostics.timeoutMs,
+          status: statusKind,
+          source: pixelSource,
+          durationMs: ornlResult?.diagnostics.durationMs ?? null,
+          timeoutMs: ornlResult?.diagnostics.timeoutMs ?? timeoutMs,
           error: null,
           errorCategory: null,
         };
         stages.normalization = {
-          status: ornlResult.validNumericCount > 0 ? 'completed' : 'quality_masked',
-          totalRows: ornlResult.rows.length,
-          validNumericCount: ornlResult.validNumericCount,
-          maskedCount: ornlResult.maskedCount,
+          status: activeValidCount > 0 ? 'completed' : 'quality_masked',
+          totalRows: activeRows.length,
+          validNumericCount: activeValidCount,
+          maskedCount: activeMaskedCount,
           error: null,
         };
+      } else if (ornlResult && ornlEmpty) {
+        const emptyMsg = 'ORNL DAAC returned 0 MODIS composites for this coordinate and date window.';
+        ornlErrorMessage = emptyMsg;
+        stages.granuleDownload = {
+          status: 'completed',
+          source: 'ornl_daac_live',
+          durationMs: ornlResult.diagnostics.durationMs,
+          timeoutMs: ornlResult.diagnostics.timeoutMs,
+          error: emptyMsg,
+          errorCategory: 'empty',
+        };
+        stages.pixelExtraction = {
+          status: 'empty',
+          totalRows: 0,
+          validNumericCount: 0,
+          maskedCount: 0,
+          error: emptyMsg,
+        };
+        stages.observationValidation = {
+          status: 'empty',
+          validNumericCount: 0,
+          maskedCount: 0,
+          error: emptyMsg,
+        };
+        stages.pixelRetrieval = {
+          status: 'empty',
+          source: 'ornl_daac_live',
+          durationMs: ornlResult.diagnostics.durationMs,
+          timeoutMs: ornlResult.diagnostics.timeoutMs,
+          error: emptyMsg,
+          errorCategory: 'empty',
+        };
+        stages.normalization = {
+          status: 'empty',
+          totalRows: 0,
+          validNumericCount: 0,
+          maskedCount: 0,
+          error: emptyMsg,
+        };
       } else {
+        const failCategory = ornlError instanceof NasaUpstreamError ? ornlError.category : 'network';
+        const failMsg = ornlErrorMessage || 'ORNL DAAC pixel request failed';
+        stages.granuleDownload = {
+          status: 'failed',
+          source: 'none',
+          durationMs: ornlError instanceof NasaUpstreamError ? (ornlError.durationMs ?? null) : null,
+          timeoutMs,
+          error: failMsg,
+          errorCategory: failCategory,
+        };
+        stages.pixelExtraction = {
+          status: 'failed',
+          totalRows: 0,
+          validNumericCount: 0,
+          maskedCount: 0,
+          error: failMsg,
+        };
+        stages.observationValidation = {
+          status: 'skipped',
+          validNumericCount: 0,
+          maskedCount: 0,
+          error: null,
+        };
         stages.pixelRetrieval = {
           status: 'failed',
           source: 'none',
           durationMs: ornlError instanceof NasaUpstreamError ? (ornlError.durationMs ?? null) : null,
           timeoutMs,
-          error: ornlErrorMessage || 'ORNL DAAC pixel request failed',
-          errorCategory: ornlError instanceof NasaUpstreamError ? ornlError.category : 'network',
+          error: failMsg,
+          errorCategory: failCategory,
         };
         stages.normalization = {
           status: 'skipped',
@@ -738,7 +956,8 @@ export async function syncModisForFarm(
         };
       }
 
-      if (!ornlResult && cmrResult.rows.length === 0) {
+      if (!hasExtractedOrMasked && cmrResult.rows.length === 0) {
+        stages.databasePersistence = { status: 'skipped', recordsSaved: 0, error: null };
         stages.persistence = { status: 'skipped', recordsSaved: 0, error: null };
         const combinedErr =
           ornlError instanceof NasaUpstreamError
@@ -754,10 +973,15 @@ export async function syncModisForFarm(
         throw combinedErr;
       }
 
-      const combinedRows = [...(ornlResult?.rows || []), ...cmrResult.rows];
+      const combinedRows = [...activeRows, ...cmrResult.rows];
       let savedCount = 0;
       try {
         savedCount = await persistObservationRows(userClient, combinedRows);
+        stages.databasePersistence = {
+          status: 'persisted',
+          recordsSaved: savedCount,
+          error: null,
+        };
         stages.persistence = {
           status: 'persisted',
           recordsSaved: savedCount,
@@ -766,6 +990,11 @@ export async function syncModisForFarm(
         summaryCache.invalidatePrefix(`${farm.id}:`);
       } catch (persistErr: any) {
         const persistMessage = persistErr instanceof Error ? persistErr.message : String(persistErr || 'Supabase upsert failed');
+        stages.databasePersistence = {
+          status: 'failed',
+          recordsSaved: 0,
+          error: persistMessage,
+        };
         stages.persistence = {
           status: 'failed',
           recordsSaved: 0,
@@ -784,10 +1013,12 @@ export async function syncModisForFarm(
               metadata: {
                 tile: ornlResult?.latestTile || null,
                 cellSizeMeters: ornlResult?.cellSizeMeters || null,
-                numericPixelRows: ornlResult?.validNumericCount || 0,
-                maskedPixelRows: ornlResult?.maskedCount || 0,
+                numericPixelRows: activeValidCount,
+                maskedPixelRows: activeMaskedCount,
                 cmrGranuleRows: cmrResult.rows.length,
-                ornlAvailable: Boolean(ornlResult),
+                ornlAvailable: Boolean(ornlResult && !ornlEmpty),
+                opendapFallbackUsed: opendapFallbackRows.length > 0,
+                lastAttemptAt: attemptIso,
                 stages,
               },
             })
@@ -797,7 +1028,7 @@ export async function syncModisForFarm(
         logEvent('NasaSync', 'MODIS_PERSISTENCE_FAILED', {
           farmId: farm.id,
           error: persistMessage,
-          numericExtracted: ornlResult?.validNumericCount || 0,
+          numericExtracted: activeValidCount,
         });
         throw new NasaUpstreamError(
           `MODIS persistence failed: ${persistMessage}`,
@@ -808,14 +1039,14 @@ export async function syncModisForFarm(
             category: 'persistence',
             details: {
               stages,
-              numericPixelCount: ornlResult?.validNumericCount || 0,
+              numericPixelCount: activeValidCount,
               granulesFound: cmrResult.entriesCount,
             },
           }
         );
       }
 
-      const jobStatus: 'completed' | 'partial' = ornlResult ? 'completed' : 'partial';
+      const jobStatus: 'completed' | 'partial' = hasExtractedOrMasked ? 'completed' : 'partial';
 
       if (jobRow?.id) {
         await userClient
@@ -827,31 +1058,40 @@ export async function syncModisForFarm(
             error_message: ornlErrorMessage,
             completed_at: new Date().toISOString(),
             metadata: {
-              tile: ornlResult?.latestTile || null,
-              cellSizeMeters: ornlResult?.cellSizeMeters || null,
-              numericPixelRows: ornlResult?.validNumericCount || 0,
-              maskedPixelRows: ornlResult?.maskedCount || 0,
+              tile: ornlResult?.latestTile || activeRows[0]?.raw_metadata?.tile || null,
+              cellSizeMeters: ornlResult?.cellSizeMeters || 250,
+              numericPixelRows: activeValidCount,
+              maskedPixelRows: activeMaskedCount,
               cmrGranuleRows: cmrResult.rows.length,
-              ornlAvailable: Boolean(ornlResult),
+              ornlAvailable: Boolean(ornlResult && !ornlEmpty),
+              opendapFallbackUsed: opendapFallbackRows.length > 0,
               windowKey,
+              lastAttemptAt: attemptIso,
               stages,
             },
           })
           .eq('id', jobRow.id);
       }
 
-      logEvent('NasaSync', ornlResult ? 'MODIS_SYNC_COMPLETED' : 'MODIS_SYNC_PARTIAL_CMR_ONLY', {
+      logEvent('NasaSync', hasExtractedOrMasked ? 'MODIS_SYNC_COMPLETED' : 'MODIS_SYNC_PARTIAL_CMR_ONLY', {
         farmId: farm.id,
-        numericRows: ornlResult?.validNumericCount || 0,
-        maskedRows: ornlResult?.maskedCount || 0,
+        numericRows: activeValidCount,
+        maskedRows: activeMaskedCount,
         cmrGranules: cmrResult.rows.length,
         recordsSaved: savedCount,
         ornlError: ornlErrorMessage,
+        opendapFallbackUsed: opendapFallbackRows.length > 0,
         durationMs: ornlResult?.diagnostics.durationMs ?? null,
       });
 
-      const hasNumericOrMasked = Boolean(ornlResult);
-      const validNumericCount = ornlResult?.validNumericCount || 0;
+      const lastSuccessfulObservedAt =
+        ornlResult?.latestObservedDate ||
+        activeRows
+          .filter((r) => !r.is_missing && r.value !== null)
+          .map((r) => String(r.observed_at).slice(0, 10))
+          .sort()
+          .pop() ||
+        null;
 
       return {
         dataset: 'modis',
@@ -859,20 +1099,20 @@ export async function syncModisForFarm(
         farmId: farm.id,
         recordsReceived: combinedRows.length,
         recordsSaved: savedCount,
-        numericPixelCount: validNumericCount,
-        maskedPixelCount: ornlResult?.maskedCount || 0,
+        numericPixelCount: activeValidCount,
+        maskedPixelCount: activeMaskedCount,
         granulesFound: cmrResult.entriesCount,
-        tile: ornlResult?.latestTile || null,
+        tile: ornlResult?.latestTile || activeRows[0]?.raw_metadata?.tile || null,
         spatialResolution: `${ornlResult?.cellSizeMeters ?? 250} m`,
         spatialMethod: geom.spatialMethod,
         spatialDisclosure: geom.disclosure,
-        retrievedAt: ornlResult?.retrievedAt || cmrResult.retrievedAt,
-        lastSuccessfulObservedAt: ornlResult?.latestObservedDate || null,
+        retrievedAt: activeRows[0]?.retrieved_at || cmrResult.retrievedAt,
+        lastSuccessfulObservedAt,
         ornlError: ornlErrorMessage,
         cacheHit: false,
         cacheSource: 'live',
         deduplicatedInFlight: false,
-        persisted: hasNumericOrMasked && savedCount > 0 && validNumericCount > 0,
+        persisted: hasExtractedOrMasked && savedCount > 0 && activeValidCount > 0,
         stages,
         jobId: jobRow?.id || null,
       };
@@ -885,7 +1125,7 @@ export async function syncModisForFarm(
               status: 'failed',
               error_message: err?.message || 'MODIS sync failed',
               completed_at: new Date().toISOString(),
-              metadata: { stages },
+              metadata: { lastAttemptAt: attemptIso, stages },
             })
             .eq('id', jobRow.id)
             .then(() => undefined, () => undefined);
@@ -907,13 +1147,19 @@ export async function syncEarthdataCmrForFarm(
   userClient: SupabaseClient,
   userId: string | null,
   farm: DbFarmRecord,
-  dataset: SupportedCmrDataset
+  dataset: SupportedCmrDataset,
+  options?: {
+    earthdataToken?: string;
+    timeoutMs?: number;
+    fetchImpl?: typeof globalThis.fetch;
+  }
 ) {
   if (dataset === 'modis') {
-    return syncModisForFarm(userClient, userId, farm);
+    return syncModisForFarm(userClient, userId, farm, options);
   }
 
   const geom = resolveFarmGeometry({ coordinates: farm.coordinates });
+  const attemptIso = new Date().toISOString();
 
   const { data: jobRow } = await userClient
     .from('ingestion_jobs')
@@ -923,10 +1169,51 @@ export async function syncEarthdataCmrForFarm(
       dataset_id: dataset,
       source_code: dataset.toUpperCase(),
       status: 'running',
-      metadata: { boundingBox: geom.boundingBox.join(','), spatialMethod: geom.spatialMethod },
+      metadata: {
+        boundingBox: geom.boundingBox.join(','),
+        spatialMethod: geom.spatialMethod,
+        lastAttemptAt: attemptIso,
+      },
     })
     .select('*')
     .single();
+
+  const stages: FiveStageSatellitePipeline = {
+    cmrDiscovery: {
+      status: 'pending',
+      granulesFound: 0,
+      latestGranuleId: null,
+      latestTimeStart: null,
+      error: null,
+    },
+    granuleDownload: {
+      status: 'pending',
+      source: 'none',
+      durationMs: null,
+      timeoutMs: options?.timeoutMs ?? 15000,
+      error: null,
+      errorCategory: null,
+    },
+    pixelExtraction: {
+      status: 'pending',
+      totalRows: 0,
+      validNumericCount: 0,
+      maskedCount: 0,
+      error: null,
+    },
+    observationValidation: {
+      status: 'pending',
+      validNumericCount: 0,
+      maskedCount: 0,
+      error: null,
+    },
+    databasePersistence: {
+      status: 'pending',
+      recordsSaved: 0,
+      error: null,
+    },
+    lastAttemptAt: attemptIso,
+  };
 
   try {
     const cmrResult = await fetchEarthdataCmrGranules({
@@ -937,46 +1224,204 @@ export async function syncEarthdataCmrForFarm(
       dataset,
       boundingBox: geom.boundingBox,
       spatialMethod: geom.spatialMethod,
+      earthdataToken: options?.earthdataToken,
+      fetchImpl: options?.fetchImpl,
     });
 
-    const savedCount = await persistObservationRows(userClient, cmrResult.rows);
-    summaryCache.invalidatePrefix(`${farm.id}:`);
+    const latestCmrRow = cmrResult.rows[0];
+    stages.cmrDiscovery = {
+      status: cmrResult.entriesCount > 0 ? 'indexed' : 'empty',
+      granulesFound: cmrResult.entriesCount,
+      latestGranuleId: latestCmrRow?.raw_metadata?.granuleId || null,
+      latestTimeStart: latestCmrRow?.raw_metadata?.timeStart || latestCmrRow?.observed_at || null,
+      error: null,
+    };
 
-    const status = cmrResult.rows.length > 0 ? 'partial' : 'completed';
+    const token = (options?.earthdataToken ?? process.env.EARTHDATA_TOKEN ?? '').trim();
+    let extractedRows: any[] = [];
+    let validNumericCount = 0;
+    let maskedCount = 0;
+    let stageError: string | null = null;
+
+    if (cmrResult.entries.length === 0) {
+      stageError = `No ${dataset.toUpperCase()} granules found in Earthdata CMR for parcel bounding box.`;
+      stages.granuleDownload = {
+        status: 'skipped',
+        source: 'none',
+        durationMs: null,
+        timeoutMs: options?.timeoutMs ?? 15000,
+        error: stageError,
+        errorCategory: 'empty',
+      };
+      stages.pixelExtraction = { status: 'empty', totalRows: 0, validNumericCount: 0, maskedCount: 0, error: stageError };
+      stages.observationValidation = { status: 'empty', validNumericCount: 0, maskedCount: 0, error: stageError };
+    } else if (dataset === 'smap' || dataset === 'gpm') {
+      const extractRes = await extractPixelsFromCmrEntriesViaOpendap({
+        dataset,
+        farmId: farm.id,
+        userId,
+        latitude: geom.latitude,
+        longitude: geom.longitude,
+        spatialMethod: geom.spatialMethod,
+        entries: cmrResult.entries,
+        maxGranules: 3,
+        earthdataToken: token,
+        timeoutMs: options?.timeoutMs ?? 15000,
+        fetchImpl: options?.fetchImpl,
+      });
+
+      if (extractRes.authStatus === 'missing_token') {
+        stageError =
+          'EARTHDATA_TOKEN is not configured in server environment; Earthdata Cloud OPeNDAP pixel extraction skipped.';
+        stages.granuleDownload = {
+          status: 'auth_required',
+          source: 'none',
+          durationMs: 0,
+          timeoutMs: options?.timeoutMs ?? 15000,
+          error: stageError,
+          errorCategory: 'auth',
+        };
+        stages.pixelExtraction = { status: 'skipped', totalRows: 0, validNumericCount: 0, maskedCount: 0, error: stageError };
+        stages.observationValidation = { status: 'skipped', validNumericCount: 0, maskedCount: 0, error: null };
+      } else if (extractRes.authStatus === 'auth_rejected') {
+        stageError = extractRes.error || 'Earthdata Bearer token rejected (401/403) during OPeNDAP authentication.';
+        stages.granuleDownload = {
+          status: 'auth_failed',
+          source: 'earthdata_opendap',
+          durationMs: null,
+          timeoutMs: options?.timeoutMs ?? 15000,
+          error: stageError,
+          errorCategory: 'auth',
+        };
+        stages.pixelExtraction = { status: 'failed', totalRows: 0, validNumericCount: 0, maskedCount: 0, error: stageError };
+        stages.observationValidation = { status: 'skipped', validNumericCount: 0, maskedCount: 0, error: null };
+      } else if (extractRes.authStatus === 'extraction_failed' || extractRes.authStatus === 'no_opendap_links') {
+        stageError = extractRes.error || 'OPeNDAP pixel extraction failed.';
+        stages.granuleDownload = {
+          status: 'failed',
+          source: 'earthdata_opendap',
+          durationMs: null,
+          timeoutMs: options?.timeoutMs ?? 15000,
+          error: stageError,
+          errorCategory: extractRes.errorCategory,
+        };
+        stages.pixelExtraction = { status: 'failed', totalRows: 0, validNumericCount: 0, maskedCount: 0, error: stageError };
+        stages.observationValidation = { status: 'skipped', validNumericCount: 0, maskedCount: 0, error: null };
+      } else {
+        extractedRows = extractRes.rows;
+        validNumericCount = extractRes.validNumericCount;
+        maskedCount = extractRes.maskedCount;
+        stages.granuleDownload = {
+          status: 'completed',
+          source: 'earthdata_opendap',
+          durationMs: null,
+          timeoutMs: options?.timeoutMs ?? 15000,
+          error: null,
+          errorCategory: null,
+        };
+        stages.pixelExtraction = {
+          status: validNumericCount > 0 ? 'extracted' : 'quality_masked',
+          totalRows: extractedRows.length,
+          validNumericCount,
+          maskedCount,
+          error: validNumericCount === 0 ? 'All extracted OPeNDAP pixels matched sensor fill/missing mask.' : null,
+        };
+        stages.observationValidation = {
+          status: validNumericCount > 0 ? 'validated' : 'quality_masked',
+          validNumericCount,
+          maskedCount,
+          error: null,
+        };
+      }
+    } else {
+      // ECOSTRESS (GeoTIFF/HDF5 thermal payload requires Earthdata GeoTIFF reader)
+      stageError = token
+        ? 'ECOSTRESS CMR granule indexed; 70m L3T_JET GeoTIFF raster decoding worker is not enabled in serverless Node.'
+        : 'EARTHDATA_TOKEN is not configured; ECOSTRESS granule indexed via public CMR only (pixel data pending).';
+      stages.granuleDownload = {
+        status: token ? 'skipped' : 'auth_required',
+        source: 'none',
+        durationMs: 0,
+        timeoutMs: null,
+        error: stageError,
+        errorCategory: 'auth',
+      };
+      stages.pixelExtraction = { status: 'skipped', totalRows: 0, validNumericCount: 0, maskedCount: 0, error: stageError };
+      stages.observationValidation = { status: 'skipped', validNumericCount: 0, maskedCount: 0, error: null };
+    }
+
+    const combinedRows = [...extractedRows, ...cmrResult.rows];
+    let savedCount = 0;
+    try {
+      savedCount = await persistObservationRows(userClient, combinedRows);
+      stages.databasePersistence = {
+        status: savedCount > 0 ? 'persisted' : 'skipped',
+        recordsSaved: savedCount,
+        error: null,
+      };
+      summaryCache.invalidatePrefix(`${farm.id}:`);
+    } catch (persistErr: any) {
+      const pMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+      stages.databasePersistence = { status: 'failed', recordsSaved: 0, error: pMsg };
+      throw new NasaUpstreamError(`Failed saving ${dataset.toUpperCase()} observations: ${pMsg}`, 503, 'SUPABASE_PERSISTENCE_FAILED', false, {
+        category: 'persistence',
+        details: { stages },
+      });
+    }
+
+    const hasNumericPixels = validNumericCount > 0 && savedCount > 0;
+    const status: 'completed' | 'partial' = hasNumericPixels ? 'completed' : 'partial';
     if (jobRow?.id) {
       await userClient
         .from('ingestion_jobs')
         .update({
           status,
-          records_received: cmrResult.entriesCount,
+          records_received: combinedRows.length,
           records_saved: savedCount,
+          error_message: hasNumericPixels ? null : stageError,
           completed_at: new Date().toISOString(),
           metadata: {
             boundingBox: cmrResult.bbox,
-            latestGranuleId: cmrResult.rows[0]?.raw_metadata?.granuleId || null,
-            note: 'Granule discovery verified via NASA CMR. Numeric HDF5/NetCDF4 pixel extraction requires Earthdata Login download and binary decoder.',
+            latestGranuleId: latestCmrRow?.raw_metadata?.granuleId || null,
+            numericPixelRows: validNumericCount,
+            maskedPixelRows: maskedCount,
+            cmrGranuleRows: cmrResult.rows.length,
+            earthdataTokenConfigured: Boolean(token),
+            lastAttemptAt: attemptIso,
+            stages,
+            note: hasNumericPixels
+              ? 'Numeric grid pixels extracted and validated via NASA Earthdata Cloud OPeNDAP.'
+              : stageError || 'CMR granule indexed; numeric pixel extraction pending.',
           },
         })
         .eq('id', jobRow.id);
     }
 
-    logEvent('NasaSync', 'NASA_CMR_SYNC_COMPLETED', {
+    logEvent('NasaSync', hasNumericPixels ? 'NASA_OPENDAP_EXTRACTION_COMPLETED' : 'NASA_CMR_SYNC_COMPLETED', {
       dataset,
       farmId: farm.id,
       granulesFound: cmrResult.entriesCount,
+      numericPixels: validNumericCount,
+      recordsSaved: savedCount,
     });
 
     return {
       dataset,
       status,
       farmId: farm.id,
-      recordsReceived: cmrResult.entriesCount,
+      recordsReceived: combinedRows.length,
       recordsSaved: savedCount,
+      numericPixelCount: validNumericCount,
+      maskedPixelCount: maskedCount,
       granulesFound: cmrResult.entriesCount,
       retrievedAt: cmrResult.retrievedAt,
-      latestGranule: cmrResult.rows[0]?.raw_metadata || null,
-      limitationNotice:
-        'NASA Earthdata CMR granule metadata was fetched live for this farm bounding box. Pixel-level numeric values remain null until authenticated Earthdata HDF5/NetCDF4 extraction is enabled.',
+      persisted: hasNumericPixels,
+      stages,
+      latestGranule: latestCmrRow?.raw_metadata || null,
+      limitationNotice: hasNumericPixels
+        ? null
+        : stageError ||
+          'NASA Earthdata CMR granule metadata was fetched live for this farm bounding box. Pixel-level numeric values remain pending until Earthdata Cloud OPeNDAP extraction succeeds.',
       jobId: jobRow?.id || null,
     };
   } catch (err: any) {
@@ -985,10 +1430,12 @@ export async function syncEarthdataCmrForFarm(
         .from('ingestion_jobs')
         .update({
           status: 'failed',
-          error_message: err?.message || 'NASA CMR query failed',
+          error_message: err?.message || 'NASA CMR/OPeNDAP sync failed',
           completed_at: new Date().toISOString(),
+          metadata: { lastAttemptAt: attemptIso, stages },
         })
-        .eq('id', jobRow.id);
+        .eq('id', jobRow.id)
+        .then(() => undefined, () => undefined);
     }
     logEvent('NasaSync', 'NASA_CMR_SYNC_FAILED', { dataset, farmId: farm.id, error: err?.message });
     throw err;
@@ -1073,12 +1520,43 @@ export interface FarmNasaSummary {
   latestModisJobMetadata: Record<string, any> | null;
   modisStages: {
     granuleIndexed: boolean;
-    pixelRetrievalStatus: 'pending' | 'failed' | 'extracted' | 'quality_masked';
+    pixelRetrievalStatus: 'pending' | 'failed' | 'extracted' | 'quality_masked' | 'empty';
     pixelsExtracted: boolean;
     persisted: boolean;
     latestPersistenceFailed: boolean;
     lastSuccessfulObservationDate: string | null;
+    lastAttemptAt: string | null;
+    cmrDiscovery?: FiveStageSatellitePipeline['cmrDiscovery'];
+    granuleDownload?: FiveStageSatellitePipeline['granuleDownload'];
+    pixelExtraction?: FiveStageSatellitePipeline['pixelExtraction'];
+    observationValidation?: FiveStageSatellitePipeline['observationValidation'];
+    databasePersistence?: FiveStageSatellitePipeline['databasePersistence'];
   };
+  smapSurfaceMoisture: number | null;
+  smapRootZoneMoisture: number | null;
+  smapLatestObservedAt: string | null;
+  smapPixelCount: number;
+  gpmLatestPrecipMm: number | null;
+  gpmPrecipTotalMm: number | null;
+  gpmLatestObservedAt: string | null;
+  gpmPixelCount: number;
+  datasetPipelines: Record<
+    'modis' | 'smap' | 'gpm' | 'ecostress',
+    {
+      granuleIndexed: boolean;
+      granuleCount: number;
+      latestGranuleId: string | null;
+      latestTimeStart: string | null;
+      retrievedAt: string | null;
+      pixelValuesAvailable: boolean;
+      persisted: boolean;
+      lastSuccessfulObservationDate: string | null;
+      lastAttemptAt: string | null;
+      latestJobStatus: string | null;
+      latestError: string | null;
+      stages: FiveStageSatellitePipeline;
+    }
+  >;
   cmrGranulesByDataset: Record<
     string,
     {
@@ -1102,6 +1580,17 @@ export interface FarmNasaSummary {
   recentNormalizedObservations: NASAObservation[];
 }
 
+function buildDefaultDatasetPipeline(): FiveStageSatellitePipeline {
+  return {
+    cmrDiscovery: { status: 'pending', granulesFound: 0, latestGranuleId: null, latestTimeStart: null, error: null },
+    granuleDownload: { status: 'pending', source: 'none', durationMs: null, timeoutMs: null, error: null, errorCategory: null },
+    pixelExtraction: { status: 'pending', totalRows: 0, validNumericCount: 0, maskedCount: 0, error: null },
+    observationValidation: { status: 'pending', validNumericCount: 0, maskedCount: 0, error: null },
+    databasePersistence: { status: 'pending', recordsSaved: 0, error: null },
+    lastAttemptAt: null,
+  };
+}
+
 export async function getFarmNasaObservationsSummary(
   client: SupabaseClient,
   farmId: string,
@@ -1113,8 +1602,8 @@ export async function getFarmNasaObservationsSummary(
     return cached;
   }
 
-  // Query each dataset bucket separately so large daily POWER series never evict 16-day MODIS or CMR rows
-  const [powerQueryRes, modisQueryRes, cmrQueryRes, modisJobRes] = await Promise.all([
+  // Query each dataset bucket separately so large daily POWER series never evict 16-day MODIS or CMR/OPeNDAP rows
+  const [powerQueryRes, modisQueryRes, cmrQueryRes, jobsQueryRes] = await Promise.all([
     client
       .from('nasa_observations')
       .select('*')
@@ -1135,15 +1624,14 @@ export async function getFarmNasaObservationsSummary(
       .eq('farm_id', farmId)
       .in('dataset_id', ['smap', 'gpm', 'ecostress'])
       .order('observed_at', { ascending: false })
-      .limit(60),
+      .limit(120),
     client
       .from('ingestion_jobs')
-      .select('status, error_message, metadata, created_at, completed_at')
+      .select('dataset_id, status, error_message, metadata, created_at, completed_at')
       .eq('farm_id', farmId)
-      .eq('dataset_id', 'modis')
+      .in('dataset_id', ['modis', 'smap', 'gpm', 'ecostress'])
       .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .limit(24),
   ]);
 
   if (powerQueryRes.error && modisQueryRes.error && cmrQueryRes.error) {
@@ -1191,6 +1679,21 @@ export async function getFarmNasaObservationsSummary(
         persisted: false,
         latestPersistenceFailed: false,
         lastSuccessfulObservationDate: null,
+        lastAttemptAt: null,
+      },
+      smapSurfaceMoisture: null,
+      smapRootZoneMoisture: null,
+      smapLatestObservedAt: null,
+      smapPixelCount: 0,
+      gpmLatestPrecipMm: null,
+      gpmPrecipTotalMm: null,
+      gpmLatestObservedAt: null,
+      gpmPixelCount: 0,
+      datasetPipelines: {
+        modis: { granuleIndexed: false, granuleCount: 0, latestGranuleId: null, latestTimeStart: null, retrievedAt: null, pixelValuesAvailable: false, persisted: false, lastSuccessfulObservationDate: null, lastAttemptAt: null, latestJobStatus: null, latestError: null, stages: buildDefaultDatasetPipeline() },
+        smap: { granuleIndexed: false, granuleCount: 0, latestGranuleId: null, latestTimeStart: null, retrievedAt: null, pixelValuesAvailable: false, persisted: false, lastSuccessfulObservationDate: null, lastAttemptAt: null, latestJobStatus: null, latestError: null, stages: buildDefaultDatasetPipeline() },
+        gpm: { granuleIndexed: false, granuleCount: 0, latestGranuleId: null, latestTimeStart: null, retrievedAt: null, pixelValuesAvailable: false, persisted: false, lastSuccessfulObservationDate: null, lastAttemptAt: null, latestJobStatus: null, latestError: null, stages: buildDefaultDatasetPipeline() },
+        ecostress: { granuleIndexed: false, granuleCount: 0, latestGranuleId: null, latestTimeStart: null, retrievedAt: null, pixelValuesAvailable: false, persisted: false, lastSuccessfulObservationDate: null, lastAttemptAt: null, latestJobStatus: null, latestError: null, stages: buildDefaultDatasetPipeline() },
       },
       cmrGranulesByDataset: {},
       dailyTimeline: [],
@@ -1201,6 +1704,13 @@ export async function getFarmNasaObservationsSummary(
   const powerAllRows = powerQueryRes.data || [];
   const modisRows = modisQueryRes.data || [];
   const cmrOtherRows = cmrQueryRes.data || [];
+  const allJobs = jobsQueryRes.data || [];
+  const latestJobByDataset = new Map<string, any>();
+  for (const job of allJobs) {
+    if (job?.dataset_id && !latestJobByDataset.has(job.dataset_id)) {
+      latestJobByDataset.set(job.dataset_id, job);
+    }
+  }
   const combinedRecentRows = [...modisRows, ...cmrOtherRows, ...powerAllRows].sort((a: any, b: any) =>
     String(b.observed_at).localeCompare(String(a.observed_at))
   );
@@ -1282,33 +1792,132 @@ export async function getFarmNasaObservationsSummary(
     }
   }
 
-  // Extract live MODIS numeric NDVI / EVI / LST_Day_1km + quality-masked ORNL rows
+  // Extract live MODIS numeric NDVI / EVI / LST_Day_1km + quality-masked rows
   const modisNdviRows = modisRows.filter((r: any) => r.variable === 'NDVI' && !r.is_missing && r.value !== null);
   const modisEviRows = modisRows.filter((r: any) => r.variable === 'EVI' && !r.is_missing && r.value !== null);
   const modisLstRows = modisRows.filter((r: any) => r.variable === 'LST_Day_1km' && !r.is_missing && r.value !== null);
   const modisOrnlMaskedRows = modisRows.filter(
-    (r: any) => r.provenance === 'live_api_nasa_ornl_modis' && (r.is_missing || r.value === null)
+    (r: any) =>
+      (r.provenance === 'live_api_nasa_ornl_modis' || r.provenance === 'live_api_nasa_opendap') &&
+      (r.is_missing || r.value === null)
   );
   const latestNdviRow = modisNdviRows[0];
   const latestEviRow = modisEviRows[0];
   const latestLstRow = modisLstRows[0];
   const latestMaskedRow = modisOrnlMaskedRows[0];
 
+  // Extract persisted OPeNDAP SMAP & GPM numeric pixel observations when available
+  const smapSurfaceRows = cmrOtherRows.filter((r: any) => r.dataset_id === 'smap' && r.variable === 'sm_surface' && !r.is_missing && r.value !== null);
+  const smapRootRows = cmrOtherRows.filter((r: any) => r.dataset_id === 'smap' && r.variable === 'sm_rootzone' && !r.is_missing && r.value !== null);
+  const gpmNumericRows = cmrOtherRows.filter((r: any) => r.dataset_id === 'gpm' && r.variable === 'precipitation' && !r.is_missing && r.value !== null);
+
+  const smapSurfaceMoisture = smapSurfaceRows[0] ? Number(smapSurfaceRows[0].value) : null;
+  const smapRootZoneMoisture = smapRootRows[0] ? Number(smapRootRows[0].value) : null;
+  const smapLatestObservedAt = smapSurfaceRows[0]
+    ? String(smapSurfaceRows[0].observed_at).slice(0, 10)
+    : smapRootRows[0]
+    ? String(smapRootRows[0].observed_at).slice(0, 10)
+    : null;
+  const smapPixelCount = smapSurfaceRows.length + smapRootRows.length;
+
+  const gpmLatestPrecipMm = gpmNumericRows[0] ? Number(gpmNumericRows[0].value) : null;
+  const gpmPrecipTotalMm =
+    gpmNumericRows.length > 0
+      ? Number(gpmNumericRows.reduce((s: number, r: any) => s + Number(r.value || 0), 0).toFixed(2))
+      : null;
+  const gpmLatestObservedAt = gpmNumericRows[0] ? String(gpmNumericRows[0].observed_at).slice(0, 10) : null;
+  const gpmPixelCount = gpmNumericRows.length;
+
   const cmrGranulesByDataset: FarmNasaSummary['cmrGranulesByDataset'] = {};
   for (const ds of ['smap', 'gpm', 'modis', 'ecostress'] as const) {
     const sourcePool = ds === 'modis' ? modisRows : cmrOtherRows;
     const dsRows = sourcePool.filter((r: any) => r.dataset_id === ds && String(r.variable).includes('GRANULE_COVERAGE'));
     const latest = dsRows[0];
+    const hasNumeric =
+      ds === 'modis' ? Boolean(latestNdviRow) : ds === 'smap' ? smapPixelCount > 0 : ds === 'gpm' ? gpmPixelCount > 0 : false;
     cmrGranulesByDataset[ds] = {
       granuleCount: dsRows.length,
       latestGranuleId: latest?.raw_metadata?.granuleId || null,
       latestTimeStart: latest?.raw_metadata?.timeStart || latest?.observed_at || null,
       retrievedAt: latest?.retrieved_at || null,
-      pixelValuesAvailable: ds === 'modis' && Boolean(latestNdviRow),
+      pixelValuesAvailable: hasNumeric,
     };
   }
 
-  const latestModisJob = modisJobRes.data || null;
+  const buildDatasetPipelineSummary = (ds: 'modis' | 'smap' | 'gpm' | 'ecostress') => {
+    const cmrInfo = cmrGranulesByDataset[ds];
+    const job = latestJobByDataset.get(ds) || null;
+    const jobMeta = job?.metadata && typeof job.metadata === 'object' ? job.metadata : null;
+    const rawStages = jobMeta?.stages as Partial<FiveStageSatellitePipeline> | undefined;
+    const hasNumeric = Boolean(cmrInfo?.pixelValuesAvailable);
+    const lastAttemptAt = rawStages?.lastAttemptAt || jobMeta?.lastAttemptAt || job?.completed_at || job?.created_at || null;
+    const lastObsDate =
+      ds === 'modis'
+        ? (latestNdviRow ? String(latestNdviRow.observed_at).slice(0, 10) : null)
+        : ds === 'smap'
+        ? smapLatestObservedAt
+        : ds === 'gpm'
+        ? gpmLatestObservedAt
+        : null;
+
+    const defaults = buildDefaultDatasetPipeline();
+    const cmrStage = rawStages?.cmrDiscovery || {
+      ...defaults.cmrDiscovery,
+      status: cmrInfo?.latestGranuleId ? ('indexed' as const) : ('pending' as const),
+      granulesFound: cmrInfo?.granuleCount || 0,
+      latestGranuleId: cmrInfo?.latestGranuleId || null,
+      latestTimeStart: cmrInfo?.latestTimeStart || null,
+    };
+    const downloadStage = rawStages?.granuleDownload || {
+      ...defaults.granuleDownload,
+      status: hasNumeric ? ('completed' as const) : cmrInfo?.latestGranuleId ? ('auth_required' as const) : ('pending' as const),
+    };
+    const extractStage = rawStages?.pixelExtraction || {
+      ...defaults.pixelExtraction,
+      status: hasNumeric ? ('extracted' as const) : ('pending' as const),
+    };
+    const valStage = rawStages?.observationValidation || {
+      ...defaults.observationValidation,
+      status: hasNumeric ? ('validated' as const) : ('pending' as const),
+    };
+    const persistStage = rawStages?.databasePersistence || {
+      ...defaults.databasePersistence,
+      status: hasNumeric ? ('persisted' as const) : cmrInfo?.latestGranuleId ? ('skipped' as const) : ('pending' as const),
+    };
+
+    const stages: FiveStageSatellitePipeline = {
+      cmrDiscovery: cmrStage,
+      granuleDownload: downloadStage,
+      pixelExtraction: extractStage,
+      observationValidation: valStage,
+      databasePersistence: persistStage,
+      lastAttemptAt,
+    };
+
+    return {
+      granuleIndexed: Boolean(cmrInfo?.latestGranuleId),
+      granuleCount: cmrInfo?.granuleCount || 0,
+      latestGranuleId: cmrInfo?.latestGranuleId || null,
+      latestTimeStart: cmrInfo?.latestTimeStart || null,
+      retrievedAt: cmrInfo?.retrievedAt || null,
+      pixelValuesAvailable: hasNumeric,
+      persisted: hasNumeric && persistStage.status !== 'failed',
+      lastSuccessfulObservationDate: lastObsDate,
+      lastAttemptAt,
+      latestJobStatus: job?.status || null,
+      latestError: job?.error_message || downloadStage.error || extractStage.error || null,
+      stages,
+    };
+  };
+
+  const datasetPipelines = {
+    modis: buildDatasetPipelineSummary('modis'),
+    smap: buildDatasetPipelineSummary('smap'),
+    gpm: buildDatasetPipelineSummary('gpm'),
+    ecostress: buildDatasetPipelineSummary('ecostress'),
+  };
+
+  const latestModisJob = latestJobByDataset.get('modis') || null;
   const latestModisJobMetadata =
     latestModisJob?.metadata && typeof latestModisJob.metadata === 'object' ? latestModisJob.metadata : null;
   const jobStages = latestModisJobMetadata?.stages as ModisPipelineStages | undefined;
@@ -1316,7 +1925,8 @@ export async function getFarmNasaObservationsSummary(
   const modisValidPixelCount = modisNdviRows.length + modisEviRows.length + modisLstRows.length;
   const modisMaskedPixelCount = modisOrnlMaskedRows.length;
   const granuleIndexed = Boolean(cmrGranulesByDataset.modis?.latestGranuleId);
-  const latestPersistenceFailed = jobStages?.persistence?.status === 'failed';
+  const latestPersistenceFailed =
+    jobStages?.persistence?.status === 'failed' || jobStages?.databasePersistence?.status === 'failed';
   const latestJobStartedMs = latestModisJob?.created_at ? Date.parse(String(latestModisJob.created_at)) : NaN;
   const isStaleRunningJob =
     (latestModisJob?.status === 'running' || latestModisJob?.status === 'pending') &&
@@ -1324,6 +1934,7 @@ export async function getFarmNasaObservationsSummary(
     Date.now() - latestJobStartedMs > 120_000;
   const latestJobPixelFailed =
     jobStages?.pixelRetrieval?.status === 'failed' ||
+    jobStages?.pixelExtraction?.status === 'failed' ||
     latestModisJob?.status === 'failed' ||
     (latestModisJob?.status === 'partial' && Boolean(latestModisJob?.error_message)) ||
     isStaleRunningJob;
@@ -1337,6 +1948,8 @@ export async function getFarmNasaObservationsSummary(
       ? 'extracted'
       : modisOrnlMaskedRows.length > 0
       ? 'quality_masked'
+      : jobStages?.pixelExtraction?.status === 'empty'
+      ? 'empty'
       : 'pending';
 
   const effectiveJobError =
@@ -1386,17 +1999,32 @@ export async function getFarmNasaObservationsSummary(
     latestModisMaskedDate: latestMaskedRow ? String(latestMaskedRow.observed_at).slice(0, 10) : null,
     latestModisMaskedQuality: latestMaskedRow?.raw_metadata?.qualityStatus || latestMaskedRow?.quality_flag || null,
     latestModisJobStatus: latestModisJob?.status || null,
-    latestModisJobError: latestModisJob?.error_message || null,
+    latestModisJobError: effectiveJobError,
     latestModisFailureExplanation,
     latestModisJobMetadata,
     modisStages: {
       granuleIndexed,
       pixelRetrievalStatus,
-      pixelsExtracted: Boolean(latestNdviRow) || jobStages?.pixelRetrieval?.status === 'extracted',
+      pixelsExtracted: Boolean(latestNdviRow) || jobStages?.pixelRetrieval?.status === 'extracted' || jobStages?.pixelExtraction?.status === 'extracted',
       persisted: Boolean(latestNdviRow) && !latestPersistenceFailed,
       latestPersistenceFailed,
       lastSuccessfulObservationDate: latestModisNdviDate,
+      lastAttemptAt: datasetPipelines.modis.lastAttemptAt,
+      cmrDiscovery: datasetPipelines.modis.stages.cmrDiscovery,
+      granuleDownload: datasetPipelines.modis.stages.granuleDownload,
+      pixelExtraction: datasetPipelines.modis.stages.pixelExtraction,
+      observationValidation: datasetPipelines.modis.stages.observationValidation,
+      databasePersistence: datasetPipelines.modis.stages.databasePersistence,
     },
+    smapSurfaceMoisture,
+    smapRootZoneMoisture,
+    smapLatestObservedAt,
+    smapPixelCount,
+    gpmLatestPrecipMm,
+    gpmPrecipTotalMm,
+    gpmLatestObservedAt,
+    gpmPixelCount,
+    datasetPipelines,
     cmrGranulesByDataset,
     dailyTimeline: timeline,
     recentNormalizedObservations: combinedRecentRows.slice(0, 40).map(mapDbObservationToCanonical),

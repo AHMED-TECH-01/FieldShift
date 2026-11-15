@@ -1,4 +1,5 @@
 import { getModisTimeoutMs } from '../env.js';
+import { extractOpendapPointObservations, extractOpendapUrlFromCmrEntry } from './opendap.js';
 import {
   DbObservationInsertRow,
   deduplicateObservationRows,
@@ -518,6 +519,8 @@ export async function fetchModisOrnlData(params: {
       datesUrl,
       subsetUrls,
       compositesFound: selectedDates.length,
+      availableDatesCount: availableDates.length,
+      isEmptyUpstream: selectedDates.length === 0 || dedupedRows.length === 0,
     },
   };
 }
@@ -587,6 +590,7 @@ export async function fetchEarthdataCmrGranules(params: {
 
   const rawRows: DbObservationInsertRow[] = entries.map((entry: any): DbObservationInsertRow => {
     const observedAt = entry.time_start ? new Date(entry.time_start).toISOString() : retrievedAt;
+    const opendapUrl = extractOpendapUrlFromCmrEntry(entry);
     const dataLink = Array.isArray(entry.links)
       ? entry.links.find((l: any) => typeof l.href === 'string' && l.href.startsWith('http'))?.href
       : undefined;
@@ -600,7 +604,7 @@ export async function fetchEarthdataCmrGranules(params: {
       dataset_name: cfg.datasetName,
       product_id: cfg.shortName,
       variable: cfg.variable,
-      // Strict scientific integrity: never fabricate numeric satellite pixels without verified binary HDF5/NetCDF decoding
+      // Strict scientific integrity: never fabricate numeric satellite pixels without verified OPeNDAP/HDF5/NetCDF extraction
       value: null,
       unit: cfg.unit,
       latitude: coord.latitude,
@@ -610,7 +614,7 @@ export async function fetchEarthdataCmrGranules(params: {
       spatial_resolution: cfg.spatialResolution,
       temporal_resolution: cfg.temporalResolution,
       quality_flag: hasValidEarthdataToken
-        ? 'granule_discovered_binary_decoder_required'
+        ? 'granule_discovered_opendap_ready'
         : 'granule_metadata_only_earthdata_auth_required',
       processing_method: cfg.processingMethod,
       processing_version: cfg.processingVersion,
@@ -624,12 +628,13 @@ export async function fetchEarthdataCmrGranules(params: {
         timeEnd: entry.time_end,
         dataCenter: entry.data_center,
         granuleSizeMb: entry.granule_size ? Number(entry.granule_size) : null,
+        opendapUrl,
         earthdataTokenRejected,
         qualityStatus: earthdataTokenRejected
-          ? 'Granule verified via public CMR (configured EARTHDATA_TOKEN was rejected with 401/403; binary HDF5/NetCDF worker not active)'
+          ? 'Granule verified via public CMR (configured EARTHDATA_TOKEN was rejected with 401/403 during OPeNDAP/CMR auth)'
           : hasValidEarthdataToken
-          ? 'Granule verified via CMR (authenticated binary HDF5/NetCDF extraction worker required for numeric grid readout)'
-          : 'Granule coverage verified via CMR (EARTHDATA_TOKEN & HDF5/NetCDF worker required for numeric pixels)',
+          ? 'Granule verified via CMR (EARTHDATA_TOKEN present; ready for Earthdata Cloud OPeNDAP extraction)'
+          : 'Granule coverage verified via CMR (EARTHDATA_TOKEN required for Earthdata Cloud OPeNDAP pixel extraction)',
         spatialMethod: params.spatialMethod || 'point_centroid_approximation',
         uncertainty: `${cfg.spatialResolution} satellite footprint; metadata-only coverage record.`,
         earthdataAuthRequiredForPixelExtraction: true,
@@ -642,6 +647,113 @@ export async function fetchEarthdataCmrGranules(params: {
     bbox: bboxStr,
     retrievedAt,
     entriesCount: entries.length,
+    entries,
+    earthdataTokenConfigured: Boolean(token),
+    earthdataTokenRejected,
     rows: deduplicateObservationRows(rawRows),
+  };
+}
+
+export async function extractPixelsFromCmrEntriesViaOpendap(params: {
+  dataset: 'smap' | 'gpm' | 'modis';
+  farmId: string;
+  userId: string | null;
+  latitude: number;
+  longitude: number;
+  spatialMethod?: 'point_centroid_approximation' | 'polygon_boundary';
+  entries: any[];
+  maxGranules?: number;
+  earthdataToken?: string;
+  timeoutMs?: number;
+  fetchImpl?: typeof globalThis.fetch;
+}) {
+  const token = (params.earthdataToken ?? process.env.EARTHDATA_TOKEN ?? '').trim();
+  if (!token) {
+    return {
+      attempted: false,
+      authStatus: 'missing_token' as const,
+      rows: [] as DbObservationInsertRow[],
+      validNumericCount: 0,
+      maskedCount: 0,
+      error: 'EARTHDATA_TOKEN is not configured in server environment.',
+      errorCategory: 'auth' as const,
+    };
+  }
+
+  const candidates = (params.entries || [])
+    .filter((entry) => Boolean(extractOpendapUrlFromCmrEntry(entry)))
+    .slice(0, Math.max(1, params.maxGranules || 3));
+
+  if (candidates.length === 0) {
+    return {
+      attempted: false,
+      authStatus: 'no_opendap_links' as const,
+      rows: [] as DbObservationInsertRow[],
+      validNumericCount: 0,
+      maskedCount: 0,
+      error: 'No NASA Earthdata Cloud OPeNDAP service URLs found on discovered CMR granules.',
+      errorCategory: 'validation' as const,
+    };
+  }
+
+  const allRows: DbObservationInsertRow[] = [];
+  let lastErr: any = null;
+  let successCount = 0;
+
+  for (const entry of candidates) {
+    try {
+      const res = await extractOpendapPointObservations({
+        dataset: params.dataset,
+        farmId: params.farmId,
+        userId: params.userId,
+        latitude: params.latitude,
+        longitude: params.longitude,
+        spatialMethod: params.spatialMethod,
+        granuleEntry: entry,
+        earthdataToken: token,
+        timeoutMs: params.timeoutMs,
+        fetchImpl: params.fetchImpl,
+      });
+      allRows.push(...res.rows);
+      successCount++;
+    } catch (err: any) {
+      lastErr = err;
+      // Auth failure (401/403) must fail fast without spamming remaining granules
+      if (err instanceof NasaUpstreamError && (err.status === 401 || err.status === 403)) {
+        return {
+          attempted: true,
+          authStatus: 'auth_rejected' as const,
+          rows: [] as DbObservationInsertRow[],
+          validNumericCount: 0,
+          maskedCount: 0,
+          error: err.message,
+          errorCategory: 'auth' as const,
+        };
+      }
+    }
+  }
+
+  if (successCount === 0 && lastErr) {
+    return {
+      attempted: true,
+      authStatus: 'extraction_failed' as const,
+      rows: [] as DbObservationInsertRow[],
+      validNumericCount: 0,
+      maskedCount: 0,
+      error: lastErr instanceof Error ? lastErr.message : String(lastErr),
+      errorCategory: lastErr instanceof NasaUpstreamError ? lastErr.category : ('network' as const),
+    };
+  }
+
+  const deduped = deduplicateObservationRows(allRows);
+  const validNumericCount = deduped.filter((r) => !r.is_missing && r.value !== null).length;
+  return {
+    attempted: true,
+    authStatus: 'authenticated' as const,
+    rows: deduped,
+    validNumericCount,
+    maskedCount: deduped.length - validNumericCount,
+    error: null,
+    errorCategory: null,
   };
 }

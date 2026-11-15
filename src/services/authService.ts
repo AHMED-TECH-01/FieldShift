@@ -6,6 +6,7 @@ export interface AuthSessionResponse {
   success: boolean;
   user: User;
   token: string;
+  refreshToken?: string | null;
   message?: string;
 }
 
@@ -17,10 +18,15 @@ export interface AuthErrorDetails {
 
 export class AuthServiceError extends Error {
   public code?: string;
-  constructor(message: string, code?: string) {
+  public status?: number;
+  public details?: Record<string, any>;
+
+  constructor(message: string, code?: string, status?: number, details?: Record<string, any>) {
     super(message);
     this.name = 'AuthServiceError';
     this.code = code;
+    this.status = status;
+    this.details = details;
   }
 }
 
@@ -77,26 +83,26 @@ export async function safeFetchAuthJson<T = any>(
 
   if (!res.ok) {
     if (parsedJson && typeof parsedJson.error === 'string') {
-      throw new AuthServiceError(parsedJson.error, parsedJson.code);
+      throw new AuthServiceError(parsedJson.error, parsedJson.code, res.status, parsedJson);
     }
     if (parsedJson && typeof parsedJson.message === 'string') {
-      throw new AuthServiceError(parsedJson.message, parsedJson.code);
+      throw new AuthServiceError(parsedJson.message, parsedJson.code, res.status, parsedJson);
     }
 
     if (res.status === 401) {
-      throw new AuthServiceError('Invalid email or password. Please verify your credentials.', 'INVALID_CREDENTIALS');
+      throw new AuthServiceError('Invalid email or password. Please verify your credentials.', 'INVALID_CREDENTIALS', 401);
     }
     if (res.status === 403) {
-      throw new AuthServiceError('Access forbidden. Your account may be pending verification or deactivated.', 'EMAIL_NOT_CONFIRMED');
+      throw new AuthServiceError('Access forbidden. Your account may be pending verification or deactivated.', 'EMAIL_NOT_CONFIRMED', 403);
     }
     if (res.status === 404) {
       throw new Error(`Authentication endpoint '${resolvedUrl}' could not be reached (404 Not Found).`);
     }
     if (res.status === 429) {
-      throw new AuthServiceError('Too many attempts. Please wait a minute before trying again.', 'RATE_LIMITED');
+      throw new AuthServiceError('Too many attempts. Please wait a minute before trying again.', 'RATE_LIMITED', 429);
     }
     if (res.status >= 500) {
-      throw new Error('The authentication service encountered a temporary error. Please try again shortly.');
+      throw new AuthServiceError('The authentication service encountered a temporary error. Please try again shortly.', 'UPSTREAM_ERROR', res.status);
     }
 
     const cleanSnippet = rawText.replace(/<[^>]*>?/gm, '').trim().slice(0, 80);
@@ -135,9 +141,51 @@ function persistLocalSession(token: string, user: User) {
   }
 }
 
+async function syncSupabaseBrowserSession(accessToken?: string, refreshToken?: string | null) {
+  const supa = getActiveSupabaseClient();
+  if (!supa || !accessToken || !refreshToken) return;
+  try {
+    await supa.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+  } catch {
+    // Backend HttpOnly cookie + localStorage Bearer token remain active
+  }
+}
+
+export interface OtpLifecyclePayload {
+  success: boolean;
+  message: string;
+  email?: string;
+  autoConfirmed?: boolean;
+  user?: User;
+  token?: string;
+  refreshToken?: string | null;
+  expiresAt?: string;
+  resendAvailableAt?: string;
+  resendCooldownSeconds?: number;
+  otpValiditySeconds?: number;
+  maxAttempts?: number;
+  pendingToken?: string;
+}
+
+export interface VerificationStatusPayload {
+  success: boolean;
+  email: string;
+  hasActiveOtp: boolean;
+  expired: boolean;
+  lockedOut: boolean;
+  remainingAttempts: number;
+  maxAttempts: number;
+  resendCooldownRemainingSeconds: number;
+  expiresAt: string | null;
+  resendAvailableAt: string | null;
+}
+
 /**
- * Authentication Service supporting Supabase Auth (Email OTP, Password, Google OAuth)
- * and backend session verification.
+ * Authentication Service supporting Server-Validated Email OTP Verification,
+ * Password Login, Google OAuth, and Backend Session Synchronization.
  */
 class AuthService {
   private loginRouteCandidates = [
@@ -151,7 +199,8 @@ class AuthService {
   }
 
   /**
-   * Log in user with email and password
+   * Log in user with email and password through backend auth proxy
+   * (enforces email verification check and syncs session cookie + Supabase SDK).
    */
   public async login(
     emailOrCreds: string | { email: string; password: string },
@@ -164,39 +213,6 @@ class AuthService {
       throw new Error('Email and password are required.');
     }
 
-    const supa = getActiveSupabaseClient();
-    if (supa) {
-      const { data, error } = await supa.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
-
-      if (error) {
-        const isUnconfirmed =
-          (error as any).code === 'email_not_confirmed' ||
-          /email not confirmed|confirm your email/i.test(error.message);
-        if (isUnconfirmed) {
-          throw new AuthServiceError(
-            'Your email address has not been verified yet. Enter your 6-digit verification code or request a new code.',
-            'EMAIL_NOT_CONFIRMED'
-          );
-        }
-        throw new AuthServiceError(error.message || 'Invalid email or password.', (error as any).code);
-      }
-
-      if (data.session && data.user) {
-        const user = mapSupabaseUser(data.user);
-        persistLocalSession(data.session.access_token, user);
-        return {
-          success: true,
-          user,
-          token: data.session.access_token,
-        };
-      }
-
-      throw new AuthServiceError('Unable to establish an authenticated session. Please try again.', 'SESSION_MISSING');
-    }
-
     let lastError: any = null;
     for (const route of this.loginRouteCandidates) {
       try {
@@ -206,6 +222,7 @@ class AuthService {
         });
         if (res && res.token) {
           persistLocalSession(res.token, res.user);
+          await syncSupabaseBrowserSession(res.token, res.refreshToken);
         }
         return res;
       } catch (err: any) {
@@ -249,67 +266,13 @@ class AuthService {
   }
 
   /**
-   * Register a new user with email & password (triggers Supabase 6-digit OTP email)
+   * Register a new user with email & password (triggers server-managed 6-digit OTP email)
    */
-  public async register(payload: { email: string; fullName: string; password?: string }): Promise<{
-    success: boolean;
-    message: string;
-    autoConfirmed?: boolean;
-    user?: User;
-    token?: string;
-  }> {
+  public async register(payload: { email: string; fullName: string; password?: string }): Promise<OtpLifecyclePayload> {
     const cleanEmail = payload.email.trim().toLowerCase();
     const cleanName = payload.fullName.trim();
 
-    const supa = getActiveSupabaseClient();
-    if (supa && payload.password) {
-      const { data, error } = await supa.auth.signUp({
-        email: cleanEmail,
-        password: payload.password,
-        options: cleanName ? { data: { full_name: cleanName } } : undefined,
-      });
-
-      if (error) {
-        const isDuplicate =
-          (error as any).code === 'user_already_exists' ||
-          /already registered|already exists/i.test(error.message);
-        if (isDuplicate) {
-          throw new AuthServiceError(
-            'An account with this email address already exists. Please sign in instead.',
-            'USER_ALREADY_EXISTS'
-          );
-        }
-        throw new AuthServiceError(error.message || 'Could not create account.', (error as any).code);
-      }
-
-      // Supabase returns empty identities when email confirmation is enabled and email already exists
-      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-        throw new AuthServiceError(
-          'An account with this email address already exists. Please sign in instead.',
-          'USER_ALREADY_EXISTS'
-        );
-      }
-
-      if (data.session && data.user) {
-        const user = mapSupabaseUser(data.user);
-        persistLocalSession(data.session.access_token, user);
-        return {
-          success: true,
-          autoConfirmed: true,
-          user,
-          token: data.session.access_token,
-          message: 'Account created and verified.',
-        };
-      }
-
-      return {
-        success: true,
-        autoConfirmed: false,
-        message: 'We sent a 6-digit verification code to your email address.',
-      };
-    }
-
-    return await safeFetchAuthJson('/api/auth/register', {
+    const res = await safeFetchAuthJson<OtpLifecyclePayload>('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify({
         email: cleanEmail,
@@ -317,10 +280,17 @@ class AuthService {
         password: payload.password,
       }),
     });
+
+    if (res.autoConfirmed && res.token && res.user) {
+      persistLocalSession(res.token, res.user);
+      await syncSupabaseBrowserSession(res.token, res.refreshToken);
+    }
+
+    return res;
   }
 
   /**
-   * Verify 6-digit signup email OTP with Supabase Auth and confirm session establishment
+   * Verify 6-digit email OTP through backend atomic validator & establish authenticated session
    */
   public async verifyOtp(
     emailOrPayload: string | { email: string; code: string },
@@ -338,54 +308,6 @@ class AuthService {
       throw new AuthServiceError('Please enter a valid 6-digit numeric verification code.', 'INVALID_OTP_FORMAT');
     }
 
-    const supa = getActiveSupabaseClient();
-    if (supa) {
-      const { data, error } = await supa.auth.verifyOtp({
-        email: cleanEmail,
-        token: cleanCode,
-        type: 'signup',
-      });
-
-      if (error) {
-        const errCode = String((error as any).code || '').toLowerCase();
-        const isUnambiguouslyExpired =
-          errCode === 'otp_expired' ||
-          (/expired/i.test(error.message) && !/or is invalid/i.test(error.message));
-        throw new AuthServiceError(
-          isUnambiguouslyExpired
-            ? 'Your verification code has expired. Please request a new 6-digit code.'
-            : 'Invalid or expired 6-digit verification code. Please check the code or request a new one.',
-          isUnambiguouslyExpired ? 'OTP_EXPIRED' : 'OTP_INVALID'
-        );
-      }
-
-      let activeSession = data?.session || null;
-      let activeUser = data?.user || activeSession?.user || null;
-
-      if (!activeSession?.access_token) {
-        const { data: sessionData } = await supa.auth.getSession();
-        activeSession = sessionData?.session || null;
-        if (!activeUser && activeSession?.user) {
-          activeUser = activeSession.user;
-        }
-      }
-
-      if (!activeSession?.access_token || !activeUser) {
-        throw new AuthServiceError(
-          'Email verification could not establish an authenticated session. Please try signing in or request a new code.',
-          'SESSION_MISSING'
-        );
-      }
-
-      const user = mapSupabaseUser(activeUser);
-      persistLocalSession(activeSession.access_token, user);
-      return {
-        success: true,
-        user,
-        token: activeSession.access_token,
-      };
-    }
-
     const res = await safeFetchAuthJson<AuthSessionResponse>('/api/auth/verify-otp', {
       method: 'POST',
       body: JSON.stringify({
@@ -393,52 +315,58 @@ class AuthService {
         code: cleanCode,
       }),
     });
-    if (res && res.token) {
+    if (res && res.token && res.user) {
       persistLocalSession(res.token, res.user);
+      await syncSupabaseBrowserSession(res.token, res.refreshToken);
     }
     return res;
   }
 
   /**
-   * Resend 6-digit email verification OTP via Supabase Auth
+   * Resend 6-digit email verification OTP with server-side cooldown & atomic invalidation
    */
-  public async resendOtp(emailOrPayload: string | { email: string }): Promise<{
-    success: boolean;
-    message: string;
-  }> {
+  public async resendOtp(emailOrPayload: string | { email: string }): Promise<OtpLifecyclePayload> {
     const email = typeof emailOrPayload === 'string' ? emailOrPayload : emailOrPayload.email;
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {
       throw new AuthServiceError('Email address is required.', 'EMAIL_REQUIRED');
     }
 
-    const supa = getActiveSupabaseClient();
-    if (supa) {
-      const { error } = await supa.auth.resend({
-        type: 'signup',
-        email: cleanEmail,
-      });
-      if (error) {
-        const isRateLimit =
-          (error as any).status === 429 ||
-          /rate limit|security purposes|only request this after/i.test(error.message);
-        throw new AuthServiceError(
-          isRateLimit
-            ? error.message || 'Please wait before requesting another verification code.'
-            : error.message || 'Failed to resend verification code.',
-          isRateLimit ? 'RATE_LIMITED' : (error as any).code
-        );
-      }
-      return {
-        success: true,
-        message: 'A new 6-digit verification code has been sent to your email address.',
-      };
-    }
-
-    return await safeFetchAuthJson('/api/auth/resend-otp', {
+    return await safeFetchAuthJson<OtpLifecyclePayload>('/api/auth/resend-otp', {
       method: 'POST',
       body: JSON.stringify({ email: cleanEmail }),
     });
+  }
+
+  /**
+   * Change pending unverified registration email address, invalidate old OTPs, and issue a fresh 6-digit code
+   */
+  public async changePendingEmail(payload: {
+    currentEmail: string;
+    newEmail: string;
+    pendingToken?: string;
+    password?: string;
+  }): Promise<OtpLifecyclePayload> {
+    return await safeFetchAuthJson<OtpLifecyclePayload>('/api/auth/change-email', {
+      method: 'POST',
+      body: JSON.stringify({
+        currentEmail: payload.currentEmail.trim().toLowerCase(),
+        newEmail: payload.newEmail.trim().toLowerCase(),
+        pendingToken: payload.pendingToken,
+        password: payload.password,
+      }),
+    });
+  }
+
+  /**
+   * Query server-side verification cooldown, expiration & remaining attempt state
+   */
+  public async getVerificationStatus(email: string): Promise<VerificationStatusPayload> {
+    const cleanEmail = email.trim().toLowerCase();
+    return await safeFetchAuthJson<VerificationStatusPayload>(
+      `/api/auth/verification-status?email=${encodeURIComponent(cleanEmail)}`,
+      { method: 'GET' }
+    );
   }
 
   /**
@@ -499,7 +427,7 @@ class AuthService {
     }
 
     const activeToken =
-      token || (!supa && typeof localStorage !== 'undefined' ? localStorage.getItem('fieldshift_token') : null);
+      token || (typeof localStorage !== 'undefined' ? localStorage.getItem('fieldshift_token') : null);
     try {
       const res = await safeFetchAuthJson<{ success: boolean; user: User }>('/api/auth/session', {
         method: 'GET',
