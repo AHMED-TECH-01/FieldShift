@@ -292,7 +292,7 @@ export async function fetchModisOrnlData(params: {
     Number.isFinite(envBudgetRaw) && envBudgetRaw > 0
       ? Math.floor(envBudgetRaw)
       : process.env.VERCEL
-      ? Math.min(44000, Math.max(timeoutMs + 2000, 40000))
+      ? Math.min(28000, Math.max(timeoutMs + 1000, 24000))
       : null;
   const totalBudgetMs = explicitBudget ?? defaultVercelBudget;
   const deadlineMs = totalBudgetMs !== null ? startedAt + totalBudgetMs : undefined;

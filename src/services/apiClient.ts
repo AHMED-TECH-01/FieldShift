@@ -37,6 +37,8 @@ export interface ApiRequestOptions extends RequestInit {
 export class ApiError extends Error {
   public status: number;
   public code?: string;
+  public endpoint?: string;
+  public contentType?: string;
   public data?: any;
 
   constructor(message: string, status: number, data?: any) {
@@ -44,8 +46,21 @@ export class ApiError extends Error {
     this.name = 'ApiError';
     this.status = status;
     this.code = typeof data?.code === 'string' ? data.code : undefined;
+    this.endpoint = typeof data?.endpoint === 'string' ? data.endpoint : undefined;
+    this.contentType = typeof data?.contentType === 'string' ? data.contentType : undefined;
     this.data = data;
   }
+}
+
+export function isHtmlPayload(contentType: string, rawText: string): boolean {
+  const ctLower = contentType.toLowerCase();
+  if (ctLower.includes('text/html') || ctLower.includes('application/xhtml+xml')) {
+    return true;
+  }
+  const trimmed = rawText.trimStart();
+  if (!trimmed) return false;
+  const head = trimmed.slice(0, 64).toLowerCase();
+  return head.startsWith('<!doctype') || head.startsWith('<html') || trimmed.startsWith('<');
 }
 
 async function resolveActiveAccessToken(): Promise<string | null> {
@@ -104,7 +119,7 @@ function clearStoredSessionAndNotify(endpoint: string) {
  * - Appends query parameters if provided
  * - Includes credentials (cookies) for authenticated sessions
  * - Attaches fresh Supabase Bearer access_token (with one-shot refresh on 401)
- * - Handles non-JSON / HTML error responses gracefully
+ * - Inspects Content-Type & HTML markers before JSON parsing, throwing endpoint+status errors on HTML/non-JSON
  */
 export async function apiRequest<T = any>(
   endpoint: string,
@@ -152,8 +167,9 @@ export async function apiRequest<T = any>(
     });
   } catch {
     throw new ApiError(
-      'Network error: Unable to reach the FieldShift API server. Please verify your connection.',
-      0
+      `Network error reaching '${resolvedUrl}': Unable to reach the FieldShift API server. Please verify your connection.`,
+      0,
+      { code: 'NETWORK_ERROR', endpoint: resolvedUrl }
     );
   }
 
@@ -175,18 +191,21 @@ export async function apiRequest<T = any>(
 
   const contentType = res.headers.get('content-type') || '';
   const rawText = await res.text();
+  const trimmed = rawText.trim();
+  const isHtml = isHtmlPayload(contentType, rawText);
 
   let parsedData: any = null;
-  const isLikelyJson =
-    contentType.includes('application/json') ||
-    rawText.trim().startsWith('{') ||
-    rawText.trim().startsWith('[');
+  let jsonParseFailed = false;
+  const ctLower = contentType.toLowerCase();
+  const hasJsonContentType = ctLower.includes('application/json') || ctLower.includes('+json');
+  const looksLikeJson = trimmed.startsWith('{') || trimmed.startsWith('[');
 
-  if (isLikelyJson && rawText.trim().length > 0) {
+  if (!isHtml && trimmed.length > 0 && (hasJsonContentType || looksLikeJson)) {
     try {
       parsedData = JSON.parse(rawText);
     } catch {
       parsedData = null;
+      jsonParseFailed = true;
     }
   }
 
@@ -195,23 +214,93 @@ export async function apiRequest<T = any>(
       clearStoredSessionAndNotify(endpoint);
     }
 
+    if (isHtml) {
+      throw new ApiError(
+        `API endpoint '${resolvedUrl}' returned HTML instead of JSON (HTTP ${res.status}${ctLower ? `, content-type: ${ctLower}` : ''}).`,
+        res.status,
+        {
+          code: 'INVALID_HTML_RESPONSE',
+          endpoint: resolvedUrl,
+          contentType,
+          isHtml: true,
+        }
+      );
+    }
+
+    if (jsonParseFailed) {
+      throw new ApiError(
+        `API endpoint '${resolvedUrl}' returned malformed JSON (HTTP ${res.status}).`,
+        res.status,
+        {
+          code: 'INVALID_JSON_RESPONSE',
+          endpoint: resolvedUrl,
+          contentType,
+        }
+      );
+    }
+
     const errorMsg =
       parsedData?.error ||
       parsedData?.message ||
       (res.status === 404
         ? `API endpoint '${resolvedUrl}' not found (404).`
         : res.status === 401
-        ? 'Authentication required or invalid credentials (401).'
+        ? `Authentication required or invalid credentials (401) at '${resolvedUrl}'.`
         : res.status === 403
-        ? 'Unauthorized access to this resource (403).'
+        ? `Unauthorized access to '${resolvedUrl}' (403).`
         : res.status >= 500
-        ? 'The server encountered an error processing your request.'
-        : `Request failed with status ${res.status}`);
+        ? `API endpoint '${resolvedUrl}' returned server error HTTP ${res.status}.`
+        : `Request to '${resolvedUrl}' failed with HTTP ${res.status}.`);
 
-    throw new ApiError(errorMsg, res.status, parsedData);
+    throw new ApiError(errorMsg, res.status, {
+      ...(parsedData && typeof parsedData === 'object' ? parsedData : {}),
+      endpoint: resolvedUrl,
+      contentType,
+    });
   }
 
-  return (parsedData !== null ? parsedData : rawText) as T;
+  if (isHtml) {
+    throw new ApiError(
+      `API endpoint '${resolvedUrl}' returned an HTML page (HTTP ${res.status}, content-type: ${contentType || 'unknown'}) instead of JSON.`,
+      res.status,
+      {
+        code: 'INVALID_HTML_RESPONSE',
+        endpoint: resolvedUrl,
+        contentType,
+        isHtml: true,
+      }
+    );
+  }
+
+  if (jsonParseFailed) {
+    throw new ApiError(
+      `API endpoint '${resolvedUrl}' returned malformed JSON (HTTP ${res.status}, content-type: ${contentType || 'unknown'}).`,
+      res.status,
+      {
+        code: 'INVALID_JSON_RESPONSE',
+        endpoint: resolvedUrl,
+        contentType,
+      }
+    );
+  }
+
+  if (parsedData !== null) {
+    return parsedData as T;
+  }
+
+  if (trimmed.length === 0) {
+    return {} as T;
+  }
+
+  throw new ApiError(
+    `API endpoint '${resolvedUrl}' returned non-JSON response (HTTP ${res.status}, content-type: ${contentType || 'unknown'}).`,
+    res.status,
+    {
+      code: 'INVALID_JSON_RESPONSE',
+      endpoint: resolvedUrl,
+      contentType,
+    }
+  );
 }
 
 export const apiClient = {

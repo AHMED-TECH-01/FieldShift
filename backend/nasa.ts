@@ -806,6 +806,7 @@ export async function syncModisForFarm(
       // If ORNL failed or returned 0 rows AND EARTHDATA_TOKEN is configured, try authenticated NASA Earthdata Cloud OPeNDAP fallback
       const earthdataToken = (options?.earthdataToken ?? process.env.EARTHDATA_TOKEN ?? '').trim();
       const ornlEmpty = Boolean(ornlResult && ornlResult.rows.length === 0);
+      const opendapTimeoutMs = process.env.VERCEL ? Math.min(timeoutMs, 10000) : Math.min(timeoutMs, 15000);
       if ((!ornlResult || ornlEmpty) && cmrResult.entries.length > 0 && earthdataToken) {
         const opendapRes = await extractPixelsFromCmrEntriesViaOpendap({
           dataset: 'modis',
@@ -817,7 +818,7 @@ export async function syncModisForFarm(
           entries: cmrResult.entries,
           maxGranules: 2,
           earthdataToken,
-          timeoutMs: Math.min(timeoutMs, 15000),
+          timeoutMs: opendapTimeoutMs,
           fetchImpl: options?.fetchImpl,
         });
         if (opendapRes.authStatus === 'authenticated' && opendapRes.rows.length > 0) {
@@ -1446,38 +1447,85 @@ export async function ingestAllAvailableForFarm(
   userClient: SupabaseClient,
   userId: string | null,
   farm: DbFarmRecord,
-  options?: { days?: number; forceRefresh?: boolean }
+  options?: { days?: number; forceRefresh?: boolean; modisBudgetMs?: number; deadlineMs?: number }
 ) {
   const outcomes: Record<string, any> = {};
-  const tasks: Array<Promise<void>> = [
-    syncNasaPowerForFarm(userClient, userId, farm, { days: options?.days || 30 })
-      .then((r) => { outcomes['nasa-power'] = { ok: true, ...r }; })
-      .catch((e) => { outcomes['nasa-power'] = { ok: false, error: e?.message, code: e?.code || 'NASA_POWER_FAILED' }; }),
-    syncModisForFarm(userClient, userId, farm, { forceRefresh: options?.forceRefresh ?? true })
-      .then((r) => {
-        const extracted = r.status === 'completed' || r.status === 'cached';
-        outcomes.modis = { ok: extracted, ...r };
+  const isVercelRuntime = Boolean(process.env.VERCEL);
+  const modisBudgetMs = options?.modisBudgetMs ?? (isVercelRuntime ? 20000 : undefined);
+  const modisTimeoutMs = isVercelRuntime ? Math.min(getModisTimeoutMs(), 18000) : undefined;
+  const cmrTimeoutMs = isVercelRuntime ? 10000 : 15000;
+  const overallDeadlineMs = options?.deadlineMs ?? (isVercelRuntime ? 42000 : 55000);
+
+  const tasks: Array<{ key: string; promise: Promise<void> }> = [
+    {
+      key: 'nasa-power',
+      promise: syncNasaPowerForFarm(userClient, userId, farm, { days: options?.days || 30 })
+        .then((r) => { outcomes['nasa-power'] = { ok: true, ...r }; })
+        .catch((e) => { outcomes['nasa-power'] = { ok: false, error: e?.message || 'NASA POWER sync failed', code: e?.code || 'NASA_POWER_FAILED' }; }),
+    },
+    {
+      key: 'modis',
+      promise: syncModisForFarm(userClient, userId, farm, {
+        forceRefresh: options?.forceRefresh ?? true,
+        ...(modisBudgetMs ? { totalBudgetMs: modisBudgetMs } : {}),
+        ...(modisTimeoutMs ? { timeoutMs: modisTimeoutMs } : {}),
       })
-      .catch((e) => {
-        outcomes.modis = {
-          ok: false,
-          error: e?.message,
-          code: e?.code || 'MODIS_FAILED',
-          stages: e?.details?.stages || null,
-        };
-      }),
-    syncEarthdataCmrForFarm(userClient, userId, farm, 'smap')
-      .then((r) => { outcomes.smap = { ok: true, ...r }; })
-      .catch((e) => { outcomes.smap = { ok: false, error: e?.message, code: e?.code || 'SMAP_FAILED' }; }),
-    syncEarthdataCmrForFarm(userClient, userId, farm, 'gpm')
-      .then((r) => { outcomes.gpm = { ok: true, ...r }; })
-      .catch((e) => { outcomes.gpm = { ok: false, error: e?.message, code: e?.code || 'GPM_FAILED' }; }),
-    syncEarthdataCmrForFarm(userClient, userId, farm, 'ecostress')
-      .then((r) => { outcomes.ecostress = { ok: true, ...r }; })
-      .catch((e) => { outcomes.ecostress = { ok: false, error: e?.message, code: e?.code || 'ECOSTRESS_FAILED' }; }),
+        .then((r) => {
+          const extracted = r.status === 'completed' || r.status === 'cached';
+          outcomes.modis = { ok: extracted, ...r };
+        })
+        .catch((e) => {
+          outcomes.modis = {
+            ok: false,
+            error: e?.message || 'MODIS sync failed',
+            code: e?.code || 'MODIS_FAILED',
+            stages: e?.details?.stages || null,
+          };
+        }),
+    },
+    {
+      key: 'smap',
+      promise: syncEarthdataCmrForFarm(userClient, userId, farm, 'smap', { timeoutMs: cmrTimeoutMs })
+        .then((r) => { outcomes.smap = { ok: true, ...r }; })
+        .catch((e) => { outcomes.smap = { ok: false, error: e?.message || 'SMAP sync failed', code: e?.code || 'SMAP_FAILED' }; }),
+    },
+    {
+      key: 'gpm',
+      promise: syncEarthdataCmrForFarm(userClient, userId, farm, 'gpm', { timeoutMs: cmrTimeoutMs })
+        .then((r) => { outcomes.gpm = { ok: true, ...r }; })
+        .catch((e) => { outcomes.gpm = { ok: false, error: e?.message || 'GPM sync failed', code: e?.code || 'GPM_FAILED' }; }),
+    },
+    {
+      key: 'ecostress',
+      promise: syncEarthdataCmrForFarm(userClient, userId, farm, 'ecostress', { timeoutMs: cmrTimeoutMs })
+        .then((r) => { outcomes.ecostress = { ok: true, ...r }; })
+        .catch((e) => { outcomes.ecostress = { ok: false, error: e?.message || 'ECOSTRESS sync failed', code: e?.code || 'ECOSTRESS_FAILED' }; }),
+    },
   ];
 
-  await Promise.all(tasks);
+  let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  const deadlinePromise = new Promise<'deadline'>((resolve) => {
+    deadlineTimer = setTimeout(() => resolve('deadline'), overallDeadlineMs);
+  });
+
+  await Promise.race([
+    Promise.allSettled(tasks.map((t) => t.promise)),
+    deadlinePromise,
+  ]);
+  if (deadlineTimer) clearTimeout(deadlineTimer);
+
+  for (const t of tasks) {
+    if (!outcomes[t.key]) {
+      outcomes[t.key] = {
+        ok: false,
+        status: 'timeout',
+        dataset: t.key,
+        error: `${t.key.toUpperCase()} sync exceeded the ${Math.round(overallDeadlineMs / 1000)}s API execution budget.`,
+        code: 'NASA_SERVERLESS_DEADLINE',
+      };
+    }
+  }
+
   summaryCache.invalidatePrefix(`${farm.id}:`);
   return outcomes;
 }

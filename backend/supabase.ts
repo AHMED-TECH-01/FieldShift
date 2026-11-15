@@ -226,37 +226,41 @@ export async function resolveRequestUser(req: Request): Promise<AuthenticatedUse
 }
 
 export async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
-  if (!isSupabaseConfigured()) {
-    res.status(503).json({
-      error: 'Supabase authentication service is not configured.',
-      code: 'SUPABASE_UNCONFIGURED',
-    });
-    return;
-  }
+  try {
+    if (!isSupabaseConfigured()) {
+      res.status(503).json({
+        error: 'Supabase authentication service is not configured.',
+        code: 'SUPABASE_UNCONFIGURED',
+      });
+      return;
+    }
 
-  const authCtx = await authenticateRequestContext(req);
-  if (!authCtx.user) {
-    res.status(401).json({
-      error: authCtx.tokenInvalid
-        ? 'Invalid or expired authentication token. Please sign in again.'
-        : 'Authentication required. Please sign in.',
-      code: authCtx.tokenInvalid ? 'AUTH_INVALID_TOKEN' : 'AUTH_REQUIRED',
-    });
-    return;
-  }
+    const authCtx = await authenticateRequestContext(req);
+    if (!authCtx.user) {
+      res.status(401).json({
+        error: authCtx.tokenInvalid
+          ? 'Invalid or expired authentication token. Please sign in again.'
+          : 'Authentication required. Please sign in.',
+        code: authCtx.tokenInvalid ? 'AUTH_INVALID_TOKEN' : 'AUTH_REQUIRED',
+      });
+      return;
+    }
 
-  const userClient = getSupabaseUserClient(authCtx.user.accessToken);
-  if (!userClient) {
-    res.status(503).json({
-      error: 'Supabase authentication service is not configured.',
-      code: 'SUPABASE_UNCONFIGURED',
-    });
-    return;
-  }
+    const userClient = getSupabaseUserClient(authCtx.user.accessToken);
+    if (!userClient) {
+      res.status(503).json({
+        error: 'Supabase authentication service is not configured.',
+        code: 'SUPABASE_UNCONFIGURED',
+      });
+      return;
+    }
 
-  req.authUser = authCtx.user;
-  req.supabaseUserClient = userClient;
-  next();
+    req.authUser = authCtx.user;
+    req.supabaseUserClient = userClient;
+    next();
+  } catch (err) {
+    next(err);
+  }
 }
 
 export interface DbFarmRecord extends Farm {

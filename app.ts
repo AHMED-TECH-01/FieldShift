@@ -75,6 +75,36 @@ export { logGeminiEvent };
 
 export const app = express();
 
+// Express 4 does not forward rejected promises from async handlers to error middleware;
+// wrap route handlers so any unexpected async rejection produces structured JSON instead of crashing.
+function wrapAsyncMiddleware(fn: any) {
+  if (typeof fn !== 'function' || fn.length === 4) return fn;
+  return function wrappedExpressHandler(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = fn(req, res, next);
+      if (result && typeof result.catch === 'function') {
+        result.catch(next);
+      }
+      return result;
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+(['get', 'post', 'put', 'patch', 'delete', 'all'] as const).forEach((method) => {
+  const original = (app as any)[method].bind(app);
+  (app as any)[method] = (...args: any[]) => {
+    if (method === 'get' && args.length === 1 && typeof args[0] === 'string') {
+      return original(...args);
+    }
+    const wrappedArgs = args.map((arg) =>
+      typeof arg === 'function' ? wrapAsyncMiddleware(arg) : Array.isArray(arg) ? arg.map((item) => (typeof item === 'function' ? wrapAsyncMiddleware(item) : item)) : arg
+    );
+    return original(...wrappedArgs);
+  };
+});
+
 // Trust Vercel / reverse-proxy headers for accurate protocol & rate-limit IP resolution
 app.set('trust proxy', 1);
 
@@ -1477,6 +1507,18 @@ app.get('/api/nasa/observations/:farmId', async (req: Request, res: Response) =>
 });
 
 // Unified full-ingestion endpoint across NASA POWER, MODIS ORNL DAAC, SMAP, GPM & ECOSTRESS CMR
+app.get('/api/nasa/ingest/:farmId', (_req: Request, res: Response) => {
+  res
+    .status(405)
+    .set('Allow', 'POST, OPTIONS')
+    .set('Content-Type', 'application/json; charset=utf-8')
+    .json({
+      error: 'Method Not Allowed. Use POST /api/nasa/ingest/:farmId to trigger NASA ingestion.',
+      code: 'METHOD_NOT_ALLOWED',
+      status: 405,
+    });
+});
+
 app.post('/api/nasa/ingest/:farmId', nasaSyncRateLimit, async (req: Request, res: Response) => {
   const farmId = req.params.farmId?.trim() || '';
   if (!farmId) {
@@ -1493,25 +1535,28 @@ app.post('/api/nasa/ingest/:farmId', nasaSyncRateLimit, async (req: Request, res
   const auth = await authorizeNasaFarmAccess(req, res, farmId);
   if (!auth) return;
 
-  const geometry = resolveFarmGeometry({ coordinates: auth.farm.coordinates });
-  const { data: parentJobRow } = await auth.writeClient
-    .from('ingestion_jobs')
-    .insert({
-      farm_id: auth.farm.id,
-      user_id: auth.ownerUserId,
-      dataset_id: 'all-nasa',
-      source_code: 'NASA MULTI-MISSION INGEST',
-      status: 'running',
-      metadata: {
-        days: daysRaw,
-        latitude: geometry.latitude,
-        longitude: geometry.longitude,
-        spatialMethod: geometry.spatialMethod,
-        accessMode: auth.mode,
-      },
-    })
-    .select('*')
-    .single();
+  let parentJobRow: any = null;
+  try {
+    const geometry = resolveFarmGeometry({ coordinates: auth.farm.coordinates });
+    const { data: createdJob } = await auth.writeClient
+      .from('ingestion_jobs')
+      .insert({
+        farm_id: auth.farm.id,
+        user_id: auth.ownerUserId,
+        dataset_id: 'all-nasa',
+        source_code: 'NASA MULTI-MISSION INGEST',
+        status: 'running',
+        metadata: {
+          days: daysRaw,
+          latitude: geometry.latitude,
+          longitude: geometry.longitude,
+          spatialMethod: geometry.spatialMethod,
+          accessMode: auth.mode,
+        },
+      })
+      .select('*')
+      .single();
+    parentJobRow = createdJob;
 
   const outcomes = await ingestAllAvailableForFarm(auth.writeClient, auth.ownerUserId, auth.farm, {
     days: daysRaw,
@@ -1606,22 +1651,44 @@ app.post('/api/nasa/ingest/:farmId', nasaSyncRateLimit, async (req: Request, res
       .eq('id', parentJobRow.id);
   }
 
-  res.json({
-    success: true,
-    metadataOnly: false,
-    farmId: auth.farm.id,
-    farmName: auth.farm.name,
-    accessMode: auth.mode,
-    geometry,
-    jobId: parentJobRow?.id || null,
-    jobStatus,
-    jobIds,
-    numericRecordsSaved,
-    metadataGranulesFound,
-    partialFailures: failedDatasets,
-    outcomes,
-    summary,
-  });
+    res.json({
+      success: true,
+      metadataOnly: false,
+      farmId: auth.farm.id,
+      farmName: auth.farm.name,
+      accessMode: auth.mode,
+      geometry,
+      jobId: parentJobRow?.id || null,
+      jobStatus,
+      jobIds,
+      numericRecordsSaved,
+      metadataGranulesFound,
+      partialFailures: failedDatasets,
+      outcomes,
+      summary,
+    });
+  } catch (err: any) {
+    const status = err instanceof NasaUpstreamError ? err.status : 502;
+    const message = err?.message || 'Unexpected error during NASA multi-mission ingestion.';
+    if (parentJobRow?.id) {
+      await auth.writeClient
+        .from('ingestion_jobs')
+        .update({
+          status: 'failed',
+          error_message: message,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', parentJobRow.id)
+        .then(() => undefined, () => undefined);
+    }
+    res.status(status).set('Content-Type', 'application/json; charset=utf-8').json({
+      success: false,
+      error: message,
+      code: err instanceof NasaUpstreamError ? err.code : 'NASA_INGEST_FAILED',
+      farmId: auth.farm.id,
+      status,
+    });
+  }
 });
 
 app.get('/api/nasa/ingestion/:jobId', async (req: Request, res: Response) => {
@@ -2568,17 +2635,63 @@ app.get('/sitemap.xml', (_req: Request, res: Response) => {
 });
 
 app.all(['/api', '/api/*'], (req: Request, res: Response) => {
-  res.status(404).json({
-    error: `API endpoint '${req.method} ${req.path}' not found.`,
-    status: 404,
-  });
+  res
+    .status(404)
+    .set('Content-Type', 'application/json; charset=utf-8')
+    .json({
+      error: `API endpoint '${req.method} ${req.path}' not found.`,
+      code: 'API_ROUTE_NOT_FOUND',
+      endpoint: req.originalUrl || req.path,
+      method: req.method,
+      status: 404,
+    });
 });
 
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  logEvent('Express', 'UNHANDLED_ERROR', { message: err?.message || 'Unexpected error' });
-  res.status(500).json({
-    error: 'Internal server error.',
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  if (err && err.type === 'entity.parse.failed') {
+    res
+      .status(400)
+      .set('Content-Type', 'application/json; charset=utf-8')
+      .json({
+        error: 'Malformed JSON request body.',
+        code: 'INVALID_JSON_BODY',
+        endpoint: req.originalUrl || req.path,
+        status: 400,
+      });
+    return;
+  }
+
+  const status =
+    typeof err?.status === 'number' && err.status >= 400 && err.status < 600
+      ? err.status
+      : 500;
+  const code = typeof err?.code === 'string' ? err.code : 'INTERNAL_SERVER_ERROR';
+  logEvent('Express', 'UNHANDLED_ERROR', {
+    method: req.method,
+    endpoint: req.originalUrl || req.path,
+    status,
+    code,
+    message: err?.message || 'Unexpected error',
   });
+
+  const safeMessage =
+    status < 500 || err instanceof NasaUpstreamError
+      ? err?.message || 'Request failed.'
+      : 'Internal server error.';
+
+  res
+    .status(status)
+    .set('Content-Type', 'application/json; charset=utf-8')
+    .json({
+      error: safeMessage,
+      code,
+      endpoint: req.originalUrl || req.path,
+      status,
+    });
 });
 
 export default app;

@@ -486,9 +486,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
     const targetFarmId = farmIdOverride || selectedFarmId;
     setSyncingAll(true);
     setSyncBanner(null);
-    try {
-      const res = await apiClient.post(`/api/nasa/ingest/${targetFarmId}`, { days: 30 });
-      const outcomes = res?.outcomes || {};
+
+    const summarizeAndApply = async (outcomes: Record<string, any>) => {
       const powerOutcome = outcomes['nasa-power'];
       const modisOutcome = outcomes.modis;
       const smapOutcome = outcomes.smap;
@@ -530,13 +529,62 @@ export const Dashboard: React.FC<DashboardProps> = ({
       });
       await fetchNasaAndFarmAnalytics(targetFarmId);
       await recalculateStrategies(priorities, activeScenario, targetFarmId);
+    };
+
+    try {
+      const res = await apiClient.post(`/api/nasa/ingest/${targetFarmId}`, { days: 30 });
+      await summarizeAndApply(res?.outcomes || {});
     } catch (err: any) {
-      setSyncBanner({
-        type: 'error',
-        message: formatNasaSyncError(err, 'Failed to ingest NASA Earth observation feeds.'),
-      });
-      if (err?.data?.metadataOnly) {
-        await fetchNasaAndFarmAnalytics(targetFarmId);
+      if (err?.data?.outcomes) {
+        await summarizeAndApply(err.data.outcomes);
+      } else if (
+        err?.status === 0 ||
+        err?.status >= 500 ||
+        err?.code === 'INVALID_HTML_RESPONSE' ||
+        err?.code === 'INVALID_JSON_RESPONSE'
+      ) {
+        // Isolate per-dataset feeds independently so one failing mission cannot block NASA POWER or others
+        const targets: Array<'nasa-power' | 'smap' | 'gpm' | 'modis' | 'ecostress'> = [
+          'nasa-power',
+          'smap',
+          'gpm',
+          'modis',
+          'ecostress',
+        ];
+        const perDataset = await Promise.allSettled(
+          targets.map((ds) => apiClient.post(`/api/datasets/${ds}/sync`, { farmId: targetFarmId, days: 30 }))
+        );
+        const isolatedOutcomes: Record<string, any> = {};
+        let anySucceeded = false;
+        perDataset.forEach((r, idx) => {
+          const ds = targets[idx];
+          if (r.status === 'fulfilled') {
+            anySucceeded = true;
+            const extracted = ds === 'modis' ? r.value.status === 'completed' || r.value.status === 'cached' : true;
+            isolatedOutcomes[ds] = { ok: extracted, ...r.value };
+          } else {
+            isolatedOutcomes[ds] = {
+              ok: false,
+              error: formatNasaSyncError(r.reason, `${ds} sync failed`),
+            };
+          }
+        });
+        if (anySucceeded) {
+          await summarizeAndApply(isolatedOutcomes);
+        } else {
+          setSyncBanner({
+            type: 'error',
+            message: formatNasaSyncError(err, 'Failed to ingest NASA Earth observation feeds.'),
+          });
+        }
+      } else {
+        setSyncBanner({
+          type: 'error',
+          message: formatNasaSyncError(err, 'Failed to ingest NASA Earth observation feeds.'),
+        });
+        if (err?.data?.metadataOnly) {
+          await fetchNasaAndFarmAnalytics(targetFarmId);
+        }
       }
     } finally {
       setSyncingAll(false);

@@ -1,5 +1,5 @@
 import { User } from '../types';
-import { apiFetch, getApiBaseUrl } from './apiClient';
+import { apiFetch, getApiBaseUrl, isHtmlPayload } from './apiClient';
 import { getActiveSupabaseClient, isSupabaseClientConfigured } from '../lib/supabase';
 
 export interface AuthSessionResponse {
@@ -66,12 +66,18 @@ export async function safeFetchAuthJson<T = any>(
 
   const contentType = res.headers.get('content-type') || '';
   const rawText = await res.text();
+  const trimmed = rawText.trim();
+  const isHtml = isHtmlPayload(contentType, rawText);
+  const ctLower = contentType.toLowerCase();
 
   let parsedJson: any = null;
   const isLikelyJson =
-    contentType.includes('application/json') ||
-    rawText.trim().startsWith('{') ||
-    rawText.trim().startsWith('[');
+    !isHtml &&
+    trimmed.length > 0 &&
+    (ctLower.includes('application/json') ||
+      ctLower.includes('+json') ||
+      trimmed.startsWith('{') ||
+      trimmed.startsWith('['));
 
   if (isLikelyJson) {
     try {
@@ -88,6 +94,14 @@ export async function safeFetchAuthJson<T = any>(
     if (parsedJson && typeof parsedJson.message === 'string') {
       throw new AuthServiceError(parsedJson.message, parsedJson.code, res.status, parsedJson);
     }
+    if (isHtml) {
+      throw new AuthServiceError(
+        `Authentication endpoint '${resolvedUrl}' returned HTML instead of JSON (HTTP ${res.status}${ctLower ? `, content-type: ${ctLower}` : ''}).`,
+        'INVALID_HTML_RESPONSE',
+        res.status,
+        { endpoint: resolvedUrl, contentType }
+      );
+    }
 
     if (res.status === 401) {
       throw new AuthServiceError('Invalid email or password. Please check your credentials.', 'INVALID_CREDENTIALS', 401);
@@ -102,15 +116,28 @@ export async function safeFetchAuthJson<T = any>(
       throw new AuthServiceError('Too many attempts. Please wait a minute before trying again.', 'RATE_LIMITED', 429);
     }
     if (res.status >= 500) {
-      throw new AuthServiceError('The authentication service encountered a temporary error. Please try again shortly.', 'UPSTREAM_ERROR', res.status);
+      throw new AuthServiceError(
+        `Authentication endpoint '${resolvedUrl}' encountered a temporary error (HTTP ${res.status}). Please try again shortly.`,
+        'UPSTREAM_ERROR',
+        res.status
+      );
     }
 
     const cleanSnippet = rawText.replace(/<[^>]*>?/gm, '').trim().slice(0, 80);
-    throw new Error(cleanSnippet || `Authentication request failed with HTTP ${res.status}.`);
+    throw new Error(cleanSnippet || `Authentication request to '${resolvedUrl}' failed with HTTP ${res.status}.`);
+  }
+
+  if (isHtml) {
+    throw new AuthServiceError(
+      `Authentication endpoint '${resolvedUrl}' returned an HTML page (HTTP ${res.status}) instead of JSON.`,
+      'INVALID_HTML_RESPONSE',
+      res.status,
+      { endpoint: resolvedUrl, contentType }
+    );
   }
 
   if (!parsedJson) {
-    throw new Error('The authentication service returned an invalid response format.');
+    throw new Error(`Authentication endpoint '${resolvedUrl}' returned an invalid response format (HTTP ${res.status}).`);
   }
 
   return parsedJson as T;
@@ -162,7 +189,6 @@ class AuthService {
   private loginRouteCandidates = [
     '/api/auth/login',
     '/api/v1/auth/login',
-    '/auth/login',
   ];
 
   public isSupabaseConfigured(): boolean {

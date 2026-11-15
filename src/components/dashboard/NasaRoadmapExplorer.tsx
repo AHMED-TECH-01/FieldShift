@@ -37,8 +37,12 @@ export const NasaRoadmapExplorer: React.FC<NasaRoadmapExplorerProps> = ({ farmId
         setDatasets(data.datasets);
         setSelectedDataset(data.datasets[0]);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to load NASA roadmap', e);
+      setSyncNotice({
+        type: 'error',
+        message: e?.message || 'Failed to load NASA dataset catalog.',
+      });
     } finally {
       setLoading(false);
     }
