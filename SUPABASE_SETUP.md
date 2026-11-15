@@ -57,7 +57,7 @@ Every table in `public` has `ENABLE ROW LEVEL SECURITY`:
 
 ---
 
-## 5. Supabase Authentication, 6-Digit Email OTP & Google OAuth
+## 5. Supabase Authentication (Email & Password Only)
 
 In **Supabase Dashboard -> Authentication -> URL Configuration**:
 
@@ -65,39 +65,13 @@ In **Supabase Dashboard -> Authentication -> URL Configuration**:
 2. **Additional Redirect URLs**:
    - `http://localhost:3000/**`
    - `https://field-shift-sable.vercel.app/**`
-   - `https://*.vercel.app/**` (for Vercel Preview deployments)
+   - `https://*.vercel.app/**` (for Vercel Preview deployments, used by password reset links)
 
-In **Supabase Dashboard -> Authentication -> Sign In / Providers -> Email**:
+In **Supabase Dashboard -> Authentication -> Sign In / Providers**:
 
-1. Enable **Email** provider and **Confirm email**.
-2. Set **Email OTP Expiration** (recommended: `3600` seconds or `900` seconds).
-3. Ensure **Email OTP Length** is `6` digits (Supabase default).
-4. Review **Authentication -> Rate Limits** for email sends (default Supabase Auth enforces a 60-second cooldown per user and project SMTP hourly quotas; configure custom SMTP in **Project Settings -> Authentication -> SMTP Settings** for higher production volume).
-
-In **Supabase Dashboard -> Authentication -> Email Templates -> Confirm signup**:
-
-Replace the default confirmation link (`{{ .ConfirmationURL }}`) with Supabase's 6-digit OTP token (`{{ .Token }}`):
-
-- **Subject**: `Verify your FieldShift account`
-- **Body** (see ready-to-paste HTML in `supabase/templates/confirm_signup_otp.html` or plain text):
-
-```text
-Welcome to FieldShift!
-
-Your email verification code is:
-
-{{ .Token }}
-
-Enter this 6-digit code in FieldShift to verify your email address.
-
-If you did not create this account, you can ignore this email.
-```
-
-In **Supabase Dashboard -> Authentication -> Sign In / Providers -> Google** (Google OAuth):
-
-1. Enable **Google** provider with your Google Cloud OAuth Client ID and Client Secret.
-2. Add your Supabase callback URL (`https://<YOUR_PROJECT_REF>.supabase.co/auth/v1/callback`) to Google Cloud Console Authorized Redirect URIs.
-3. Google OAuth users are authenticated directly via Supabase OAuth PKCE redirect to `/dashboard` and do not require an email OTP step.
+1. Keep **Email** provider enabled.
+2. Disable **Confirm email** (`mailer_autoconfirm = true`) in Supabase Auth Email provider settings if you want client-side `signUp` to auto-confirm without `SUPABASE_SECRET_KEY`. When `SUPABASE_SECRET_KEY` is configured on the server, `/api/auth/register` creates users via the Supabase Admin API with immediate session issuance.
+3. Keep **Google** and all other OAuth/social providers **disabled** (`external.google = false`).
 
 ---
 

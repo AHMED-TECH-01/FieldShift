@@ -207,7 +207,7 @@ export interface FieldRiskIndicator {
 export interface User {
   email: string;
   fullName: string;
-  verified: boolean;
+  verified?: boolean;
 }
 
 export interface NASAObservation {

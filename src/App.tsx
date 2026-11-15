@@ -131,7 +131,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState<boolean>(false);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
-  const [authInitialMode, setAuthInitialMode] = useState<'signin' | 'signup' | 'verify'>('signin');
+  const [authInitialMode, setAuthInitialMode] = useState<'signin' | 'signup'>('signin');
   const [demoModalOpen, setDemoModalOpen] = useState<boolean>(false);
   const [selectedStrategy, setSelectedStrategy] = useState<'A' | 'B' | 'C'>('B');
 
@@ -202,7 +202,7 @@ export default function App() {
         setCurrentUser(mappedUser);
         setAuthChecked(true);
 
-        if (window.location.search.includes('code=') || window.location.hash.includes('access_token=')) {
+        if (window.location.hash.includes('access_token=')) {
           window.history.replaceState({}, '', window.location.pathname || '/dashboard');
         }
         if (window.location.pathname === '/auth/sign-in' || window.location.pathname === '/auth/sign-up') {

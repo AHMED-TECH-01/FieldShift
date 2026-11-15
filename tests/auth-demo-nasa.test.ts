@@ -261,6 +261,73 @@ function createSupabaseTestHarness() {
     };
 
     // --- GoTrue Auth Endpoints ---
+    if (pathname === '/auth/v1/admin/users' && req.method === 'POST') {
+      const caller = resolveCaller(req);
+      if (caller.role !== 'service_role') {
+        return sendJson(403, { msg: 'Admin access required' });
+      }
+      const email = String(body.email || '').toLowerCase();
+      if (users.has(email)) {
+        return sendJson(422, { msg: 'A user with this email address has already been registered', error_code: 'email_exists' });
+      }
+      const user: SimUser = {
+        id: crypto.randomUUID(),
+        email,
+        password: String(body.password || ''),
+        fullName: String(body.user_metadata?.full_name || email.split('@')[0]),
+        emailConfirmedAt: body.email_confirm ? new Date().toISOString() : null,
+        otpCode: '',
+      };
+      users.set(email, user);
+      return sendJson(200, {
+        id: user.id,
+        aud: 'authenticated',
+        role: 'authenticated',
+        email: user.email,
+        email_confirmed_at: user.emailConfirmedAt,
+        user_metadata: { full_name: user.fullName },
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    if (pathname === '/auth/v1/admin/users' && req.method === 'GET') {
+      const caller = resolveCaller(req);
+      if (caller.role !== 'service_role') {
+        return sendJson(403, { msg: 'Admin access required' });
+      }
+      return sendJson(200, {
+        users: Array.from(users.values()).map((u) => ({
+          id: u.id,
+          aud: 'authenticated',
+          role: 'authenticated',
+          email: u.email,
+          email_confirmed_at: u.emailConfirmedAt,
+          user_metadata: { full_name: u.fullName },
+        })),
+      });
+    }
+
+    if (pathname.startsWith('/auth/v1/admin/users/') && req.method === 'PUT') {
+      const caller = resolveCaller(req);
+      if (caller.role !== 'service_role') {
+        return sendJson(403, { msg: 'Admin access required' });
+      }
+      const uid = pathname.slice('/auth/v1/admin/users/'.length);
+      const user = Array.from(users.values()).find((u) => u.id === uid);
+      if (!user) return sendJson(404, { msg: 'User not found' });
+      if (body.email_confirm === true && !user.emailConfirmedAt) {
+        user.emailConfirmedAt = new Date().toISOString();
+      }
+      return sendJson(200, {
+        id: user.id,
+        aud: 'authenticated',
+        role: 'authenticated',
+        email: user.email,
+        email_confirmed_at: user.emailConfirmedAt,
+        user_metadata: { full_name: user.fullName },
+      });
+    }
+
     if (pathname === '/auth/v1/signup' && req.method === 'POST') {
       const email = String(body.email || '').toLowerCase();
       if (users.has(email)) {
@@ -271,18 +338,24 @@ function createSupabaseTestHarness() {
         email,
         password: String(body.password || ''),
         fullName: String(body.data?.full_name || email.split('@')[0]),
-        emailConfirmedAt: null,
-        otpCode: '123456',
+        emailConfirmedAt: new Date().toISOString(),
+        otpCode: '',
       };
       users.set(email, user);
+      const accessToken = issueJwtForUser(user.id);
       return sendJson(200, {
         user: {
           id: user.id,
           email: user.email,
-          email_confirmed_at: null,
+          email_confirmed_at: user.emailConfirmedAt,
           user_metadata: { full_name: user.fullName },
         },
-        session: null,
+        session: {
+          access_token: accessToken,
+          token_type: 'bearer',
+          expires_in: 3600,
+          refresh_token: `refresh-${user.id}`,
+        },
       });
     }
 
@@ -504,10 +577,14 @@ function createSupabaseTestHarness() {
 }
 
 test('End-to-end Auth, Authenticated Demo Farms, 403/404 Isolation, Honest Metadata-Only Failure, MODIS & Frontend Refresh Suite', async (t) => {
+  const { default: app } = await import('../api/index.js');
+  const { resetSupabaseClientsForTesting } = await import('../backend/supabase.js');
+
   const savedEnv = {
     SUPABASE_URL: process.env.SUPABASE_URL,
     VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL,
     VITE_SUPABASE_PUBLISHABLE_KEY: process.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+    VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY,
     SUPABASE_SECRET_KEY: process.env.SUPABASE_SECRET_KEY,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
   };
@@ -515,10 +592,11 @@ test('End-to-end Auth, Authenticated Demo Farms, 403/404 Isolation, Honest Metad
   delete process.env.SUPABASE_URL;
   delete process.env.VITE_SUPABASE_URL;
   delete process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  delete process.env.VITE_SUPABASE_ANON_KEY;
   delete process.env.SUPABASE_SECRET_KEY;
   delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  resetSupabaseClientsForTesting();
 
-  const { default: app } = await import('../api/index.js');
   const expressServer = http.createServer(app);
   await new Promise<void>((resolve) => expressServer.listen(0, '127.0.0.1', resolve));
   const expressAddr = expressServer.address();
@@ -542,6 +620,7 @@ test('End-to-end Auth, Authenticated Demo Farms, 403/404 Isolation, Honest Metad
   process.env.VITE_SUPABASE_URL = supaUrl;
   process.env.VITE_SUPABASE_PUBLISHABLE_KEY = supa.ANON_KEY;
   process.env.SUPABASE_SECRET_KEY = supa.SECRET_KEY;
+  resetSupabaseClientsForTesting();
 
   const realFetch = globalThis.fetch;
   let modisMode: 'good' | 'cloudy_only' | 'ornl_timeout' = 'good';
@@ -659,7 +738,7 @@ test('End-to-end Auth, Authenticated Demo Farms, 403/404 Isolation, Honest Metad
   let userAFarmId = '';
 
   try {
-    await t.test('1-2. Register -> verify OTP -> login -> restore session & Bearer authenticated request', async () => {
+    await t.test('1-2. Register (immediate session, no OTP) -> login -> restore session & Bearer authenticated request', async () => {
       const regRes = await fetch(`${baseUrl}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -670,13 +749,16 @@ test('End-to-end Auth, Authenticated Demo Farms, 403/404 Isolation, Honest Metad
         }),
       });
       assert.equal(regRes.status, 201);
+      const regJson: any = await regRes.json();
+      assert.ok(regJson.token, 'Registration must immediately return a session token without OTP');
+      assert.match(regRes.headers.get('set-cookie') || '', /fieldshift_session=/);
 
-      const otpRes = await fetch(`${baseUrl}/api/auth/verify-otp`, {
+      const removedOtpRes = await fetch(`${baseUrl}/api/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: 'farmer.a@fieldshift.test', code: '123456' }),
       });
-      assert.equal(otpRes.status, 200);
+      assert.equal(removedOtpRes.status, 404, 'Obsolete OTP endpoint must return 404');
 
       const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
         method: 'POST',
@@ -686,7 +768,6 @@ test('End-to-end Auth, Authenticated Demo Farms, 403/404 Isolation, Honest Metad
       assert.equal(loginRes.status, 200);
       const loginJson: any = await loginRes.json();
       assert.ok(loginJson.token);
-      assert.equal(loginJson.user.verified, true);
       userAToken = loginJson.token;
       userAId = supa.users.get('farmer.a@fieldshift.test')!.id;
       const setCookie = loginRes.headers.get('set-cookie') || '';
@@ -704,8 +785,8 @@ test('End-to-end Auth, Authenticated Demo Farms, 403/404 Isolation, Honest Metad
       });
       assert.equal(profileRes.status, 200);
 
-      // Also register/verify/login User B
-      await fetch(`${baseUrl}/api/auth/register`, {
+      // Also register User B immediately without OTP
+      const regBRes = await fetch(`${baseUrl}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -714,17 +795,8 @@ test('End-to-end Auth, Authenticated Demo Farms, 403/404 Isolation, Honest Metad
           password: 'FieldShift_2026!',
         }),
       });
-      await fetch(`${baseUrl}/api/auth/verify-otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'farmer.b@fieldshift.test', code: '123456' }),
-      });
-      const loginBRes = await fetch(`${baseUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'farmer.b@fieldshift.test', password: 'FieldShift_2026!' }),
-      });
-      userBToken = ((await loginBRes.json()) as any).token;
+      assert.equal(regBRes.status, 201);
+      userBToken = ((await regBRes.json()) as any).token;
       assert.ok(userBToken);
     });
 

@@ -57,7 +57,7 @@ export function resetSupabaseClientsForTesting(): void {
 
 /**
  * Public Supabase client using publishable/anon key (no session persistence).
- * Used for auth endpoints (signInWithPassword, signUp, verifyOtp, resetPasswordForEmail)
+ * Used for auth endpoints (signInWithPassword, signUp, resetPasswordForEmail)
  * and public read-only catalog / verified demo queries under RLS.
  */
 export function getSupabaseAuthClient(): SupabaseClient | null {
@@ -117,6 +117,36 @@ export function getSupabaseUserClient(accessToken: string): SupabaseClient | nul
       },
     },
   });
+}
+
+export async function findAuthUserByEmail(
+  adminClient: SupabaseClient,
+  email: string
+): Promise<{ id: string; email: string; emailConfirmedAt: string | null; fullName: string } | null> {
+  const target = email.trim().toLowerCase();
+  if (!target) return null;
+  let page = 1;
+  const perPage = 200;
+  for (let i = 0; i < 20; i += 1) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage });
+    if (error || !data?.users?.length) break;
+    const found = data.users.find((u) => (u.email || '').trim().toLowerCase() === target);
+    if (found) {
+      const metaName = found.user_metadata?.full_name || found.user_metadata?.name;
+      return {
+        id: found.id,
+        email: found.email || target,
+        emailConfirmedAt: found.email_confirmed_at || null,
+        fullName:
+          typeof metaName === 'string' && metaName.trim()
+            ? metaName.trim()
+            : target.split('@')[0] || 'Farmer',
+      };
+    }
+    if (data.users.length < perPage) break;
+    page += 1;
+  }
+  return null;
 }
 
 export function extractRequestToken(req: Request): string | undefined {

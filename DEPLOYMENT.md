@@ -61,9 +61,7 @@ npx tsx tests/verify-production.ts
 ### Authentication (Supabase Auth Proxy + HttpOnly Cookie / Bearer JWT)
 | Method | Endpoint | Purpose |
 | :--- | :--- | :--- |
-| `POST` | `/api/auth/register` | Create Supabase Auth user & dispatch email confirmation |
-| `POST` | `/api/auth/verify-otp` | Verify signup email OTP code & issue session |
-| `POST` | `/api/auth/resend-otp` | Resend signup verification OTP |
+| `POST` | `/api/auth/register` | Create Supabase Auth user & issue immediate session |
 | `POST` | `/api/auth/login` | Authenticate via Supabase Auth email/password (`GET` -> `405`) |
 | `GET` | `/api/auth/session` | Validate active session & return authenticated user |
 | `POST` | `/api/auth/logout` | Clear session cookie |

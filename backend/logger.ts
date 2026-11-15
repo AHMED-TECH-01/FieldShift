@@ -9,18 +9,6 @@ const REDACTED_KEYS = new Set([
   'authorization',
   'cookie',
   'set-cookie',
-  'otp',
-  'otp_code',
-  'otpcode',
-  'otp_hash',
-  'otphash',
-  'code',
-  'verificationcode',
-  'verification_code',
-  'pendingtoken',
-  'pending_token',
-  'smtppass',
-  'smtp_pass',
 ]);
 
 export function sanitizeMeta(value: unknown, depth = 0): unknown {

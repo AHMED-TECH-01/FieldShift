@@ -7,6 +7,7 @@ import {
   AuthenticatedRequest,
   authorizeNasaFarmAccess,
   extractRequestToken,
+  findAuthUserByEmail,
   getAccessibleFarmById,
   getAuthorizedIngestionJob,
   getSupabaseAdminClient,
@@ -23,7 +24,6 @@ import {
 } from './backend/supabase.js';
 import {
   advisorRequestSchema,
-  changeEmailSchema,
   createFarmSchema,
   datasetSyncSchema,
   loginSchema,
@@ -32,19 +32,10 @@ import {
   prioritiesSchema,
   profileUpdateSchema,
   registerSchema,
-  resendOtpSchema,
   rotationCreateSchema,
   scenarioSchema,
   updateFarmSchema,
-  verifyOtpSchema,
 } from './backend/validation.js';
-import {
-  createPendingVerificationToken,
-  EmailOtpService,
-  SupabaseAuthProvider,
-  SupabaseOtpStore,
-} from './backend/emailOtp.js';
-import { getSmtpConfigSummary } from './backend/email.js';
 import {
   buildBareFieldAnalysis,
   buildPestCycles,
@@ -159,8 +150,6 @@ function createRateLimiter(bucketName: string, maxRequests: number, windowMs: nu
 }
 
 const authRateLimit = createRateLimiter('auth', 30, 60_000);
-const otpResendRateLimit = createRateLimiter('otp_resend', 20, 10 * 60_000);
-const otpVerifyRateLimit = createRateLimiter('otp_verify', 30, 10 * 60_000);
 const nasaSyncRateLimit = createRateLimiter('nasa_sync', 20, 60_000);
 const aiAdvisorRateLimit = createRateLimiter('ai_advisor', 15, 60_000);
 
@@ -176,54 +165,8 @@ function clearSessionCookie(): string {
   return `fieldshift_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isProd ? '; Secure' : ''}`;
 }
 
-function buildPendingVerifyCookie(token: string): string {
-  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
-  return `fieldshift_pending_verify=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1800${
-    isProd ? '; Secure' : ''
-  }`;
-}
-
-function clearPendingVerifyCookie(): string {
-  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
-  return `fieldshift_pending_verify=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isProd ? '; Secure' : ''}`;
-}
-
-function extractPendingVerifyToken(req: Request, bodyToken?: string): string | undefined {
-  if (typeof bodyToken === 'string' && bodyToken.trim()) {
-    return bodyToken.trim();
-  }
-  const cookieHeader = req.headers.cookie;
-  if (!cookieHeader) return undefined;
-  const match = cookieHeader.match(/fieldshift_pending_verify=([^;]+)/);
-  if (!match) return undefined;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
-}
-
-let testEmailOtpServiceOverride: EmailOtpService | null = null;
-export function setEmailOtpServiceForTesting(service: EmailOtpService | null): void {
-  testEmailOtpServiceOverride = service;
-}
 export function resetRateLimitsForTesting(): void {
   rateLimitBuckets.clear();
-}
-
-function getEmailOtpService(): EmailOtpService | null {
-  if (testEmailOtpServiceOverride) {
-    return testEmailOtpServiceOverride;
-  }
-  const supaAuth = isSupabaseConfigured() ? getSupabaseAuthClient() : null;
-  const supaAdmin = getSupabaseAdminClient();
-  if (!supaAuth || !supaAdmin) {
-    return null;
-  }
-  return new EmailOtpService({
-    store: new SupabaseOtpStore(supaAdmin),
-    auth: new SupabaseAuthProvider(supaAuth, supaAdmin),
-  });
 }
 
 /* ==========================================================================
@@ -253,7 +196,6 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     supabaseConfigured: envSummary.supabaseConfigured,
     supabaseReachable,
     geminiConfigured: Boolean(getGeminiClient()),
-    emailDelivery: getSmtpConfigSummary(),
     nasaApiKeyConfigured: envSummary.nasaApiKeyConfigured,
     earthdataTokenConfigured: envSummary.earthdataTokenConfigured,
     nasaCapabilities,
@@ -369,8 +311,8 @@ app.post(authRegisterPaths, authRateLimit, async (req: Request, res: Response) =
     return;
   }
 
-  const otpService = getEmailOtpService();
-  if (!otpService) {
+  const supaAuth = isSupabaseConfigured() ? getSupabaseAuthClient() : null;
+  if (!supaAuth) {
     res.status(503).json({
       error: 'Supabase authentication service is not fully configured.',
       code: 'SUPABASE_UNCONFIGURED',
@@ -378,144 +320,129 @@ app.post(authRegisterPaths, authRateLimit, async (req: Request, res: Response) =
     return;
   }
 
+  const normalizedEmail = parsed.data.email.trim().toLowerCase();
+  const cleanName = parsed.data.fullName.trim();
+  const supaAdmin = getSupabaseAdminClient();
+
   try {
-    const result = await otpService.register(parsed.data);
-    if (result.body?.token) {
-      res.set('Set-Cookie', buildSessionCookie(result.body.token));
-    } else if (result.body?.pendingToken) {
-      res.set('Set-Cookie', buildPendingVerifyCookie(result.body.pendingToken));
+    if (supaAdmin) {
+      const { data: created, error: createErr } = await supaAdmin.auth.admin.createUser({
+        email: normalizedEmail,
+        password: parsed.data.password,
+        email_confirm: true,
+        user_metadata: { full_name: cleanName },
+      });
+
+      if (createErr) {
+        const msg = createErr.message || 'Unable to create account.';
+        const isDuplicate =
+          /already\s*(been\s*)?registered|already exists|duplicate|email.*exists/i.test(msg) ||
+          (createErr as any).status === 422 ||
+          (createErr as any).code === 'email_exists';
+        if (isDuplicate) {
+          res.status(409).json({
+            error: 'An account with this email address already exists. Please sign in instead.',
+            code: 'USER_ALREADY_EXISTS',
+          });
+          return;
+        }
+        res.status(400).json({ error: msg, code: 'REGISTRATION_FAILED' });
+        return;
+      }
+
+      if (!created?.user) {
+        res.status(500).json({ error: 'Account creation did not return a valid user record.' });
+        return;
+      }
+
+      const { data: loginData, error: loginErr } = await supaAuth.auth.signInWithPassword({
+        email: normalizedEmail,
+        password: parsed.data.password,
+      });
+
+      if (loginErr || !loginData?.session || !loginData?.user) {
+        res.status(500).json({
+          error: loginErr?.message || 'Account created, but session initialization failed. Please sign in.',
+          code: 'SESSION_INIT_FAILED',
+        });
+        return;
+      }
+
+      const metaName =
+        loginData.user.user_metadata?.full_name ||
+        loginData.user.user_metadata?.name ||
+        cleanName;
+
+      res.set('Set-Cookie', buildSessionCookie(loginData.session.access_token));
+      res.status(201).json({
+        success: true,
+        user: {
+          email: loginData.user.email || normalizedEmail,
+          fullName: String(metaName),
+          verified: Boolean(loginData.user.email_confirmed_at),
+        },
+        token: loginData.session.access_token,
+        refreshToken: loginData.session.refresh_token || null,
+        message: 'Account created successfully.',
+      });
+      return;
     }
-    res.status(result.status).json(result.body);
+
+    const { data: signUpData, error: signUpErr } = await supaAuth.auth.signUp({
+      email: normalizedEmail,
+      password: parsed.data.password,
+      options: { data: { full_name: cleanName } },
+    });
+
+    if (signUpErr) {
+      const msg = signUpErr.message || 'Unable to create account.';
+      const isDuplicate = /already\s*(been\s*)?registered|already exists|duplicate|email.*exists/i.test(msg);
+      res.status(isDuplicate ? 409 : 400).json({
+        error: isDuplicate
+          ? 'An account with this email address already exists. Please sign in instead.'
+          : msg,
+        code: isDuplicate ? 'USER_ALREADY_EXISTS' : 'REGISTRATION_FAILED',
+      });
+      return;
+    }
+
+    if (signUpData?.user && Array.isArray(signUpData.user.identities) && signUpData.user.identities.length === 0) {
+      res.status(409).json({
+        error: 'An account with this email address already exists. Please sign in instead.',
+        code: 'USER_ALREADY_EXISTS',
+      });
+      return;
+    }
+
+    if (!signUpData?.session || !signUpData?.user) {
+      res.status(503).json({
+        error:
+          'Immediate sign-in after registration requires email confirmation to be disabled in Supabase Auth or SUPABASE_SECRET_KEY configured on the server.',
+        code: 'CONFIRMATION_REQUIRED_ON_PROVIDER',
+      });
+      return;
+    }
+
+    const metaName =
+      signUpData.user.user_metadata?.full_name ||
+      signUpData.user.user_metadata?.name ||
+      cleanName;
+
+    res.set('Set-Cookie', buildSessionCookie(signUpData.session.access_token));
+    res.status(201).json({
+      success: true,
+      user: {
+        email: signUpData.user.email || normalizedEmail,
+        fullName: String(metaName),
+        verified: Boolean(signUpData.user.email_confirmed_at),
+      },
+      token: signUpData.session.access_token,
+      refreshToken: signUpData.session.refresh_token || null,
+      message: 'Account created successfully.',
+    });
   } catch (err: any) {
     logEvent('Auth', 'REGISTER_EXCEPTION', { message: err?.message });
     res.status(500).json({ error: 'Registration failed due to an upstream authentication error.' });
-  }
-});
-
-const authVerifyPaths = ['/api/auth/verify-otp', '/api/v1/auth/verify-otp', '/auth/verify-otp', '/api/verify-otp'];
-app.post(authVerifyPaths, otpVerifyRateLimit, async (req: Request, res: Response) => {
-  const parsed = parseBody(verifyOtpSchema, req.body);
-  if (!parsed.ok) {
-    res.status(400).json({ error: parsed.error, code: 'INVALID_OTP_FORMAT' });
-    return;
-  }
-
-  const otpService = getEmailOtpService();
-  if (!otpService) {
-    res.status(503).json({
-      error: 'Supabase authentication service is not fully configured.',
-      code: 'SUPABASE_UNCONFIGURED',
-    });
-    return;
-  }
-
-  try {
-    const result = await otpService.verify({
-      email: parsed.data.email,
-      code: parsed.data.code,
-    });
-    if (result.status === 200 && result.body?.token) {
-      res.set('Set-Cookie', [
-        buildSessionCookie(result.body.token),
-        clearPendingVerifyCookie(),
-      ]);
-    }
-    res.status(result.status).json(result.body);
-  } catch (err: any) {
-    logEvent('Auth', 'VERIFY_OTP_EXCEPTION', { message: err?.message });
-    res.status(500).json({ error: 'Verification failed due to an upstream error.' });
-  }
-});
-
-const authResendPaths = ['/api/auth/resend-otp', '/api/v1/auth/resend-otp', '/auth/resend-otp', '/api/resend-otp'];
-app.post(authResendPaths, otpResendRateLimit, async (req: Request, res: Response) => {
-  const parsed = parseBody(resendOtpSchema, req.body);
-  if (!parsed.ok) {
-    res.status(400).json({ error: parsed.error, code: 'VALIDATION_ERROR' });
-    return;
-  }
-
-  const otpService = getEmailOtpService();
-  if (!otpService) {
-    res.status(503).json({
-      error: 'Supabase authentication service is not fully configured.',
-      code: 'SUPABASE_UNCONFIGURED',
-    });
-    return;
-  }
-
-  try {
-    const result = await otpService.resend({ email: parsed.data.email });
-    if (result.body?.retryAfterSeconds) {
-      res.set('Retry-After', String(result.body.retryAfterSeconds));
-    }
-    if (result.body?.pendingToken) {
-      res.set('Set-Cookie', buildPendingVerifyCookie(result.body.pendingToken));
-    }
-    res.status(result.status).json(result.body);
-  } catch (err: any) {
-    logEvent('Auth', 'RESEND_OTP_EXCEPTION', { message: err?.message });
-    res.status(500).json({ error: 'Unable to resend verification email.' });
-  }
-});
-
-const authChangeEmailPaths = ['/api/auth/change-email', '/api/v1/auth/change-email', '/auth/change-email'];
-app.post(authChangeEmailPaths, otpResendRateLimit, async (req: Request, res: Response) => {
-  const parsed = parseBody(changeEmailSchema, req.body);
-  if (!parsed.ok) {
-    res.status(400).json({ error: parsed.error, code: 'VALIDATION_ERROR' });
-    return;
-  }
-
-  const otpService = getEmailOtpService();
-  if (!otpService) {
-    res.status(503).json({
-      error: 'Supabase authentication service is not fully configured.',
-      code: 'SUPABASE_UNCONFIGURED',
-    });
-    return;
-  }
-
-  try {
-    const pendingToken = extractPendingVerifyToken(req, parsed.data.pendingToken);
-    const result = await otpService.changePendingEmail({
-      currentEmail: parsed.data.currentEmail,
-      newEmail: parsed.data.newEmail,
-      pendingToken,
-      password: parsed.data.password,
-    });
-    if (result.body?.pendingToken) {
-      res.set('Set-Cookie', buildPendingVerifyCookie(result.body.pendingToken));
-    }
-    res.status(result.status).json(result.body);
-  } catch (err: any) {
-    logEvent('Auth', 'CHANGE_EMAIL_EXCEPTION', { message: err?.message });
-    res.status(500).json({ error: 'Unable to update pending email address.' });
-  }
-});
-
-app.get(['/api/auth/verification-status', '/api/v1/auth/verification-status'], authRateLimit, async (req: Request, res: Response) => {
-  const rawEmail = typeof req.query.email === 'string' ? req.query.email.trim() : '';
-  if (!rawEmail) {
-    res.status(400).json({ error: 'Email query parameter is required.', code: 'EMAIL_REQUIRED' });
-    return;
-  }
-
-  const otpService = getEmailOtpService();
-  if (!otpService) {
-    res.status(503).json({
-      error: 'Supabase authentication service is not fully configured.',
-      code: 'SUPABASE_UNCONFIGURED',
-    });
-    return;
-  }
-
-  try {
-    const result = await otpService.getStatus(rawEmail);
-    res.status(result.status).json(result.body);
-  } catch (err: any) {
-    logEvent('Auth', 'VERIFICATION_STATUS_EXCEPTION', { message: err?.message });
-    res.status(500).json({ error: 'Unable to fetch verification status.' });
   }
 });
 
@@ -541,71 +468,53 @@ app.post(authLoginPaths, authRateLimit, async (req: Request, res: Response) => {
     return;
   }
 
-  const normalizedEmail = parsed.data.email.toLowerCase();
+  const normalizedEmail = parsed.data.email.trim().toLowerCase();
   try {
-    const { data, error } = await supaAuth.auth.signInWithPassword({
+    let { data, error } = await supaAuth.auth.signInWithPassword({
       email: normalizedEmail,
       password: parsed.data.password,
     });
 
+    // Existing legacy unconfirmed accounts: Supabase Auth validates the bcrypt password hash
+    // before returning "Email not confirmed". When authorized with SUPABASE_SECRET_KEY, confirm
+    // the legacy record via Supabase Admin API and issue a valid session without deleting/duplicating.
+    if (error && /email not confirmed|confirm your email/i.test(error.message || '')) {
+      const supaAdmin = getSupabaseAdminClient();
+      if (supaAdmin) {
+        const existingUser = await findAuthUserByEmail(supaAdmin, normalizedEmail);
+        if (existingUser) {
+          const { error: confirmErr } = await supaAdmin.auth.admin.updateUserById(existingUser.id, {
+            email_confirm: true,
+          });
+          if (!confirmErr) {
+            const retried = await supaAuth.auth.signInWithPassword({
+              email: normalizedEmail,
+              password: parsed.data.password,
+            });
+            data = retried.data;
+            error = retried.error;
+          }
+        }
+      }
+    }
+
     if (error || !data?.session || !data?.user) {
       const msg = error?.message || 'Invalid login credentials.';
-      const isUnconfirmed = /email not confirmed|confirm your email/i.test(msg);
-      if (isUnconfirmed) {
-        let pendingToken: string | undefined;
-        let statusMeta: Record<string, any> = {};
-        const supaAdmin = getSupabaseAdminClient();
-        const otpService = getEmailOtpService();
-        if (supaAdmin) {
-          const authProv = new SupabaseAuthProvider(supaAuth, supaAdmin);
-          const pendingUser = await authProv.findUserByEmail(normalizedEmail);
-          if (pendingUser && !pendingUser.emailConfirmedAt) {
-            try {
-              pendingToken = createPendingVerificationToken(pendingUser.id, normalizedEmail);
-              res.set('Set-Cookie', buildPendingVerifyCookie(pendingToken));
-            } catch {
-              // ignore if HMAC secret unavailable
-            }
-          }
-        }
-        if (otpService) {
-          const st = await otpService.getStatus(normalizedEmail);
-          if (st.status === 200) {
-            statusMeta = {
-              resendCooldownRemainingSeconds: st.body.resendCooldownRemainingSeconds ?? 0,
-              expiresAt: st.body.expiresAt ?? null,
-              resendAvailableAt: st.body.resendAvailableAt ?? null,
-            };
-          }
-        }
-
-        res.status(403).json({
-          error: 'Your email address has not been verified yet. Please enter your 6-digit verification code or request a new code.',
-          code: 'EMAIL_NOT_CONFIRMED',
-          email: normalizedEmail,
-          pendingToken,
-          ...statusMeta,
-        });
-        return;
-      }
-
-      res.status(401).json({
-        error: msg,
-        code: 'INVALID_CREDENTIALS',
+      const isConfirmationBlocked = /email not confirmed|confirm your email/i.test(msg);
+      res.status(isConfirmationBlocked ? 403 : 401).json({
+        error: isConfirmationBlocked
+          ? 'Email confirmation is required by the authentication provider configuration and Admin API credentials are unavailable.'
+          : msg,
+        code: isConfirmationBlocked ? 'PROVIDER_CONFIRMATION_REQUIRED' : 'INVALID_CREDENTIALS',
       });
       return;
     }
 
-    if (!data.user.email_confirmed_at) {
-      res.status(403).json({
-        error: 'Your email address has not been verified yet. Please verify your 6-digit code first.',
-        code: 'EMAIL_NOT_CONFIRMED',
-        email: normalizedEmail,
-      });
-      return;
-    }
+    const metaName =
+      data.user.user_metadata?.full_name ||
+      data.user.user_metadata?.name ||
+      normalizedEmail.split('@')[0];
 
-    const metaName = data.user.user_metadata?.full_name || normalizedEmail.split('@')[0];
     res.set('Set-Cookie', buildSessionCookie(data.session.access_token));
     res.json({
       success: true,

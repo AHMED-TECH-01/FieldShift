@@ -384,8 +384,9 @@ FieldShift is structured for zero-cost deployment on Vercel:
 | `/api/analysis/bare-field` | `GET` | Seasonal bare-soil exposure analysis grounded in crop & NASA telemetry |
 | `/api/analysis/pest-cycles` | `GET` | Host-crop botanical family break and pest cycle diagnostics |
 | `/api/auth/login` | `POST` | Supabase Auth session authentication |
-| `/api/auth/register` | `POST` | User registration with email OTP confirmation |
-| `/api/auth/verify-otp` | `POST` | Validate email confirmation code |
+| `/api/auth/register` | `POST` | User registration with immediate session issuance |
+| `/api/auth/logout` | `POST` | Clear authentication session |
+| `/api/auth/password-reset` | `POST` | Request Supabase password recovery email |
 
 ## 🔐 Security & Reliability
 
